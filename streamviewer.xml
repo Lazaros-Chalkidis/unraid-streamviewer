@@ -1,0 +1,18 @@
+<?xml version="1.2" encoding="utf-8"?>
+<Container>
+  <Plugin>True</Plugin>
+  <PluginURL>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/streamviewer.plg</PluginURL>
+  <PluginAuthor>Lazaros Chalkidis</PluginAuthor>
+  <Beta>false</Beta>
+  <Category>Tools:Utilities</Category>
+  <Name>Stream Viewer</Name>
+  <Description><![CDATA[A modern and lightweight, real-time media stream monitor for Unraid. View active streams from your Plex, Jellyfin, and Emby servers directly from the dashboard.]]></Description>
+  <Project>https://github.com/Lazaros-Chalkidis/unraid-streamviewer</Project>
+  <Support>https://forums.unraid.net/</Support>
+  <Icon>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/source/streamviewer.png</Icon>
+  <License>GPL v3</License>
+  <Maintainer>
+  <Name>Lazaros Chalkidis</Name>
+  <Image>https://avatars.githubusercontent.com/u/263085199?v=4</Image>
+  </Maintainer>
+</Container>

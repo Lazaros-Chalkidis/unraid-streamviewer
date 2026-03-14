@@ -1,0 +1,426 @@
+/* ==========================================================================
+   STREAM VIEWER — Settings Page Styles
+   /plugins/streamviewer/css/settings.css
+   ========================================================================== */
+
+/* ── 1. FOUC PREVENTION ───────────────────────────────────────────────────── */
+.streamviewer-settings,
+.sv-credits-top { visibility: visible !important; }
+
+/* ── Button baseline — override Unraid's width:100% on all buttons ─────────── */
+.streamviewer-settings button,
+.streamviewer-settings input[type="button"],
+.streamviewer-settings input[type="submit"] {
+  width: auto !important;
+  max-width: max-content !important;
+  display: inline-flex !important;
+  flex-shrink: 0 !important;
+}
+
+/* ── 2. WRAPPER & RESPONSIVE WIDTHS ──────────────────────────────────────── */
+.streamviewer-settings {
+  width: min(52vw, 980px); min-width: 720px;
+  margin: 0 auto; padding: 0;
+  box-sizing: border-box; display: block;
+}
+@media (max-width: 1400px) { .streamviewer-settings { width: 75%; } }
+@media (max-width: 1024px) { .streamviewer-settings { width: 90%; } }
+@media (max-width: 900px)  { .streamviewer-settings { width: 92vw; min-width: 0; } }
+@media (max-width: 768px)  { .streamviewer-settings { width: 100%; min-width: 0; margin: 0 auto; } }
+
+/* Settings panel */
+.streamviewer-settings .sv-settings-panel {
+  padding: 1rem; box-sizing: border-box;
+  display: grid; gap: 0;
+  background: rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 1px;
+}
+@media (max-width: 768px) { .streamviewer-settings .sv-settings-panel { padding: .75rem; } }
+
+/* ── 3. TOP TABS ──────────────────────────────────────────────────────────── */
+.streamviewer-settings .sv-tabs {
+  display: flex !important; align-items: flex-end !important; gap: .4rem !important;
+  position: relative !important; margin: 0 !important;
+}
+
+.sv-tab {
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .55rem .9rem;
+  border: 1px solid rgba(255,255,255,.12); border-bottom: 0;
+  border-radius: .55rem .55rem 0 0;
+  background: rgba(255,255,255,.04); color: rgba(255,255,255,.75);
+  cursor: pointer; font-weight: 700; user-select: none;
+  transition: background .25s ease, color .25s ease, border-color .25s ease;
+}
+.sv-tab .sv-tabicon { opacity: .9; font-size: 1.05em; transform: translateY(1px); }
+.sv-tab:hover { background: rgba(255,255,255,.06) !important; color: rgba(255,255,255,.9) !important; }
+.sv-tab.active {
+  background: rgba(0,0,0,.35) !important;
+  color: #fff !important;
+  border-color: rgba(244,125,66,.55) !important;
+}
+
+/* ── 4. CREDITS LINK ──────────────────────────────────────────────────────── */
+.sv-credits-top {
+  display: block !important; width: 100% !important;
+  margin: 0 0 .35rem 0 !important;
+}
+.sv-credits-top .sv-credits { float: right !important; cursor: pointer !important; }
+.sv-credits-top::after { content: ""; display: block; clear: both; }
+
+.sv-credits {
+  font-size: .82em !important; text-decoration: none !important;
+  color: rgba(255,255,255,.55) !important; cursor: pointer !important;
+  display: inline-flex !important; align-items: center !important;
+  border: 0 !important; background: transparent !important;
+  transition: color .25s ease !important;
+}
+.sv-credits:hover { color: #4a90e2 !important; }
+
+/* ── 5. CARDS ─────────────────────────────────────────────────────────────── */
+.sv-card {
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.02);
+  border-radius: 10px; overflow: hidden; margin-bottom: 1rem;
+  transition: border-color .2s;
+}
+.sv-card:last-child { margin-bottom: 0; }
+.sv-card:hover { border-color: rgba(255,255,255,.16); }
+
+.sv-card-hd {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .7rem 1rem;
+  background: rgba(255,255,255,.04);
+  border-bottom: 1px solid rgba(255,255,255,.07);
+  font-weight: 700; font-size: .9em;
+  cursor: default;
+}
+.sv-card-hd--toggle {
+  cursor: pointer; user-select: none; position: relative; padding-right: 2.5rem;
+  transition: background .25s ease;
+}
+.sv-card-hd--toggle:hover { background: rgba(255,255,255,.05); }
+.sv-card-hd--toggle::after {
+  content: "▲"; position: absolute; right: 1rem; top: 50%;
+  transform: translateY(-50%); font-size: .65rem; opacity: .5;
+}
+.sv-card--collapsed .sv-card-hd--toggle::after { transform: translateY(-50%) rotate(180deg); }
+.sv-card--collapsed .sv-card-bd-collapsible { display: none; }
+
+.sv-card-bd,
+.sv-card-bd-collapsible { padding: .75rem 1rem; }
+
+.sv-pill {
+  margin-left: auto;
+  background: rgba(255,140,0,.08);
+  border: 1px solid #ff8c00;
+  border-radius: 0.4rem !important;
+  padding: .18rem .44rem;
+  font-size: .72em; font-weight: 400;
+  color: rgba(255,255,255,.9);
+  white-space: nowrap;
+  transition: background .25s ease, border-color .25s ease;
+}
+
+/* ── 6. SETTINGS ROWS ─────────────────────────────────────────────────────── */
+.sv-row {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5rem;
+  padding: .6rem 0;
+  border-bottom: 1px solid rgba(255,255,255,.05);
+}
+.sv-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.sv-row > div:first-child { flex: 1; min-width: 0; }
+
+.sv-label { font-weight: 600; font-size: .9em; margin-bottom: .15rem; }
+.sv-desc  { font-size: .82em; color: rgba(255,255,255,.55); line-height: 1.45; }
+.sv-hint  { font-size: .78em; color: rgba(255,255,255,.4); margin-top: .3rem; line-height: 1.4; }
+
+.sv-field {
+  flex-shrink: 0; width: 220px;
+  display: flex; flex-direction: column; gap: .3rem;
+}
+@media (max-width: 768px) {
+  .sv-row { flex-direction: column; gap: .4rem; }
+  .sv-field { width: 100%; }
+}
+
+/* ── 7. SERVER CARDS ──────────────────────────────────────────────────────── */
+/* ── Accordion ───────────────────────────────────────────────────────────── */
+.sv-accordion { border:1px solid rgba(255,255,255,.1); border-radius:6px; overflow:hidden; margin-top:.75rem; }
+.sv-accordion-hd {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:.6rem .9rem; background:rgba(255,255,255,.04);
+    cursor:pointer; user-select:none; font-weight:600; font-size:.9em;
+    position:relative; padding-right:2.5rem;
+    transition:background .25s ease;
+}
+.sv-accordion-hd:hover { background:rgba(255,255,255,.08); }
+.sv-accordion-hd::after {
+    content:"▲"; position:absolute; right:1rem; top:50%;
+    transform:translateY(-50%); font-size:.65rem; opacity:.5;
+}
+.sv-accordion--collapsed .sv-accordion-hd::after { transform:translateY(-50%) rotate(180deg); }
+.sv-accordion--collapsed .sv-accordion-bd { display:none; }
+
+.sv-accordion-bd { padding:.5rem .9rem .75rem; }
+.sv-accordion-bd.collapsed { display: none; }
+
+/* ── Plex sign-in button ─────────────────────────────────────────────────── */
+.sv-plex-signin-btn {
+  display: inline-flex !important; align-items: center !important;
+  background: transparent !important;
+  border: 1px solid #e5a00d !important;
+  color: #e5a00d !important;
+  padding: .2rem .5rem !important;
+  font-size: .7em !important; font-weight: 700 !important; letter-spacing: .05em !important;
+  text-transform: uppercase !important;
+  border-radius: 4px !important; cursor: pointer !important;
+  transition: background .18s, color .18s;
+  line-height: 1.4 !important; height: auto !important; min-height: 0 !important;
+}
+.sv-plex-signin-btn:hover { background: rgba(229,160,13,.12) !important; }
+
+.sv-server-card {
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 8px;
+  margin-bottom: .75rem;
+  overflow: hidden;
+  transition: border-color .2s, box-shadow .2s;
+}
+.sv-server-card--enabled {
+  border-color: rgba(244,125,66,.35);
+  box-shadow: 0 0 0 1px rgba(244,125,66,.1);
+}
+.sv-server-card-hd {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .55rem .85rem;
+  background: rgba(255,255,255,.03);
+  border-bottom: 1px solid rgba(255,255,255,.07);
+  gap: .5rem;
+}
+.sv-server-card-bd { padding: .75rem .85rem; }
+
+.sv-server-toggle {
+  display: flex; align-items: center; gap: .5rem;
+  cursor: pointer; user-select: none;
+}
+.sv-server-toggle input[type="checkbox"] { cursor: pointer; }
+.sv-server-toggle-label {
+  font-weight: 600; font-size: .88em;
+  color: rgba(255,255,255,.85);
+}
+
+.sv-server-card-actions {
+  display: flex; gap: .35rem; flex-shrink: 0;
+}
+
+/* ── 8. SERVER FIELDS ─────────────────────────────────────────────────────── */
+.sv-server-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .6rem .85rem;
+}
+.sv-server-field--wide { grid-column: 1 / -1; }
+@media (max-width: 600px) {
+  .sv-server-fields { grid-template-columns: 1fr; }
+  .sv-server-field--wide { grid-column: auto; }
+}
+
+.sv-field-label {
+  display: block;
+  font-size: .78em; font-weight: 600;
+  color: rgba(255,255,255,.55);
+  margin-bottom: .25rem;
+  user-select: none;
+}
+
+.sv-token-saved {
+  margin-left: .4rem;
+  font-size: .78em; font-weight: 400;
+  color: #52b54b;
+}
+
+/* ── 9. BUTTONS ───────────────────────────────────────────────────────────── */
+.sv-test-btn {
+  display: inline-flex !important; align-items: center !important; gap: .3rem !important;
+  padding: .2rem .5rem !important;
+  border-radius: 4px !important; cursor: pointer !important;
+  font-size: .7em !important; font-weight: 600 !important;
+  line-height: 1.4 !important; height: auto !important; min-height: 0 !important;
+  transition: background .2s, border-color .2s, color .2s !important;
+  border: 1px solid rgba(74,144,226,.3) !important;
+  background: rgba(74,144,226,.1) !important;
+  color: #4a90e2 !important;
+}
+.sv-test-btn:hover:not(:disabled) {
+  background: rgba(74,144,226,.25) !important;
+  border-color: rgba(74,144,226,.6) !important;
+  color: #6aaef5 !important;
+}
+.sv-test-btn:disabled { opacity: .5 !important; cursor: not-allowed !important; }
+/* Emby test button — green */
+#svEmbyTestBtn {
+  border-color: rgba(82,181,75,.3) !important;
+  background: rgba(82,181,75,.1) !important;
+  color: #52b54b !important;
+}
+#svEmbyTestBtn:hover:not(:disabled) {
+  background: rgba(82,181,75,.25) !important;
+  border-color: rgba(82,181,75,.6) !important;
+  color: #6dd966 !important;
+}
+
+.sv-remove-btn {
+  display: inline-flex !important; align-items: center !important; gap: .2rem !important;
+  padding: .1rem .35rem !important;
+  font-size: .65em !important; font-weight: 600 !important;
+  line-height: 1.2 !important; height: auto !important; min-height: 0 !important;
+  width: auto !important; min-width: 0 !important;
+  border-radius: 3px !important; cursor: pointer !important;
+  border: 1px solid !important;
+  background: rgba(231,76,60,.08) !important;
+  border-color: rgba(231,76,60,.25) !important;
+  color: rgba(231,76,60,.8) !important;
+  transition: background .2s, border-color .2s, color .2s !important;
+  white-space: nowrap !important;
+}
+.sv-remove-btn:hover {
+  background: rgba(231,76,60,.18) !important;
+  border-color: rgba(231,76,60,.45) !important;
+  color: #e74c3c !important;
+}
+
+.sv-add-btn {
+  display: inline-flex !important; align-items: center !important; gap: .3rem !important;
+  padding: .2rem .5rem !important;
+  width: auto !important; max-width: max-content !important;
+  min-width: 0 !important; flex: 0 0 auto !important;
+  background: rgba(244,125,66,.1) !important;
+  border: 1px solid rgba(244,125,66,.3) !important;
+  border-radius: 4px !important;
+  color: #f47d42 !important; font-weight: 600 !important; font-size: .7em !important;
+  cursor: pointer !important;
+  line-height: 1.4 !important; height: auto !important; min-height: 0 !important;
+  transition: background .2s, border-color .2s, color .2s !important;
+}
+.sv-add-btn:hover:not(:disabled) {
+  background: rgba(244,125,66,.25) !important;
+  border-color: rgba(244,125,66,.6) !important;
+  color: #ff9a60 !important;
+}
+.sv-add-btn:disabled { opacity: .4 !important; cursor: not-allowed !important; }
+
+.sv-disc-card { margin-bottom: .5rem; }
+.sv-disc-card-top {
+  display: flex; align-items: center; gap: .4rem;
+  margin-bottom: .3rem; flex-wrap: wrap;
+}
+.sv-disc-name {
+  font-weight: 600; font-size: .9em;
+  color: rgba(255,255,255,.85);
+}
+.sv-disc-already {
+  display: inline-flex !important; align-items: center !important;
+  padding: .1rem .35rem !important;
+  font-size: .65em !important; font-weight: 600 !important;
+  line-height: 1.2 !important;
+  width: auto !important; min-width: 0 !important;
+  flex-shrink: 0 !important;
+  border-radius: 3px !important;
+  border: 1px solid rgba(76,175,80,.3) !important;
+  background: rgba(76,175,80,.1) !important;
+  color: rgba(76,175,80,.9) !important;
+  white-space: nowrap !important;
+}
+
+.sv-disc-card-bottom {
+  display: flex; flex-direction: column; align-items: flex-start; gap: .3rem;
+  margin-top: .3rem;
+}
+.sv-disc-card-bottom .sv-disc-conn-select {
+  width: 100%;
+}
+.sv-disc-card-bottom .sv-add-btn {
+  width: auto !important; min-width: 0 !important;
+}
+
+.sv-action-btn {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: .25rem .6rem;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 4px;
+  color: rgba(255,255,255,.7); font-size: .8em;
+  cursor: pointer;
+  transition: background .2s;
+}
+.sv-action-btn:hover { background: rgba(255,255,255,.09); color: #fff; }
+
+/* ── 10. TEST RESULT ──────────────────────────────────────────────────────── */
+.sv-test-result {
+  margin-top: .5rem; padding: .4rem .7rem;
+  border-radius: 4px; font-size: .82em; font-weight: 500;
+}
+.sv-test-ok  { background: rgba(82,181,74,.12); border: 1px solid rgba(82,181,74,.3);  color: #52b54b; }
+.sv-test-err { background: rgba(231,76,60,.10); border: 1px solid rgba(231,76,60,.25); color: #e74c3c; }
+
+/* ── 11. INFO BOX ─────────────────────────────────────────────────────────── */
+.sv-info-box {
+  background: rgba(74,144,226,.07);
+  border: 1px solid rgba(74,144,226,.2);
+  border-radius: 6px;
+  padding: .75rem 1rem;
+}
+.sv-info-title {
+  font-weight: 700; font-size: .85em;
+  color: rgba(74,144,226,.9);
+  margin-bottom: .4rem;
+}
+.sv-info-body {
+  font-size: .82em; line-height: 1.55;
+  color: rgba(255,255,255,.6);
+}
+.sv-info-body code {
+  background: rgba(255,255,255,.08);
+  padding: .1em .35em; border-radius: 3px;
+  font-family: monospace; font-size: .95em;
+}
+
+/* ── 12. NO-SERVERS PLACEHOLDER ───────────────────────────────────────────── */
+.sv-no-servers {
+  text-align: center; padding: 1.5rem 1rem;
+  color: rgba(255,255,255,.35); font-style: italic; font-size: .9em;
+}
+
+/* ── 13. FOOTER ───────────────────────────────────────────────────────────── */
+.sv-footer {
+  display: flex; gap: .6rem; padding: 1rem;
+  border-top: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+  justify-content: center; align-items: center;
+  border-bottom-right-radius: 10px;
+  border-bottom-left-radius: 10px;
+  flex-wrap: wrap;
+}
+.sv-footer input[type="submit"],
+.sv-footer input[type="button"] { min-width: 110px; }
+
+.sv-footer-row {
+  text-align: center; font-size: .9em;
+  margin: 0.9rem 0 0.5rem 0;
+  display: flex; flex-direction: column; gap: 0;
+}
+.sv-support-link {
+  color: #4a90e2;
+  text-decoration: none;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color .2s ease;
+}
+.sv-support-link:hover { color: #6bb3ff; }
+.sv-version-text { opacity: .75; font-size: 0.95em; }
+
+/* ── 14. COLLAPSED CARD STATE ─────────────────────────────────────────────── */
+.sv-card.sv-collapsed .sv-card-bd { display: none; }
+.sv-card.sv-collapsed .sv-card-hd { border-bottom: 0; }

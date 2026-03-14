@@ -1,0 +1,1339 @@
+Menu="Utilities"
+Icon="streamviewer.png"
+Title="Stream Viewer Settings"
+---
+<?php
+require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
+require_once '/usr/local/emhttp/plugins/streamviewer/streamviewer_api.php';
+
+const SV_PLUGIN      = 'streamviewer';
+const SV_CFG_FILE    = '/boot/config/plugins/streamviewer/streamviewer.cfg';
+const SV_MAX_SERVERS = 10;
+const SV_VALID_TYPES = ['plex', 'jellyfin', 'emby'];
+
+// ── Sanitizers ─────────────────────────────────────────────────────────────
+
+$yn = static fn($v, $d = '0') => ((string)($v ?? $d) === '1') ? '1' : '0';
+
+$sanitize_url = static function($v): string {
+    $v = trim((string)($v ?? ''));
+    $v = rtrim($v, '/');
+    if ($v === '') return '';
+    // Accept http(s):// URLs with a valid hostname (including Plex relay hostnames
+    // like 84-254-60-132.abc123.plex.direct:23057 which fail filter_var on some PHP builds)
+    if (!preg_match('#^https?://[a-zA-Z0-9._\-]+(:[0-9]{1,5})?(/.*)?$#i', $v)) return '';
+    return $v;
+};
+
+$sanitize_token = static function($v): string {
+    $v = trim((string)($v ?? ''));
+    // Allow all printable ASCII except quotes/backslash (safe for .cfg file storage)
+    return preg_replace('/[^\x20-\x21\x23-\x5B\x5D-\x7E]/u', '', $v);
+};
+
+$sanitize_name = static function($v): string {
+    $v = trim((string)($v ?? ''));
+    return substr(htmlspecialchars($v, ENT_QUOTES, 'UTF-8'), 0, 64);
+};
+
+$sanitize_type = static fn($v) => in_array((string)$v, SV_VALID_TYPES, true) ? (string)$v : '';
+
+$clamp_interval = static function($v): string {
+    $n = (int)$v;
+    return ($n >= 5 && $n <= 300) ? (string)$n : '30';
+};
+
+$clamp_max_streams = static function($v): string {
+    $allowed = ['0', '5', '10', '20', '50'];
+    return in_array((string)$v, $allowed, true) ? (string)$v : '10';
+};
+
+// ── Handle POST (Apply) ────────────────────────────────────────────────────
+
+if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'] ?? '') === 'apply') {
+    $existing = @parse_plugin_cfg(SV_PLUGIN, true) ?: [];
+    $new_cfg  = [];
+
+    for ($i = 1; $i <= SV_MAX_SERVERS; $i++) {
+        $enabled = (($_POST["SERVER{$i}_ENABLED"] ?? '0') === '1') ? '1' : '0';
+        $type    = $sanitize_type($_POST["SERVER{$i}_TYPE"]  ?? '');
+        $name    = $sanitize_name($_POST["SERVER{$i}_NAME"]  ?? '');
+        $url     = $sanitize_url($_POST["SERVER{$i}_URL"]    ?? '');
+        $token   = $sanitize_token($_POST["SERVER{$i}_TOKEN"] ?? '');
+
+        if ($token === '__KEEP__') {
+            $token = (string)($existing["SERVER{$i}_TOKEN"] ?? '');
+        }
+
+        $new_cfg["SERVER{$i}_ENABLED"] = $enabled;
+        $new_cfg["SERVER{$i}_TYPE"]    = $type;
+        $new_cfg["SERVER{$i}_NAME"]    = $name;
+        $new_cfg["SERVER{$i}_URL"]     = $url;
+        $new_cfg["SERVER{$i}_TOKEN"]   = $token;
+    }
+
+    $new_cfg['REFRESH_ENABLED']      = $yn($_POST['REFRESH_ENABLED']      ?? '1', '1');
+    $new_cfg['REFRESH_INTERVAL']     = $clamp_interval($_POST['REFRESH_INTERVAL'] ?? 30);
+    $new_cfg['WIDGET_MAX_STREAMS']   = $clamp_max_streams($_POST['WIDGET_MAX_STREAMS'] ?? '10');
+    $new_cfg['WIDGET_SHOW_IP']       = $yn($_POST['WIDGET_SHOW_IP']       ?? '1', '1');
+    $new_cfg['WIDGET_SHOW_PROGRESS'] = $yn($_POST['WIDGET_SHOW_PROGRESS'] ?? '1', '1');
+    $new_cfg['WIDGET_SHOW_QUALITY']  = $yn($_POST['WIDGET_SHOW_QUALITY']  ?? '1', '1');
+    $new_cfg['WIDGET_SHOW_TRANSCODE']= $yn($_POST['WIDGET_SHOW_TRANSCODE'] ?? '1', '1');
+    $new_cfg['WIDGET_SHOW_DEVICE']   = $yn($_POST['WIDGET_SHOW_DEVICE']   ?? '1', '1');
+
+    $new_cfg['TOOL_REFRESH_ENABLED']  = $yn($_POST['TOOL_REFRESH_ENABLED']  ?? '1', '1');
+    $new_cfg['TOOL_REFRESH_INTERVAL'] = $clamp_interval($_POST['TOOL_REFRESH_INTERVAL'] ?? 30);
+    $new_cfg['TOOL_MAX_STREAMS']      = $clamp_max_streams($_POST['TOOL_MAX_STREAMS'] ?? '0');
+    $new_cfg['TOOL_SHOW_IP']          = $yn($_POST['TOOL_SHOW_IP']          ?? '1', '1');
+    $new_cfg['TOOL_SHOW_PROGRESS']    = $yn($_POST['TOOL_SHOW_PROGRESS']    ?? '1', '1');
+    $new_cfg['TOOL_SHOW_QUALITY']     = $yn($_POST['TOOL_SHOW_QUALITY']     ?? '1', '1');
+    $new_cfg['TOOL_SHOW_TRANSCODE']   = $yn($_POST['TOOL_SHOW_TRANSCODE']   ?? '1', '1');
+    $new_cfg['TOOL_SHOW_DEVICE']      = $yn($_POST['TOOL_SHOW_DEVICE']      ?? '1', '1');
+    $new_cfg['TOOL_ALLOW_KILL']       = $yn($_POST['TOOL_ALLOW_KILL']       ?? '0', '0');
+
+    $tab = $_POST['sv_active_tab'] ?? 'widget';
+    if (!in_array($tab, ['widget', 'plex', 'jellyfin', 'emby'], true)) $tab = 'widget';
+    $new_cfg['SV_ACTIVE_TAB'] = $tab;
+
+    $ini = '';
+    foreach ($new_cfg as $k => $v) {
+        $v   = str_replace('"', '\\"', (string)$v);
+        $ini .= "{$k}=\"{$v}\"\n";
+    }
+    @mkdir(dirname(SV_CFG_FILE), 0755, true);
+    $written = file_put_contents(SV_CFG_FILE, $ini);
+
+    // If this is an AJAX request, return JSON and exit
+    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) || !empty($_POST['_svAjax'])) {
+        header('Content-Type: application/json');
+        if ($written === false) {
+            echo json_encode(['ok' => false, 'error' => 'Could not write config file. Check permissions on ' . SV_CFG_FILE]);
+        } else {
+            echo json_encode(['ok' => true]);
+        }
+        exit;
+    }
+
+    $cfg = $new_cfg;
+
+} else {
+    $cfg = @parse_plugin_cfg(SV_PLUGIN, true) ?: [];
+}
+
+// ── Build server data array for JS ────────────────────────────────────────
+
+$servers_data = [];
+for ($i = 1; $i <= SV_MAX_SERVERS; $i++) {
+    $type  = (string)($cfg["SERVER{$i}_TYPE"]    ?? '');
+    $name  = (string)($cfg["SERVER{$i}_NAME"]    ?? '');
+    $url   = (string)($cfg["SERVER{$i}_URL"]     ?? '');
+    $token = (string)($cfg["SERVER{$i}_TOKEN"]   ?? '');
+    $en    = (string)($cfg["SERVER{$i}_ENABLED"] ?? '0');
+
+    if ($type !== '' || $url !== '' || $name !== '') {
+        $servers_data[] = [
+            'index'             => $i,
+            'enabled'           => $en === '1',
+            'type'              => $type,
+            'name'              => $name,
+            'url'               => $url,
+            'has_token'         => $token !== '',
+            'token_placeholder' => $token !== '' ? '__KEEP__' : '',
+        ];
+    }
+}
+
+$active_tab = (string)($cfg['SV_ACTIVE_TAB'] ?? 'servers');
+if (!in_array($active_tab, ['widget', 'plex', 'jellyfin', 'emby'], true)) $active_tab = 'widget';
+
+$plugin_version = 'dev';
+$plg = @file_get_contents('/boot/config/plugins/streamviewer/streamviewer.plg');
+if ($plg && preg_match('/<ENTITY\s+version\s+"([^"]+)"/i', $plg, $m)) {
+    $plugin_version = $m[1];
+}
+if ($plugin_version === 'dev') {
+    $txz_files = glob('/boot/config/plugins/streamviewer/streamviewer-*.txz');
+    if ($txz_files && preg_match('/streamviewer-(\d{4}\.\d{2}\.\d{2}[a-z]?)/', basename(end($txz_files)), $m)) {
+        $plugin_version = $m[1];
+    }
+}
+?>
+
+<style>.streamviewer-settings,.sv-credits-top{visibility:hidden;}</style>
+<link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/settings.css">
+
+<div class="sv-credits-top">
+  <a href="#" class="sv-credits" id="svCreditsLink">Credits</a>
+</div>
+
+<form name="streamviewer_settings" method="post" class="streamviewer-settings" autocomplete="off">
+
+  <!-- ── Top tabs: Dashboard Widget · Plex · Jellyfin · Emby ──────── -->
+  <div class="sv-tabs" id="svTopTabs">
+    <div class="sv-tab<?= $active_tab === 'widget'   ? ' active' : '' ?>" id="svTabWidget"   role="button" tabindex="0">
+      <span class="sv-tabicon">▦</span> Dashboard Widget
+    </div>
+    <div class="sv-tab<?= $active_tab === 'plex'     ? ' active' : '' ?>" id="svTabPlex"     role="button" tabindex="0">
+      <span class="sv-tabicon" style="color:#e5a00d;">▶</span> Plex
+    </div>
+    <div class="sv-tab<?= $active_tab === 'jellyfin' ? ' active' : '' ?>" id="svTabJellyfin" role="button" tabindex="0">
+      <span class="sv-tabicon" style="color:#00a4dc;">⬡</span> Jellyfin
+    </div>
+    <div class="sv-tab<?= $active_tab === 'emby'     ? ' active' : '' ?>" id="svTabEmby"     role="button" tabindex="0">
+      <span class="sv-tabicon" style="color:#52b54b;">▣</span> Emby
+    </div>
+  </div>
+
+  <div class="sv-settings-panel">
+
+    <!-- ════════════════════════════════════════════════════════════════
+         DASHBOARD WIDGET PANEL
+         ════════════════════════════════════════════════════════════════ -->
+    <div id="svWidgetPanel" style="<?= $active_tab !== 'widget' ? 'display:none;' : '' ?>">
+
+      <div class="sv-card">
+        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetAutoRefreshBd"><span>Auto-Refresh</span><span class="sv-pill">Polling</span></div>
+        <div class="sv-card-bd-collapsible" id="svWidgetAutoRefreshBd">
+          <div class="sv-row">
+            <div>
+              <div class="sv-label">Automatic Refresh</div>
+              <div class="sv-desc">Automatically poll your servers for new stream data.</div>
+            </div>
+            <div class="sv-field">
+              <select name="REFRESH_ENABLED" class="form-control">
+                <?= mk_option($cfg['REFRESH_ENABLED'] ?? '1', '1', _('Enabled')) ?>
+                <?= mk_option($cfg['REFRESH_ENABLED'] ?? '1', '0', _('Disabled')) ?>
+              </select>
+            </div>
+          </div>
+          <div class="sv-row">
+            <div>
+              <div class="sv-label">Refresh Interval (seconds)</div>
+              <div class="sv-desc">How often to poll. Recommended: 15–60 seconds.</div>
+            </div>
+            <div class="sv-field">
+              <input type="number" name="REFRESH_INTERVAL" class="form-control"
+                value="<?= htmlspecialchars($cfg['REFRESH_INTERVAL'] ?? '30') ?>">
+              <div class="sv-hint">Range: 5–300 s. Default: 30.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sv-card sv-card--collapsed">
+        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetDisplayBd"><span>Display</span><span class="sv-pill">Widget layout</span></div>
+        <div class="sv-card-bd-collapsible" id="svWidgetDisplayBd" style="display:none;">
+          <div class="sv-row">
+            <div><div class="sv-label">Max streams shown</div><div class="sv-desc">Limit streams in the widget (0 = all).</div></div>
+            <div class="sv-field">
+              <select name="WIDGET_MAX_STREAMS" class="form-control">
+                <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '0',  _('0 — All')) ?>
+                <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '5',  _('5')) ?>
+                <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '10', _('10 (Default)')) ?>
+                <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '20', _('20')) ?>
+                <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '50', _('50')) ?>
+              </select>
+            </div>
+          </div>
+          <div class="sv-row">
+            <div><div class="sv-label">Show device</div></div>
+            <div class="sv-field"><select name="WIDGET_SHOW_DEVICE" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_DEVICE'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_DEVICE'] ?? '1', '0', _('Hide')) ?></select></div>
+          </div>
+          <div class="sv-row">
+            <div><div class="sv-label">Show IP address</div><div class="sv-desc">Disable for privacy on shared screens.</div></div>
+            <div class="sv-field"><select name="WIDGET_SHOW_IP" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_IP'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_IP'] ?? '1', '0', _('Hide')) ?></select></div>
+          </div>
+          <div class="sv-row">
+            <div><div class="sv-label">Show progress bar</div></div>
+            <div class="sv-field"><select name="WIDGET_SHOW_PROGRESS" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_PROGRESS'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_PROGRESS'] ?? '1', '0', _('Hide')) ?></select></div>
+          </div>
+          <div class="sv-row">
+            <div><div class="sv-label">Show quality / bitrate</div></div>
+            <div class="sv-field"><select name="WIDGET_SHOW_QUALITY" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_QUALITY'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_QUALITY'] ?? '1', '0', _('Hide')) ?></select></div>
+          </div>
+          <div class="sv-row">
+            <div><div class="sv-label">Show transcode info</div></div>
+            <div class="sv-field"><select name="WIDGET_SHOW_TRANSCODE" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1', '0', _('Hide')) ?></select></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sv-card sv-card--collapsed">
+        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetSessionBd"><span>Session Control</span><span class="sv-pill">Advanced</span></div>
+        <div class="sv-card-bd-collapsible" id="svWidgetSessionBd" style="display:none;">
+          <div class="sv-row">
+            <div>
+              <div class="sv-label">Allow killing sessions</div>
+              <div class="sv-desc">Shows a Stop button per stream. Immediately disconnects the user.</div>
+            </div>
+            <div class="sv-field">
+              <select name="TOOL_ALLOW_KILL" class="form-control">
+                <?= mk_option($cfg['TOOL_ALLOW_KILL'] ?? '0', '0', _('Disabled (Default — safe)')) ?>
+                <?= mk_option($cfg['TOOL_ALLOW_KILL'] ?? '0', '1', _('Enabled')) ?>
+              </select>
+              <div class="sv-hint" style="color:#f47d42;">⚠ Forcibly disconnects users.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /svWidgetPanel -->
+
+
+    <!-- ════════════════════════════════════════════════════════════════
+         PLEX PANEL
+         ════════════════════════════════════════════════════════════════ -->
+    <div id="svPlexPanel" style="<?= $active_tab !== 'plex' ? 'display:none;' : '' ?>">
+
+      <!-- ── Add Plex Servers card (with Connect button on right + accordion) -->
+      <div class="sv-card">
+        <div class="sv-card-hd">
+          <span style="color:#e5a00d;">▶</span>&nbsp;Add Plex Servers
+          <span class="sv-pill">Auto-discovery</span>
+        </div>
+        <div class="sv-card-bd">
+          <div class="sv-row">
+            <div>
+              <div class="sv-label">Sign in with Plex</div>
+              <div class="sv-desc">
+                Click the button below to sign in securely via plex.tv.
+                A new tab will open — log in and authorize Stream Viewer.
+                Your Plex servers will be discovered automatically.<br>
+                <strong>No token is ever stored</strong> — only the per-server access keys
+                retrieved during discovery are saved.
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 1: initiate -->
+          <div id="svPlexOauthStep1" style="margin-top:.85rem;display:flex;justify-content:flex-end;">
+            <button type="button" id="svPlexSignInBtn" class="sv-plex-signin-btn">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="vertical-align:middle;margin-right:.3rem;"><path d="M11.69 3 5 12l6.69 9h1.55l-6.69-9 6.69-9zM17.31 3h-1.55l-6.69 9 6.69 9h1.55l-6.69-9z"/></svg>
+              Connect with Plex
+            </button>
+          </div>
+
+          <!-- Step 2: waiting for auth -->
+          <div id="svPlexOauthStep2" style="display:none;margin-top:.85rem;">
+            <div class="sv-oauth-waiting">
+              <i class="fa fa-spinner fa-spin" style="color:#e5a00d;font-size:1.1em;"></i>
+              <span id="svPlexOauthMsg">Waiting for you to sign in at plex.tv…</span>
+              <button type="button" id="svPlexCancelBtn" class="sv-cancel-btn">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Discovery results -->
+          <div id="svDiscoveryResults" style="display:none;margin-top:1rem;">
+            <div class="sv-discovery-header" id="svDiscoveryHeader"></div>
+            <div id="svDiscoveryList"></div>
+          </div>
+          <div id="svDiscoveryError" class="sv-test-err" style="display:none;margin-top:.75rem;"></div>
+
+          <!-- ── Configured Plex Servers (accordion) ── -->
+          <div class="sv-accordion sv-accordion--collapsed" id="svPlexServersAccordion" style="margin-top:1rem;">
+            <div class="sv-accordion-hd" id="svPlexServersAccordionHd">
+              <span>Configured Plex Servers</span>
+              <span class="sv-pill sv-pill--count" id="svPlexCountPill">0</span>
+            </div>
+            <div class="sv-accordion-bd" id="svPlexServersAccordionBd">
+              <div id="svPlexServerList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /svPlexPanel -->
+
+
+    <!-- ════════════════════════════════════════════════════════════════
+         JELLYFIN PANEL
+         ════════════════════════════════════════════════════════════════ -->
+    <div id="svJellyfinPanel" style="<?= $active_tab !== 'jellyfin' ? 'display:none;' : '' ?>">
+
+      <div class="sv-card">
+        <div class="sv-card-hd">
+          <span style="color:#00a4dc;">⬡</span>&nbsp;Add Jellyfin Server
+          <span class="sv-pill">Manual</span>
+        </div>
+        <div class="sv-card-bd">
+          <div class="sv-jf-add-fields">
+            <div class="sv-server-field">
+              <label class="sv-field-label">Display Name</label>
+              <input type="text" id="svJfName" class="form-control" placeholder="e.g. Home Jellyfin" maxlength="64">
+            </div>
+            <div class="sv-server-field sv-server-field--wide">
+              <label class="sv-field-label">Server URL</label>
+              <input type="text" id="svJfUrl" class="form-control" placeholder="http://192.168.1.x:8096">
+            </div>
+            <div class="sv-server-field sv-server-field--wide">
+              <label class="sv-field-label">API Key</label>
+              <input type="password" id="svJfToken" class="form-control"
+                placeholder="Dashboard → API Keys → New key" autocomplete="new-password">
+              <div class="sv-hint">Dashboard → Administration → API Keys → + New.</div>
+            </div>
+          </div>
+          <div style="margin-top:.75rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+            <button type="button" id="svJfTestBtn" class="sv-test-btn">
+              <i class="fa fa-plug"></i> Test Connection
+            </button>
+            <button type="button" id="svJfAddBtn" class="sv-add-btn">
+              <i class="fa fa-plus"></i> Add Server
+            </button>
+            <span id="svJfTestResult" class="sv-inline-result" style="display:none;"></span>
+          </div>
+
+          <!-- ── Configured Jellyfin Servers (accordion) ── -->
+          <div class="sv-accordion sv-accordion--collapsed" id="svJfServersAccordion" style="margin-top:1rem;">
+            <div class="sv-accordion-hd" id="svJfServersAccordionHd">
+              <span>Configured Jellyfin Servers</span>
+              <span class="sv-pill sv-pill--count" id="svJfCountPill">0</span>
+            </div>
+            <div class="sv-accordion-bd" id="svJfServersAccordionBd">
+              <div id="svJfServerList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /svJellyfinPanel -->
+
+
+    <!-- ════════════════════════════════════════════════════════════════
+         EMBY PANEL
+         ════════════════════════════════════════════════════════════════ -->
+    <div id="svEmbyPanel" style="<?= $active_tab !== 'emby' ? 'display:none;' : '' ?>">
+
+      <div class="sv-card">
+        <div class="sv-card-hd">
+          <span style="color:#52b54b;">▣</span>&nbsp;Add Emby Server
+          <span class="sv-pill">Manual</span>
+        </div>
+        <div class="sv-card-bd">
+          <div class="sv-jf-add-fields">
+            <div class="sv-server-field">
+              <label class="sv-field-label">Display Name</label>
+              <input type="text" id="svEmbyName" class="form-control" placeholder="e.g. Home Emby" maxlength="64">
+            </div>
+            <div class="sv-server-field sv-server-field--wide">
+              <label class="sv-field-label">Server URL</label>
+              <input type="text" id="svEmbyUrl" class="form-control" placeholder="http://192.168.1.x:8096">
+            </div>
+            <div class="sv-server-field sv-server-field--wide">
+              <label class="sv-field-label">API Key</label>
+              <input type="password" id="svEmbyToken" class="form-control"
+                placeholder="Dashboard → API Keys → New key" autocomplete="new-password">
+              <div class="sv-hint">Dashboard → Administration → API Keys → + New.</div>
+            </div>
+          </div>
+          <div style="margin-top:.75rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+            <button type="button" id="svEmbyTestBtn" class="sv-test-btn">
+              <i class="fa fa-plug"></i> Test Connection
+            </button>
+            <button type="button" id="svEmbyAddBtn" class="sv-add-btn">
+              <i class="fa fa-plus"></i> Add Server
+            </button>
+            <span id="svEmbyTestResult" class="sv-inline-result" style="display:none;"></span>
+          </div>
+
+          <!-- ── Configured Emby Servers (accordion) ── -->
+          <div class="sv-accordion sv-accordion--collapsed" id="svEmbyServersAccordion" style="margin-top:1rem;">
+            <div class="sv-accordion-hd" id="svEmbyServersAccordionHd">
+              <span>Configured Emby Servers</span>
+              <span class="sv-pill sv-pill--count" id="svEmbyCountPill">0</span>
+            </div>
+            <div class="sv-accordion-bd" id="svEmbyServersAccordionBd">
+              <div id="svEmbyServerList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /svEmbyPanel -->
+
+  </div><!-- /sv-settings-panel -->
+
+  <!-- Hidden inputs for form submit (all server slots) -->
+  <?php for ($i = 1; $i <= SV_MAX_SERVERS; $i++): ?>
+  <input type="hidden" name="SERVER<?= $i ?>_ENABLED" id="svHidEnabled<?= $i ?>" value="0" autocomplete="off">
+  <input type="hidden" name="SERVER<?= $i ?>_TYPE"    id="svHidType<?= $i ?>"    value="" autocomplete="off">
+  <input type="hidden" name="SERVER<?= $i ?>_NAME"    id="svHidName<?= $i ?>"    value="" autocomplete="off">
+  <input type="hidden" name="SERVER<?= $i ?>_URL"     id="svHidUrl<?= $i ?>"     value="" autocomplete="off">
+  <input type="hidden" name="SERVER<?= $i ?>_TOKEN"   id="svHidToken<?= $i ?>"   value="" autocomplete="new-password">
+  <?php endfor; ?>
+
+  <!-- ── Footer ─────────────────────────────────────────────────────── -->
+  <input type="hidden" name="sv_active_tab" id="svActiveTabInput" value="<?= htmlspecialchars($active_tab) ?>">
+
+  <div class="sv-footer" style="justify-content:center;">
+    <input type="hidden" name="#apply" value="apply" id="svApplyHidden">
+    <input type="button" name="#apply_btn" id="svApplyBtn" value="<?= _('Apply') ?>">
+    <input type="button" id="svResetBtn" value="<?= _('Reset to Defaults') ?>">
+    <input type="button" value="<?= _('Done') ?>" onclick="done()">
+  </div>
+
+  <div class="sv-footer-row">
+    <a href="https://forums.unraid.net/" id="svSupportLink" class="sv-support-link">Support</a>
+    <div class="sv-version-text">Version: <?= htmlspecialchars($plugin_version) ?></div>
+  </div>
+
+  <!-- ── Credits modal ──────────────────────────────────────────────── -->
+  <div id="svCreditsModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
+    <div style="width:456px;max-width:94vw;height:384px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.13);border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.75);overflow:hidden;display:flex;flex-direction:column;">
+      <div style="padding:2.2rem 2.5rem 1.5rem;text-align:center;flex:1;display:flex;flex-direction:column;justify-content:center;">
+        <div style="margin-bottom:1.1rem;"><img src="/plugins/streamviewer/streamviewer.png" alt="StreamViewer" style="width:46px;height:46px;"></div>
+        <div style="font-size:1.3em;margin-bottom:1.5rem;font-weight:700;color:#fff;">Stream Viewer</div>
+        <table style="width:auto;margin:0 auto 1.5rem;border-collapse:collapse;font-size:0.95em;color:rgba(255,255,255,0.9);">
+          <tr>
+            <td style="padding:0.4rem 1rem 0.4rem 0;vertical-align:middle;"><img src="/plugins/streamviewer/avatar.png" alt="" style="width:42px;height:42px;border-radius:50%;object-fit:cover;display:block;"></td>
+            <td style="padding:0.4rem 2rem 0.4rem 0;font-weight:600;text-align:left;vertical-align:middle;">Lazaros Chalkidis</td>
+            <td style="padding:0.4rem 0;opacity:0.72;text-align:left;vertical-align:middle;">Development</td>
+          </tr>
+        </table>
+        <div style="font-size:0.82em;opacity:0.48;margin-bottom:1.1rem;color:#fff;font-style:italic;">Copyright © 2026 Stream Viewer Plugin</div>
+        <div style="margin-bottom:1.1rem;"><a href="https://forums.unraid.net/" target="_blank" rel="noopener" style="color:#4a90e2;text-decoration:none;font-size:0.9em;">Plugin Support Thread</a></div>
+      </div>
+      <div style="padding:0.9rem;text-align:center;border-top:1px solid rgba(255,255,255,0.1);flex-shrink:0;">
+        <button id="svCreditsOkBtn" style="background:#f47d42;border:1px solid #f47d42;color:#fff;padding:0.5rem 2.5rem;font-size:0.9em;font-weight:500;border-radius:4px;cursor:pointer;">OK</button>
+      </div>
+    </div>
+  </div>
+
+</form>
+
+<script>
+window.svToken    = <?= json_encode(StreamViewerEndpoint::generateNonce()) ?>;
+window.svServers  = <?= json_encode($servers_data, JSON_UNESCAPED_SLASHES) ?>;
+window.svMaxServers = <?= SV_MAX_SERVERS ?>;
+</script>
+
+<script>
+(function () {
+'use strict';
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+var PLEX_TV_API  = 'https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1';
+var PLEX_HEADERS = {
+    'Accept':                  'application/json',
+    'X-Plex-Product':          'Stream Viewer',
+    'X-Plex-Version':          '1.0',
+    'X-Plex-Client-Identifier':'streamviewer-unraid-settings',
+};
+
+var SV_TYPES = {
+    plex:     { label: 'Plex',     color: '#e5a00d' },
+    jellyfin: { label: 'Jellyfin', color: '#00a4dc' },
+    emby:     { label: 'Emby',     color: '#52b54b' },
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════════════════════════
+
+var cards = [];  // [{cardIndex, removed, data}]
+
+// ══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
+
+function escHtml(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function markDirty() {
+    var apply = document.querySelector('input[name="#apply_btn"]');
+    if (!apply) return;
+    apply.disabled = false;
+    if (typeof window.checkChanges === 'function') { try { window.checkChanges(); } catch(_) {} }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PLEX OAUTH PIN FLOW  — ALL plex.tv calls go through PHP (avoids CORS + Origin)
+//
+// Flow:
+//  1. JS  → PHP plex_create_pin  → PHP POSTs to plex.tv/api/v2/pins (no Origin)
+//  2. PHP returns {pin_id, auth_url}, JS opens auth_url popup
+//  3. JS polls PHP plex_poll_pin every 2s
+//  4. PHP polls plex.tv/api/v2/pins/{id} — when ready, runs discovery
+//  5. PHP returns server list, account token NEVER leaves PHP
+// ══════════════════════════════════════════════════════════════════════════════
+
+var _plexPollTimer  = null;
+var _plexAuthWindow = null;
+var _plexPinId      = null;
+var _plexPollCount  = 0;
+var PLEX_POLL_MAX   = 120;   // 120 × 2s = 4 minutes
+var PLEX_POLL_MS    = 2000;
+var SV_API          = '/plugins/streamviewer/streamviewer_api.php';
+
+var PLEX_BTN_LABEL  = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="vertical-align:middle;margin-right:.4rem;"><path d="M11.69 3 5 12l6.69 9h1.55l-6.69-9 6.69-9zM17.31 3h-1.55l-6.69 9 6.69 9h1.55l-6.69-9z"/></svg>Connect with Plex';
+
+function plexResetBtn() {
+    var btn = document.getElementById('svPlexSignInBtn');
+    if (btn) { btn.disabled = false; btn.innerHTML = PLEX_BTN_LABEL; }
+}
+
+function plexShowStep(step) {
+    var s1 = document.getElementById('svPlexOauthStep1');
+    var s2 = document.getElementById('svPlexOauthStep2');
+    if (s1) s1.style.display = step === 1 ? 'flex' : 'none';
+    if (s2) s2.style.display = step === 2 ? 'flex' : 'none';
+}
+
+/** Step 1 — ask PHP to create the PIN, then open the auth popup. */
+function startPlexOauth() {
+    var btn   = document.getElementById('svPlexSignInBtn');
+    var errEl = document.getElementById('svDiscoveryError');
+    var resEl = document.getElementById('svDiscoveryResults');
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Connecting…';
+    errEl.style.display = 'none';
+    if (resEl) resEl.style.display = 'none';
+
+    // PHP creates the PIN server-side — no Origin header sent to plex.tv
+    $.ajax({
+        url:      SV_API,
+        method:   'GET',
+        data:     { action: 'plex_create_pin', forward_url: window.location.href.split('#')[0], _svt: window.svToken || '' },
+        headers:  { 'X-Requested-With': 'XMLHttpRequest' },
+        timeout:  12000,
+        dataType: 'json',
+        success: function(data) {
+            if (!data.ok) {
+                plexResetBtn();
+                showDiscoveryError(data.error || 'Could not create PIN');
+                return;
+            }
+
+            _plexPinId     = data.pin_id;
+            _plexPollCount = 0;
+
+            // Open Plex auth popup — URL was built by PHP
+            _plexAuthWindow = window.open(
+                data.auth_url, 'plex_auth',
+                'width=800,height=700,left=' + Math.round((screen.width  - 800) / 2)
+                + ',top=' + Math.round((screen.height - 700) / 2)
+            );
+
+            plexShowStep(2);
+            setOauthMsg('Waiting for you to sign in at plex.tv…');
+            _plexPollTimer = setInterval(pollPlexPin, PLEX_POLL_MS);
+        },
+        error: function(xhr) {
+            plexResetBtn();
+            var msg = (xhr.responseJSON && xhr.responseJSON.error) ? xhr.responseJSON.error : 'Could not reach plex.tv';
+            showDiscoveryError(msg);
+        },
+    });
+}
+
+/** Step 3 — poll PHP which polls plex.tv server-side. */
+function pollPlexPin() {
+    _plexPollCount++;
+
+    if (_plexPollCount > PLEX_POLL_MAX) {
+        cancelPlexOauth();
+        showDiscoveryError('Sign-in timed out. Please try again.');
+        return;
+    }
+
+    var remaining = Math.ceil((PLEX_POLL_MAX - _plexPollCount) * PLEX_POLL_MS / 1000);
+    setOauthMsg('Waiting for plex.tv sign-in… (' + remaining + 's remaining)');
+
+    $.ajax({
+        url:      SV_API,
+        method:   'GET',
+        data:     { action: 'plex_poll_pin', pin_id: _plexPinId, _svt: window.svToken || '' },
+        headers:  { 'X-Requested-With': 'XMLHttpRequest' },
+        timeout:  8000,
+        dataType: 'json',
+        success: function(data) {
+            if (!data.ok) {
+                // transient error — keep polling
+                return;
+            }
+
+            if (!data.ready) {
+                // Not yet authorized — keep polling
+                return;
+            }
+
+            // Authorized! PHP already ran discovery and returned servers.
+            clearInterval(_plexPollTimer);
+            _plexPollTimer = null;
+            if (_plexAuthWindow) { try { _plexAuthWindow.close(); } catch(_) {} _plexAuthWindow = null; }
+
+            plexShowStep(1);
+            plexResetBtn();
+
+            if (!data.servers || data.servers.length === 0) {
+                showDiscoveryError('No Plex Media Servers found on this account.');
+                return;
+            }
+
+            renderDiscoveryResults(data.servers);
+        },
+        error: function() {
+            // network hiccup — keep polling
+        },
+    });
+}
+
+function cancelPlexOauth() {
+    if (_plexPollTimer)  { clearInterval(_plexPollTimer); _plexPollTimer = null; }
+    if (_plexAuthWindow) { try { _plexAuthWindow.close(); } catch(_) {} _plexAuthWindow = null; }
+    plexShowStep(1);
+    plexResetBtn();
+}
+
+function setOauthMsg(html) {
+    var el = document.getElementById('svPlexOauthMsg');
+    if (el) el.innerHTML = html;
+}
+
+function showDiscoveryError(msg) {
+    var el = document.getElementById('svDiscoveryError');
+    if (!el) return;
+    el.textContent = '✗ ' + msg;
+    el.style.display = '';
+}
+
+function classifyConnection(conn) {
+    if (conn.relay) {
+        return { label: 'Relay — via plex.tv (recommended)', priority: 1, tag: 'relay' };
+    }
+    if (!conn.local) {
+        return { label: 'Remote — ' + conn.address + ':' + conn.port, priority: 2, tag: 'remote' };
+    }
+    return { label: 'Local — ' + conn.address + ':' + conn.port, priority: 3, tag: 'local' };
+}
+
+/**
+ * Render the discovery results — one card per found Plex server.
+ * Each card has a connection dropdown and an "Add" button.
+ */
+function renderDiscoveryResults(servers) {
+    var resultsEl = document.getElementById('svDiscoveryResults');
+    var headerEl  = document.getElementById('svDiscoveryHeader');
+    var listEl    = document.getElementById('svDiscoveryList');
+    if (!resultsEl || !listEl) return;
+
+    headerEl.innerHTML = '<div class="sv-discovery-found">'
+        + '<i class="fa fa-check-circle" style="color:#52b54b;"></i> '
+        + 'Found <strong>' + servers.length + '</strong> server' + (servers.length !== 1 ? 's' : '')
+        + '</div>';
+
+    listEl.innerHTML = servers.map(function(srv, idx) {
+        return buildDiscoveryCard(srv, idx);
+    }).join('');
+
+    // Bind Add buttons
+    listEl.querySelectorAll('.sv-disc-add-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            addDiscoveredServer(btn, servers);
+        });
+    });
+
+    resultsEl.style.display = '';
+}
+
+function buildDiscoveryCard(srv, idx) {
+    var connections = (srv.connections || []).filter(function(c) { return c.uri; });
+    if (connections.length === 0) {
+        return '<div class="sv-disc-card sv-disc-card--unavailable">'
+            + '<span class="sv-disc-name">' + escHtml(srv.name) + '</span>'
+            + '<span class="sv-disc-unavail">No connections available</span>'
+            + '</div>';
+    }
+
+    // Sort connections: relay first, then remote, then local
+    var sorted = connections.slice().sort(function(a, b) {
+        return classifyConnection(a).priority - classifyConnection(b).priority;
+    });
+
+    var options = sorted.map(function(conn, i) {
+        var cls = classifyConnection(conn);
+        return '<option value="' + escHtml(conn.uri) + '"' + (i === 0 ? ' selected' : '') + '>'
+            + escHtml(cls.label) + '</option>';
+    }).join('');
+
+    var isOwned  = srv.owned ? '' : ' <span class="sv-disc-shared">(shared)</span>';
+    var alreadyAdded = cards.some(function(c) {
+        return !c.removed && c.data.name === srv.name && c.data.type === 'plex';
+    });
+
+    return '<div class="sv-disc-card" data-srv-idx="' + idx + '">'
+        + '<div class="sv-disc-card-top">'
+        +   '<span class="sv-disc-name">' + escHtml(srv.name) + isOwned + '</span>'
+        +   (alreadyAdded ? '<span class="sv-disc-already">✓ added</span>' : '')
+        + '</div>'
+        + '<div class="sv-disc-card-bottom">'
+        +   '<select class="form-control sv-disc-conn-select" data-srv-idx="' + idx + '" data-srv-token="' + escHtml(srv.accessToken || '') + '" data-srv-name="' + escHtml(srv.name) + '">'
+        +     options
+        +   '</select>'
+        +   '<button type="button" class="sv-disc-add-btn sv-add-btn" data-srv-idx="' + idx + '"'
+        +     (alreadyAdded ? ' disabled' : '') + '>'
+        +     '<i class="fa fa-plus"></i> Add'
+        +   '</button>'
+        + '</div>'
+        + '</div>';
+}
+
+function addDiscoveredServer(btn, servers) {
+    var idx   = parseInt(btn.dataset.srvIdx, 10);
+    var srv   = servers[idx];
+    if (!srv) return;
+
+    var select = document.querySelector('.sv-disc-conn-select[data-srv-idx="' + idx + '"]');
+    var url    = select ? select.value : '';
+
+    if (!url) { alert('No connection URL selected.'); return; }
+
+    var active = cards.filter(function(c) { return !c.removed; });
+    if (active.length >= window.svMaxServers) {
+        alert('Maximum ' + window.svMaxServers + ' servers reached. Remove one first.');
+        return;
+    }
+
+    addCard({
+        type:              'plex',
+        name:              srv.name || 'Plex Server',
+        url:               url,
+        enabled:           true,
+        has_token:         !!(srv.accessToken),
+        // accessToken = server-specific token from plex.tv discovery
+        // this is what the PHP API uses — NOT the account token
+        token_placeholder: srv.accessToken || '',
+    });
+
+    // Mark as added in the discovery card
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa fa-check"></i> Added';
+    var already = btn.closest('.sv-disc-card');
+    if (already && !already.querySelector('.sv-disc-already')) {
+        var top = already.querySelector('.sv-disc-card-top');
+        if (top) {
+            var span = document.createElement('span');
+            span.className = 'sv-disc-already';
+            span.textContent = '✓ added';
+            top.appendChild(span);
+        }
+    }
+
+    markDirty();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// JELLYFIN / EMBY MANUAL ADD
+// ══════════════════════════════════════════════════════════════════════════════
+
+function addJellyfinServer() {
+    var type  = (document.getElementById('svJfType')  || {}).value  || '';
+    var name  = (document.getElementById('svJfName')  || {}).value  || '';
+    var url   = (document.getElementById('svJfUrl')   || {}).value  || '';
+    var token = (document.getElementById('svJfToken') || {}).value  || '';
+
+    if (!type)  { alert('Please select a server type.'); return; }
+    if (!url)   { alert('Please enter the server URL.');  return; }
+    if (!token) { alert('Please enter the API key.');     return; }
+    if (!name)  name = (type === 'jellyfin' ? 'Jellyfin' : 'Emby') + ' Server';
+
+    var active = cards.filter(function(c) { return !c.removed; });
+    if (active.length >= window.svMaxServers) {
+        alert('Maximum ' + window.svMaxServers + ' servers reached.');
+        return;
+    }
+
+    addCard({
+        type:              type,
+        name:              name,
+        url:               url.replace(/\/$/, ''),
+        enabled:           true,
+        has_token:         true,
+        token_placeholder: token,
+    });
+
+    // Clear the form
+    document.getElementById('svJfType').value  = '';
+    document.getElementById('svJfName').value  = '';
+    document.getElementById('svJfUrl').value   = '';
+    document.getElementById('svJfToken').value = '';
+
+    var res = document.getElementById('svJfTestResult');
+    if (res) res.style.display = 'none';
+
+    markDirty();
+}
+
+function testJellyfinServer() {
+    var type  = (document.getElementById('svJfType')  || {}).value  || '';
+    var url   = ((document.getElementById('svJfUrl')   || {}).value  || '').replace(/\/$/, '');
+    var token = (document.getElementById('svJfToken') || {}).value  || '';
+    var btn   = document.getElementById('svJfTestBtn');
+    var res   = document.getElementById('svJfTestResult');
+
+    if (!type || !url || !token) {
+        if (res) { res.textContent = '✗ Fill in Type, URL and API Key first.'; res.className = 'sv-inline-result sv-test-err'; res.style.display = ''; }
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Testing…';
+
+    $.ajax({
+        url:      '/plugins/streamviewer/streamviewer_api.php',
+        method:   'GET',
+        timeout:  12000,
+        headers:  { 'X-Requested-With': 'XMLHttpRequest' },
+        data: {
+            action:     'test_connection',
+            type:       type,
+            url:        url,
+            token:      token,
+            _svt:       window.svToken || '',
+        },
+        dataType: 'json',
+        success: function(data) {
+            if (res) {
+                if (data.ok) {
+                    var ver = data.version ? ' (v' + data.version + ')' : '';
+                    res.textContent = '✓ Connected to ' + (data.server || type) + ver;
+                    res.className   = 'sv-inline-result sv-test-ok';
+                } else {
+                    res.textContent = '✗ ' + (data.error || 'Connection failed');
+                    res.className   = 'sv-inline-result sv-test-err';
+                }
+                res.style.display = '';
+            }
+        },
+        error: function(xhr) {
+            if (res) {
+                res.textContent = '✗ ' + ((xhr.responseJSON && xhr.responseJSON.error) ? xhr.responseJSON.error : 'Request failed');
+                res.className   = 'sv-inline-result sv-test-err';
+                res.style.display = '';
+            }
+        },
+        complete: function() {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa fa-plug"></i> Test Connection';
+        },
+    });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONFIGURED SERVERS LIST
+// ══════════════════════════════════════════════════════════════════════════════
+
+function addCard(data) {
+    var ci = Date.now() + Math.floor(Math.random() * 1000);
+    cards.push({ cardIndex: ci, removed: false, data: data });
+    renderAllCards();
+}
+
+function buildServerCard(data, cardIndex) {
+    var type    = data.type    || '';
+    var name    = data.name    || '';
+    var url     = data.url     || '';
+    var enabled = data.enabled !== false;
+    var hasToken= data.has_token || false;
+    var tokenPh = data.token_placeholder || '';
+    var typeMeta = SV_TYPES[type] || { label: type, color: '#fff' };
+    var enabledClass = enabled ? ' sv-server-card--enabled' : '';
+
+    // For plex: token is from discovery (read-only hint), URL is read-only
+    // For jf/emby: fully editable
+    var urlReadonly    = type === 'plex' ? ' readonly title="Discovered via plex.tv"' : '';
+    var tokenReadonly  = type === 'plex' ? ' readonly title="Server token from plex.tv discovery"' : '';
+    var tokenPlaceholder = type === 'plex'
+        ? (hasToken ? 'Server token stored (from plex.tv discovery)' : '')
+        : (hasToken ? 'Token saved — type to replace' : 'Paste your API key here');
+
+    return '<div class="sv-server-card' + enabledClass + '" data-card-index="' + cardIndex + '">'
+        + '<div class="sv-server-card-hd">'
+        +   '<label class="sv-server-toggle">'
+        +     '<input type="checkbox" class="sv-srv-enabled"' + (enabled ? ' checked' : '') + '>'
+        +     '<span class="sv-server-badge-type" style="background:' + typeMeta.color + '22;color:' + typeMeta.color + ';border:1px solid ' + typeMeta.color + '44;font-size:.72em;font-weight:700;padding:.1em .45em;border-radius:3px;margin-right:.4rem;">' + escHtml(typeMeta.label) + '</span>'
+        +     '<span class="sv-server-toggle-label">' + escHtml(name || 'New Server') + '</span>'
+        +   '</label>'
+        +   '<div class="sv-server-card-actions">'
+        +     '<button type="button" class="sv-remove-btn" title="Remove server">Remove</button>'
+        +   '</div>'
+        + '</div>'
+        + '<div class="sv-server-card-bd">'
+        +   '<div class="sv-server-fields">'
+        +     '<div class="sv-server-field">'
+        +       '<label class="sv-field-label">Type</label>'
+        +       '<input type="text" class="form-control sv-srv-type-display" value="' + escHtml(typeMeta.label) + '" readonly style="opacity:.6;cursor:default;">'
+        +       '<input type="hidden" class="sv-srv-type" value="' + escHtml(type) + '">'
+        +     '</div>'
+        +     '<div class="sv-server-field">'
+        +       '<label class="sv-field-label">Display Name</label>'
+        +       '<input type="text" class="form-control sv-srv-name" maxlength="64" value="' + escHtml(name) + '">'
+        +     '</div>'
+        +     '<div class="sv-server-field sv-server-field--wide">'
+        +       '<label class="sv-field-label">Server URL'
+        +         (type === 'plex' ? ' <span class="sv-token-saved" style="color:#e5a00d;">plex.tv discovery</span>' : '') + '</label>'
+        +       '<input type="text" class="form-control sv-srv-url" value="' + escHtml(url) + '"' + urlReadonly + '>'
+        +     '</div>'
+        +     '<div class="sv-server-field sv-server-field--wide">'
+        +       '<label class="sv-field-label">Token / API Key'
+        +         (hasToken ? ' <span class="sv-token-saved">✓ saved</span>' : '') + '</label>'
+        +       '<input type="password" class="form-control sv-srv-token"'
+        +         ' placeholder="' + escHtml(tokenPlaceholder) + '"'
+        +         ' value="' + escHtml(tokenPh) + '"'
+        +         ' autocomplete="new-password"' + tokenReadonly + '>'
+        +     '</div>'
+        +   '</div>'
+        + '</div>'
+        + '</div>';
+}
+
+function renderAllCards() {
+    renderListForType('plex',     'svPlexServerList',  'svPlexCountPill');
+    renderListForType('jellyfin', 'svJfServerList',    'svJfCountPill');
+    renderListForType('emby',     'svEmbyServerList',  'svEmbyCountPill');
+    updateCountPill();
+}
+
+function renderListForType(type, listId, pillId) {
+    var list = document.getElementById(listId);
+    if (!list) return;
+    var active = cards.filter(function(c) { return !c.removed && c.data.type === type; });
+    if (active.length === 0) {
+        list.innerHTML = '<div class="sv-no-servers">No ' + type + ' servers configured yet.</div>';
+    } else {
+        list.innerHTML = active.map(function(c) { return buildServerCard(c.data, c.cardIndex); }).join('');
+    }
+    var pill = document.getElementById(pillId);
+    if (pill) pill.textContent = 'Servers ' + active.length;
+    bindCardEventsIn(list);
+}
+
+function bindCardEventsIn(list) {
+    if (!list) return;
+    list.querySelectorAll('.sv-srv-enabled').forEach(function(cb) {
+        cb.addEventListener('change', function() {
+            this.closest('.sv-server-card').classList.toggle('sv-server-card--enabled', this.checked);
+            markDirty();
+        });
+    });
+    list.querySelectorAll('.sv-srv-name').forEach(function(inp) {
+        inp.addEventListener('input', function() {
+            var label = this.closest('.sv-server-card').querySelector('.sv-server-toggle-label');
+            if (label) label.textContent = this.value || 'New Server';
+            markDirty();
+        });
+    });
+    list.querySelectorAll('.sv-remove-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var ci    = parseInt(this.closest('.sv-server-card').dataset.cardIndex, 10);
+            var entry = cards.find(function(c) { return c.cardIndex === ci; });
+            if (entry) entry.removed = true;
+            renderAllCards();
+            markDirty();
+        });
+    });
+}
+
+function updateCountPill() {
+    var pill   = document.getElementById('svServerCountPill');
+    var active = cards.filter(function(c) { return !c.removed; }).length;
+    if (pill) pill.textContent = active + ' / ' + window.svMaxServers;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EMBY ADD / TEST
+// ══════════════════════════════════════════════════════════════════════════════
+
+function testEmbyServer() {
+    var name  = (document.getElementById('svEmbyName')  || {}).value || '';
+    var url   = (document.getElementById('svEmbyUrl')   || {}).value || '';
+    var token = (document.getElementById('svEmbyToken') || {}).value || '';
+    var res   = document.getElementById('svEmbyTestResult');
+    if (!url || !token) { showResult(res, false, 'URL and API Key are required.'); return; }
+    if (res) { res.style.display = ''; res.textContent = 'Testing…'; res.className = 'sv-inline-result'; }
+    $.ajax({
+        url: SV_API, method: 'GET', dataType: 'json',
+        data: { action: 'test_connection', type: 'emby', url: url, token: token, _svt: window.svToken || '' },
+        success: function(d) { showResult(res, d.ok, d.ok ? 'Connected!' : (d.error || 'Failed')); },
+        error:   function()  { showResult(res, false, 'Request failed.'); }
+    });
+}
+
+function addEmbyServer() {
+    var name  = $.trim((document.getElementById('svEmbyName')  || {}).value || '');
+    var url   = $.trim((document.getElementById('svEmbyUrl')   || {}).value || '');
+    var token = $.trim((document.getElementById('svEmbyToken') || {}).value || '');
+    var res   = document.getElementById('svEmbyTestResult');
+    if (!name)  { showResult(res, false, 'Display Name is required.'); return; }
+    if (!url)   { showResult(res, false, 'Server URL is required.'); return; }
+    if (!token) { showResult(res, false, 'API Key is required.'); return; }
+    if (cards.filter(function(c){ return !c.removed; }).length >= window.svMaxServers) {
+        showResult(res, false, 'Maximum ' + window.svMaxServers + ' servers reached.'); return;
+    }
+    var ci = ++cardCounter;
+    cards.push({ cardIndex: ci, removed: false,
+        data: { enabled: true, type: 'emby', name: name, url: url, has_token: true, token_placeholder: token }
+    });
+    document.getElementById('svEmbyName').value  = '';
+    document.getElementById('svEmbyUrl').value   = '';
+    document.getElementById('svEmbyToken').value = '';
+    if (res) res.style.display = 'none';
+    renderAllCards();
+    markDirty();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SYNC CARDS → HIDDEN INPUTS  (called before form submit)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function syncAllToHidden() {
+    // Read current DOM state from all type-specific lists
+    ['svPlexServerList','svJfServerList','svEmbyServerList'].forEach(function(listId) {
+        var list = document.getElementById(listId);
+        if (!list) return;
+        list.querySelectorAll('.sv-server-card').forEach(function(cardEl) {
+            var ci = parseInt(cardEl.dataset.cardIndex, 10);
+            var entry = cards.find(function(c) { return c.cardIndex === ci; });
+            if (!entry) return;
+            entry.data.enabled           = !!(cardEl.querySelector('.sv-srv-enabled') || {}).checked;
+            entry.data.type              = (cardEl.querySelector('.sv-srv-type') || {}).value  || entry.data.type;
+            entry.data.name              = (cardEl.querySelector('.sv-srv-name')  || {}).value || entry.data.name;
+            entry.data.url               = (cardEl.querySelector('.sv-srv-url')   || {}).value || entry.data.url;
+            var tok = (cardEl.querySelector('.sv-srv-token') || {}).value || '';
+            if (tok) { entry.data.token_placeholder = tok; entry.data.has_token = true; }
+        });
+    });
+
+    var active = cards.filter(function(c) { return !c.removed; });
+
+    for (var slot = 1; slot <= window.svMaxServers; slot++) {
+        var card = active[slot - 1];
+        var en   = document.getElementById('svHidEnabled' + slot);
+        var typ  = document.getElementById('svHidType'    + slot);
+        var nam  = document.getElementById('svHidName'    + slot);
+        var url  = document.getElementById('svHidUrl'     + slot);
+        var tok  = document.getElementById('svHidToken'   + slot);
+
+        if (card) {
+            if (en)  en.value  = card.data.enabled ? '1' : '0';
+            if (typ) typ.value = card.data.type    || '';
+            if (nam) nam.value = card.data.name    || '';
+            if (url) url.value = card.data.url     || '';
+            if (tok) {
+                var t = card.data.token_placeholder || '';
+                // If token is unchanged sentinel OR is the raw token, pass it through
+                tok.value = t;
+            }
+        } else {
+            if (en)  en.value  = '0';
+            if (typ) typ.value = '';
+            if (nam) nam.value = '';
+            if (url) url.value = '';
+            if (tok) tok.value = '';
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TABS
+// ══════════════════════════════════════════════════════════════════════════════
+
+function setTab(which) {
+    var tabMap = {
+        widget:   { tab: 'svTabWidget',   panel: 'svWidgetPanel'   },
+        plex:     { tab: 'svTabPlex',     panel: 'svPlexPanel'     },
+        jellyfin: { tab: 'svTabJellyfin', panel: 'svJellyfinPanel' },
+        emby:     { tab: 'svTabEmby',     panel: 'svEmbyPanel'     },
+    };
+    Object.keys(tabMap).forEach(function(t) {
+        var tab   = document.getElementById(tabMap[t].tab);
+        var panel = document.getElementById(tabMap[t].panel);
+        if (tab)   tab.classList.toggle('active', t === which);
+        if (panel) panel.style.display = (t === which) ? '' : 'none';
+    });
+    var inp = document.getElementById('svActiveTabInput');
+    if (inp) inp.value = which;
+    // Show Reset button only on Dashboard Widget tab
+    var resetBtn = document.getElementById('svResetBtn');
+    if (resetBtn) resetBtn.style.display = (which === 'widget') ? '' : 'none';
+    try { sessionStorage.setItem('sv_active_tab', which); } catch(_) {}
+    try { history.replaceState(null, '', '#' + which); } catch(_) {}
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RESET TO DEFAULTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+function resetDefaults() {
+    var form = document.querySelector('form[name="streamviewer_settings"]');
+    if (!form) return;
+    var activeTab = (document.getElementById('svActiveTabInput') || {}).value || 'widget';
+    var defaults = {};
+
+    if (activeTab === 'widget') {
+        defaults = { REFRESH_ENABLED:'1', REFRESH_INTERVAL:'30', WIDGET_MAX_STREAMS:'10',
+                     WIDGET_SHOW_DEVICE:'1', WIDGET_SHOW_IP:'1', WIDGET_SHOW_PROGRESS:'1',
+                     WIDGET_SHOW_QUALITY:'1', WIDGET_SHOW_TRANSCODE:'1', TOOL_ALLOW_KILL:'0' };
+    }
+
+    Object.keys(defaults).forEach(function(k) {
+        var el = form.querySelector('[name="' + k + '"]');
+        if (el) el.value = defaults[k];
+    });
+
+    markDirty();
+    alert('Settings reset to defaults. Click "Apply" to save.');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════════════════════
+
+(function () {
+
+    // ── Load existing servers from PHP ───────────────────────────────────────
+    (window.svServers || []).forEach(function(srv, idx) {
+        cards.push({
+            cardIndex: idx + 1,
+            removed:   false,
+            data: {
+                enabled:           srv.enabled !== false,
+                type:              srv.type      || '',
+                name:              srv.name      || '',
+                url:               srv.url       || '',
+                has_token:         srv.has_token  || false,
+                token_placeholder: srv.token_placeholder || '',
+            },
+        });
+    });
+    renderAllCards();
+
+    // ── Plex OAuth sign-in button ─────────────────────────────────────────
+    var plexSignInBtn = document.getElementById('svPlexSignInBtn');
+    if (plexSignInBtn) plexSignInBtn.addEventListener('click', startPlexOauth);
+
+    var plexCancelBtn = document.getElementById('svPlexCancelBtn');
+    if (plexCancelBtn) plexCancelBtn.addEventListener('click', cancelPlexOauth);
+
+
+    // ── Jellyfin buttons ────────────────────────────────────────────────────
+    var jfTestBtn = document.getElementById('svJfTestBtn');
+    var jfAddBtn  = document.getElementById('svJfAddBtn');
+    if (jfTestBtn) jfTestBtn.addEventListener('click', testJellyfinServer);
+    if (jfAddBtn)  jfAddBtn.addEventListener('click',  addJellyfinServer);
+
+    // ── Emby buttons ─────────────────────────────────────────────────────────
+    var embyTestBtn = document.getElementById('svEmbyTestBtn');
+    var embyAddBtn  = document.getElementById('svEmbyAddBtn');
+    if (embyTestBtn) embyTestBtn.addEventListener('click', testEmbyServer);
+    if (embyAddBtn)  embyAddBtn.addEventListener('click',  addEmbyServer);
+
+    // ── Accordion toggles (server lists) ──────────────────────────────────────
+    ['svPlexServersAccordionHd','svJfServersAccordionHd','svEmbyServersAccordionHd'].forEach(function(hdId) {
+        var hd = document.getElementById(hdId);
+        if (!hd) return;
+        hd.addEventListener('click', function() {
+            var acc = this.closest('.sv-accordion');
+            if (acc) acc.classList.toggle('sv-accordion--collapsed');
+        });
+    });
+
+    // ── Card section toggles (Dashboard Widget panels) ────────────────────────
+    document.querySelectorAll('.sv-card-hd--toggle').forEach(function(hd) {
+        hd.addEventListener('click', function() {
+            var card = this.closest('.sv-card');
+            var targetId = this.getAttribute('data-target');
+            var bd = targetId ? document.getElementById(targetId) : null;
+            if (!bd || !card) return;
+            var collapsed = card.classList.contains('sv-card--collapsed');
+            card.classList.toggle('sv-card--collapsed', !collapsed);
+            bd.style.display = collapsed ? '' : 'none';
+        });
+    });
+
+    // ── Tab buttons ──────────────────────────────────────────────────────────
+    ['Widget', 'Plex', 'Jellyfin', 'Emby'].forEach(function(t) {
+        var el = document.getElementById('svTab' + t);
+        if (!el) return;
+        el.addEventListener('click',   function()  { setTab(t.toLowerCase()); });
+        el.addEventListener('keydown', function(e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setTab(t.toLowerCase()); } });
+    });
+
+    // ── Intercept form submit via AJAX (prevents browser save-password prompt) ──
+    var form     = document.querySelector('form[name="streamviewer_settings"]');
+    var applyBtn = document.getElementById('svApplyBtn') || (form && form.querySelector('input[name="#apply_btn"]'));
+
+    function ajaxSubmitForm(e) {
+        if (e) e.preventDefault();
+        syncAllToHidden();
+
+        // Disable apply button while saving
+        if (applyBtn) { applyBtn.disabled = true; applyBtn.value = 'Saving…'; }
+
+        // Serialize the form to URL-encoded string (works reliably with Unraid .page files)
+        var params = $(form).serialize();
+        params += '&%23apply=apply';  // add #apply (URL-encoded)
+
+        $.ajax({
+            url:      window.location.pathname,
+            method:   'POST',
+            data:     params,
+            timeout:  15000,
+            success: function() {
+                var activeTab = 'widget';
+                try { activeTab = sessionStorage.getItem('sv_active_tab') || 'widget'; } catch(_) {}
+                window.location.href = window.location.href.split('#')[0] + '#' + activeTab;
+                window.location.reload();
+            },
+            error: function(xhr) {
+                alert('Save failed (HTTP ' + (xhr.status || '?') + '). Please try again.');
+                if (applyBtn) { applyBtn.disabled = false; applyBtn.value = 'Apply'; }
+            },
+        });
+
+        return false;
+    }
+
+    if (applyBtn) {
+        applyBtn.addEventListener('mousedown', syncAllToHidden);
+        applyBtn.addEventListener('click', ajaxSubmitForm);
+    }
+    if (form) form.addEventListener('submit', ajaxSubmitForm);
+
+    // ── Reset button ─────────────────────────────────────────────────────────
+    var resetBtn = document.getElementById('svResetBtn');
+    if (resetBtn) resetBtn.addEventListener('click', resetDefaults);
+
+    // ── Credits modal ────────────────────────────────────────────────────────
+    var modal  = document.getElementById('svCreditsModal');
+    var cLink  = document.getElementById('svCreditsLink');
+    var okBtn  = document.getElementById('svCreditsOkBtn');
+    if (cLink && modal) cLink.addEventListener('click', function(e) { e.preventDefault(); modal.style.display = 'flex'; });
+    if (okBtn  && modal) okBtn.addEventListener('click', function() { modal.style.display = 'none'; });
+    if (modal) {
+        modal.addEventListener('click', function(e) { if (e.target === modal) modal.style.display = 'none'; });
+        document.addEventListener('keydown', function(e) { if (e.key === 'Escape') modal.style.display = 'none'; });
+    }
+
+    // ── Restore active tab ───────────────────────────────────────────────────
+    var hash     = (window.location.hash || '').replace('#', '');
+    var postTab  = (document.getElementById('svActiveTabInput') || {}).value || '';
+    var savedTab = '';
+    try { savedTab = sessionStorage.getItem('sv_active_tab') || ''; } catch(_) {}
+    var valid    = ['widget', 'plex', 'jellyfin', 'emby'];
+    var target   = valid.includes(hash) ? hash : valid.includes(postTab) ? postTab : valid.includes(savedTab) ? savedTab : 'widget';
+    setTab(target);
+
+    // ── FOUC reveal ──────────────────────────────────────────────────────────
+    var s = document.querySelector('.streamviewer-settings');
+    var c = document.querySelector('.sv-credits-top');
+    if (s) s.style.visibility = '';
+    if (c) c.style.visibility = '';
+})();
+
+})();
+</script>

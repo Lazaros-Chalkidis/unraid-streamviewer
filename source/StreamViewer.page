@@ -1,0 +1,278 @@
+Menu="Dashboard:0"
+Icon="streamviewer.png"
+---
+<?php
+require_once '/usr/local/emhttp/plugins/streamviewer/streamviewer_api.php';
+require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
+
+// ── Config ─────────────────────────────────────────────────────────────────
+$cfg = @parse_plugin_cfg('streamviewer', true) ?: [];
+
+// ── Build enabled server list for JS ──────────────────────────────────────
+$enabled_servers = [];
+for ($i = 1; $i <= 10; $i++) {
+    if (($cfg["SERVER{$i}_ENABLED"] ?? '0') !== '1') continue;
+    $type  = (string)($cfg["SERVER{$i}_TYPE"]  ?? '');
+    $name  = (string)($cfg["SERVER{$i}_NAME"]  ?? "Server {$i}");
+    $url   = rtrim(trim((string)($cfg["SERVER{$i}_URL"]   ?? '')), '/');
+    $token = trim((string)($cfg["SERVER{$i}_TOKEN"] ?? ''));
+    if (!in_array($type, ['plex','jellyfin','emby'], true)) continue;
+    if ($url === '' || $token === '') continue;
+    $enabled_servers[] = ['index' => $i, 'type' => $type, 'name' => $name];
+}
+
+// Unique server types present (for tab rendering)
+$server_types_present = array_values(array_unique(array_column($enabled_servers, 'type')));
+
+// ── Unraid version detection ───────────────────────────────────────────────
+$version_data        = @parse_ini_file('/etc/unraid-version');
+$webgui_version      = $version_data['version'] ?? '0.0.0';
+$isResponsiveWebgui  = version_compare($webgui_version, '7.2.0-beta', '>=');
+
+// ── Tile config passed to JS ───────────────────────────────────────────────
+$tile_config = [
+    'svToken'           => StreamViewerEndpoint::generateNonce(),
+    'refreshEnabled'    => ($cfg['REFRESH_ENABLED']      ?? '1') === '1',
+    'refreshInterval'   => max(5, (int)($cfg['REFRESH_INTERVAL'] ?? 30)) * 1000,
+    'maxStreams'        => (int)($cfg['WIDGET_MAX_STREAMS'] ?? 10),
+    'showDevice'        => ($cfg['WIDGET_SHOW_DEVICE']    ?? '1') === '1',
+    'showIp'            => ($cfg['WIDGET_SHOW_IP']        ?? '1') === '1',
+    'showProgress'      => ($cfg['WIDGET_SHOW_PROGRESS']  ?? '1') === '1',
+    'showQuality'       => ($cfg['WIDGET_SHOW_QUALITY']   ?? '1') === '1',
+    'showTranscode'     => ($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1') === '1',
+    'servers'           => $enabled_servers,
+    'serverTypesPresent'=> $server_types_present,
+    'isResponsive'      => $isResponsiveWebgui,
+    'noServersConfigured' => empty($enabled_servers),
+    'allowKill'         => ($cfg['TOOL_ALLOW_KILL'] ?? '0') === '1',
+];
+
+$tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
+
+// ── String constants ───────────────────────────────────────────────────────
+$tile_title = htmlspecialchars(_('Stream Viewer'), ENT_QUOTES, 'UTF-8');
+
+// ════════════════════════════════════════════════════════════════════════════
+// Render helpers
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Controls (icon row top-right) ──────────────────────────────────────────
+$render_controls = static function(bool $responsive): string {
+    $wrapOpen  = $responsive ? '<span class="tile-header-right-controls">' : '';
+    $wrapClose = $responsive ? '</span>' : '';
+
+    return $wrapOpen . <<<HTML
+<a id="sv-manual-refresh" href="#" title="Refresh streams" aria-label="Refresh streams">
+    <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
+</a>
+<a id="sv-settings-icon" href="/Settings/StreamViewerSettings" title="Stream Viewer Settings" aria-label="Stream Viewer Settings">
+    <i class="fa fa-fw fa-cog control" aria-hidden="true"></i>
+</a>
+HTML . $wrapClose;
+};
+
+// ── Badge row (stream count + pulse) ──────────────────────────────────────
+$render_badge_row = static function(): string {
+    return <<<HTML
+<div class="sv-header-meta">
+    <span class="sv-badge-streams" id="sv-badge-streams" title="Active streams">
+        <span class="sv-badge-dot sv-badge-dot--idle" id="sv-badge-dot" aria-hidden="true"></span>
+        <span id="sv-badge-count">0</span>
+        <span class="sv-badge-label">Streams</span>
+    </span>
+</div>
+HTML;
+};
+
+// ── Server filter tabs ─────────────────────────────────────────────────────
+$render_server_tabs = static function(
+    array $serverTypesPresent,
+    array $enabledServers
+): string {
+    // Only render server-type tabs when more than one server type is configured
+    $multiType = count($serverTypesPresent) > 1;
+
+    $typeLabels = ['plex' => 'Plex', 'jellyfin' => 'Jellyfin', 'emby' => 'Emby'];
+
+    // Only show tabs when more than one server type is configured (no ALL button)
+    if (!$multiType) return '';
+
+    $tabsHtml = '';
+    foreach ($serverTypesPresent as $t) {
+        $label = $typeLabels[$t] ?? ucfirst($t);
+        $tabsHtml .= "<button class=\"sv-servertab\" data-filter=\"{$t}\">{$label}</button>";
+    }
+
+    return <<<HTML
+<div class="sv-tabrow" id="sv-tabrow" role="tablist" aria-label="Filter by server type">
+    {$tabsHtml}
+</div>
+HTML;
+};
+
+// ── Streams panel ──────────────────────────────────────────────────────────
+$render_streams_panel = static function(): string {
+    return <<<HTML
+<div class="sv-body sv-collapsible">
+    <div id="sv-streams-container" class="sv-streams" role="list" aria-live="polite" aria-label="Active streams">
+        <div class="sv-empty-state" id="sv-empty-state">
+            <i class="fa fa-circle-o sv-empty-icon" aria-hidden="true"></i>
+            <span>No active streams</span>
+        </div>
+    </div>
+
+    <div class="sv-footer">
+        <div class="sv-footer-left">
+            <span class="sv-err-badge" id="sv-err-badge" style="display:none;" title="One or more servers unreachable">
+                <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+                <span id="sv-err-count">0</span>
+            </span>
+        </div>
+        <div class="sv-footer-right">
+            <span class="sv-pulse" id="sv-pulse" aria-hidden="true"></span>
+            <span class="sv-ts-label">Last Refresh:</span>
+            <span class="sv-ts-value" id="sv-timestamp"></span>
+        </div>
+    </div>
+</div>
+HTML;
+};
+
+// ── Config script ──────────────────────────────────────────────────────────
+$render_config = static function(string $json): string {
+    return <<<HTML
+<script>window.streamviewerConfig = {$json};</script>
+HTML;
+};
+
+// ── Header: Unraid 7.2+ responsive ────────────────────────────────────────
+$render_header_responsive = static function(
+    string $tile_title,
+    string $badge_html,
+    string $controls_html
+): string {
+    return <<<HTML
+<span class="tile-header sv-header">
+    <span class="tile-header-left sv-header__left">
+        <div class="sv-header__top">
+            <img src="/plugins/streamviewer/streamviewer.png"
+                 class="sv-header__icon" alt="Stream Viewer"
+                 style="width:32px;height:32px;object-fit:contain;">
+            <h3 class="tile-header-main sv-header__title">{$tile_title}</h3>
+        </div>
+        {$badge_html}
+    </span>
+    <span class="tile-header-right sv-header__right">
+        <div class="sv-header__controls">{$controls_html}</div>
+    </span>
+</span>
+HTML;
+};
+
+// ── Header: legacy (pre-7.2) ───────────────────────────────────────────────
+$render_header_legacy = static function(
+    string $tile_title,
+    string $badge_html,
+    string $controls_html
+): string {
+    return <<<HTML
+<div class="sv-legacy-header">
+    <div class="sv-legacy-header__left">
+        <div class="sv-legacy-header__top">
+            <i class="fa fa-play-circle f32 sv-legacy-icon" aria-hidden="true"></i>
+            <span class="sv-legacy-title">{$tile_title}</span>
+        </div>
+        {$badge_html}
+    </div>
+    <span class="sv-legacy-controls">{$controls_html}</span>
+</div>
+HTML;
+};
+
+// ── Fallback tbody (for dashboards that don't support register_dashboard_tile) ──
+$render_fallback_tbody = static function(
+    string $tile_title,
+    string $header_html,
+    string $tabs_html,
+    string $panel_html,
+    string $config_html
+): string {
+    return <<<HTML
+<link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/widget.css">
+<tbody id="db-streamviewer" title="{$tile_title}">
+    <tr>
+        <td class="next" colspan="3">
+            {$header_html}
+        </td>
+    </tr>
+    <tr>
+        <td colspan="3">
+            {$tabs_html}
+        </td>
+    </tr>
+    <tr class="dash_streamviewer_toggle sv-content">
+        <td colspan="3">
+            {$panel_html}
+        </td>
+    </tr>
+</tbody>
+{$config_html}
+<script defer src="/plugins/streamviewer/js/streamviewer.js"></script>
+HTML;
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Assemble all parts
+// ════════════════════════════════════════════════════════════════════════════
+
+$badge_html    = $render_badge_row();
+$tabs_html     = $render_server_tabs($server_types_present, $enabled_servers);
+$panel_html    = $render_streams_panel();
+$config_html   = $render_config($tile_config_json);
+
+$controls_responsive = $render_controls(true);
+$controls_legacy     = $render_controls(false);
+
+$header_responsive = $render_header_responsive($tile_title, $badge_html, $controls_responsive);
+$header_legacy     = $render_header_legacy($tile_title, $badge_html, $controls_legacy);
+
+// ── Tile registration array ────────────────────────────────────────────────
+$tile = [
+    'name'    => 'streamviewer',
+    'title'   => 'Stream Viewer',
+    'icon'    => 'fa-play-circle',
+    'content' => '',
+    'small'   => 1,
+    'medium'  => 1,
+    'large'   => 2,
+    'script'  => '/plugins/streamviewer/js/streamviewer.js',
+    'style'   => '/plugins/streamviewer/css/widget.css',
+];
+
+$tile['content'] = $isResponsiveWebgui
+    ? ($header_responsive . $tabs_html . $panel_html . $config_html)
+    : ($header_legacy     . $tabs_html . $panel_html . $config_html);
+
+$fallback_markup = $render_fallback_tbody(
+    $tile_title,
+    $isResponsiveWebgui ? $header_responsive : $header_legacy,
+    $tabs_html,
+    $panel_html,
+    $config_html
+);
+
+// ── Register or fall back ──────────────────────────────────────────────────
+if (function_exists('register_dashboard_tile')) {
+    $result = @register_dashboard_tile($tile);
+
+    if (is_string($result) && trim($result) !== '') {
+        echo $result;
+        return;
+    }
+
+    if ($result) return;
+}
+
+$mytiles['streamviewer']['column1'] = $fallback_markup;
+return;
+?>

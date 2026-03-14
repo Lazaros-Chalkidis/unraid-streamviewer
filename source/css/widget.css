@@ -1,0 +1,550 @@
+/* ==========================================================================
+   STREAM VIEWER — Widget & Tool Page Styles
+   /plugins/streamviewer/css/widget.css
+   ========================================================================== */
+
+/* ── 1. CSS CUSTOM PROPERTIES ─────────────────────────────────────────────── */
+:root {
+  --sv-play:    #4caf50;   /* direct play  → green  */
+  --sv-stream:  #2196f3;   /* direct stream → blue  */
+  --sv-trans:   #ff9800;   /* transcode    → orange */
+  --sv-paused:  #9e9e9e;   /* paused       → grey   */
+  --sv-plex:    #e5a00d;
+  --sv-jf:      #00a4dc;
+  --sv-emby:    #52b54b;
+  --sv-radius:  6px;
+  --sv-row-gap: .55rem;
+}
+
+/* ── Button baseline — override Unraid's width:100% on all buttons ─────────── */
+.sv-body button,
+.sv-body input[type="button"],
+.sv-body input[type="submit"] {
+  width: auto !important;
+  max-width: max-content !important;
+  display: inline-flex !important;
+  flex-shrink: 0 !important;
+}
+
+/* ── 2. HEADER — RESPONSIVE (Unraid 7.2+) ────────────────────────────────── */
+.sv-header { display: flex; width: 100%; align-items: flex-start; }
+.sv-header__left,
+.sv-header .tile-header-left  { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .2rem; }
+.sv-header__right { flex-shrink: 0; display: flex; align-items: flex-start; }
+.sv-header__top   { display: inline-flex; gap: 1rem; }
+.sv-header__icon  { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
+.sv-header__title { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-header__controls { display: flex; align-items: center; gap: .1rem; }
+
+/* ── 3. HEADER — LEGACY (pre-7.2) ─────────────────────────────────────────── */
+.sv-legacy-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: .3rem 0; width: 100%;
+}
+.sv-legacy-header__left  { display: flex; flex-direction: column; gap: .25rem; flex: 1; min-width: 0; }
+.sv-legacy-header__top   { display: flex; align-items: center; gap: .4rem; }
+.sv-legacy-icon  { font-size: 1.4em; color: var(--sv-plex); }
+.sv-legacy-title { font-size: 1.05em; font-weight: 700; }
+.sv-legacy-controls { display: flex; align-items: center; gap: .1rem; flex-shrink: 0; }
+
+/* ── 4. HEADER META (badge row) ───────────────────────────────────────────── */
+.sv-header-meta {
+  display: inline-flex; align-items: center; gap: .4rem;
+  margin-top: -13px;
+  margin-left: calc(32px + 1.5rem); /* clear the icon, align under title text */
+}
+
+
+.sv-badge-streams {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .7em; color: rgba(255,255,255,.6);
+}
+#sv-badge-count {
+  font-weight: 700; font-size: .99em;
+  color: rgba(255,255,255,.9);
+}
+.sv-badge-label { opacity: .6; }
+
+/* Pulsing dot: idle=grey, active=green */
+.sv-badge-dot {
+  width: 6px; height: 6px;
+  border-radius: 60%; display: inline-block;
+  flex-shrink: 0;
+  transition: background .4s ease;
+}
+.sv-badge-dot--idle   { background: rgba(255,255,255,.2); }
+.sv-badge-dot--active { background: #486dba; box-shadow: 0 0 0 0 rgba(72,109,186,.8); animation: sv-pulse-dot-blue 2.8s infinite; }
+.sv-badge-dot--error  { background: #f44336; }
+
+@keyframes sv-pulse-dot {
+  0%   { box-shadow: 0 0 0 0    rgba(76,175,80,.6); }
+  70%  { box-shadow: 0 0 0 6px  rgba(76,175,80,0);  }
+  100% { box-shadow: 0 0 0 0    rgba(76,175,80,0);  }
+}
+@keyframes sv-pulse-dot-blue {
+  0%   { box-shadow: 0 0 0 0   rgba(72,109,186,.9); }
+  70%  { box-shadow: 0 0 0 5px rgba(72,109,186,0);  }
+  100% { box-shadow: 0 0 0 0   rgba(72,109,186,0);  }
+}
+
+/* ── 5. SERVER FILTER TABS ────────────────────────────────────────────────── */
+.sv-tabrow {
+  display: flex; gap: .25rem; flex-wrap: wrap;
+  padding: .35rem 0 .1rem;
+}
+
+.sv-servertab {
+  display: inline-flex; align-items: center;
+  padding: .2rem .6rem;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.04);
+  color: rgba(255,255,255,.55);
+  font-size: .78em; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+  transition: background .2s, color .2s, border-color .2s;
+}
+.sv-servertab:hover { background: rgba(255,255,255,.07); color: rgba(255,255,255,.8); }
+.sv-servertab--active {
+  background: rgba(244,125,66,.15) !important;
+  border-color: rgba(244,125,66,.4) !important;
+  color: #f47d42 !important;
+}
+/* Per-type accent colours */
+.sv-servertab[data-filter="plex"].sv-servertab--active    { background: rgba(229,160,13,.12) !important; border-color: rgba(229,160,13,.4) !important; color: var(--sv-plex) !important; }
+.sv-servertab[data-filter="jellyfin"].sv-servertab--active{ background: rgba(0,164,220,.1)  !important; border-color: rgba(0,164,220,.35) !important; color: var(--sv-jf)   !important; }
+.sv-servertab[data-filter="emby"].sv-servertab--active    { background: rgba(82,181,74,.1)  !important; border-color: rgba(82,181,74,.3)  !important; color: var(--sv-emby) !important; }
+
+/* ── 6. BODY + COLLAPSIBLE ────────────────────────────────────────────────── */
+.sv-body {
+  display: flex; flex-direction: column;
+  min-height: 60px;
+}
+
+/* ── 7. STREAMS CONTAINER ─────────────────────────────────────────────────── */
+.sv-streams {
+  display: flex; flex-direction: column;
+  gap: var(--sv-row-gap);
+  padding: .3rem 0;
+  min-height: 40px;
+}
+
+/* ── 8. EMPTY STATE ───────────────────────────────────────────────────────── */
+.sv-empty-state {
+  display: flex; align-items: center; justify-content: center; gap: .4rem;
+  padding: 1.1rem .5rem;
+  color: rgba(255,255,255,.3); font-size: .85em; font-style: italic;
+}
+.sv-empty-icon { font-size: 1em; }
+
+/* ── 9. STREAM ROW ────────────────────────────────────────────────────────── */
+.sv-stream {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  grid-template-rows: auto auto auto auto;
+  column-gap: .55rem;
+  row-gap: .32rem;
+  padding: .5rem .35rem .5rem .2rem;
+  border-radius: var(--sv-radius);
+  border: 1px solid rgba(255,255,255,.06);
+  background: rgba(255,255,255,.025);
+  transition: background .2s, border-color .2s;
+  position: relative;
+  overflow: hidden;
+}
+.sv-stream:hover {
+  background: rgba(255,255,255,.045);
+  border-color: rgba(255,255,255,.1);
+}
+
+/* ── Play-type indicator bar (left edge) ──────────────────────────────────── */
+.sv-stream__bar {
+  grid-row: 1 / 5;
+  grid-column: 1;
+  width: 3px;
+  border-radius: 2px;
+  align-self: stretch;
+  margin: 1px 0;
+  flex-shrink: 0;
+  transition: background .3s;
+}
+.sv-stream__bar--play   { background: var(--sv-play); }
+.sv-stream__bar--stream { background: var(--sv-stream); }
+.sv-stream__bar--trans  { background: var(--sv-trans); }
+.sv-stream__bar--paused { background: var(--sv-paused); }
+
+/* ── Row 1: title + right meta ────────────────────────────────────────────── */
+.sv-stream__main {
+  grid-row: 2; grid-column: 2;
+  display: flex; align-items: center; gap: .4rem;
+  min-width: 0;
+}
+
+/* ── Row 1 right: badges ──────────────────────────────────────────────────── */
+.sv-stream__badges-row {
+  grid-row: 1; grid-column: 2;
+  display: flex; align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .2rem;
+  flex-shrink: 0;
+}
+.sv-stream__badges-left {
+  display: flex; align-items: center; gap: .25rem;
+  flex-wrap: wrap;
+}
+.sv-stream__badges-right {
+  display: flex; align-items: center; gap: .25rem;
+  flex-wrap: wrap; justify-content: flex-end;
+}
+
+/* Title */
+.sv-stream__title {
+  font-weight: 600; font-size: .85em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: rgba(255,255,255,.92);
+  flex: 1; min-width: 0;
+}
+
+/* Media-type icon (movie/tv/music) */
+.sv-stream__type-icon {
+  font-size: .72em; color: rgba(255,255,255,.35);
+  flex-shrink: 0;
+}
+.sv-stream__type-icon.fa-play  { color: #4f8a10; }
+.sv-stream__type-icon.fa-pause { color: rgba(255,255,255,.45); }
+
+/* Server-type badge (plex / jellyfin / emby) */
+.sv-stream__server-badge {
+  display: inline-flex; align-items: center;
+  font-size: .68em; font-weight: 700; line-height: 1;
+  padding: .15em .38em;
+  border-radius: 3px;
+  flex-shrink: 0;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+.sv-stream__server-badge--plex     { background: rgba(229,160,13,.2); color: var(--sv-plex); border: 0.1em solid rgba(229,160,13,.3);}
+.sv-stream__server-badge--jellyfin { background: rgba(0,164,220,.18); color: var(--sv-jf);   }
+.sv-stream__server-badge--emby     { background: rgba(82,181,74,.18); color: var(--sv-emby); }
+
+/* Quality badge (1080p, 4K…) */
+.sv-stream__quality {
+  display: inline-flex; align-items: center;
+  font-size: .7em; font-weight: 600; line-height: 1;
+  padding: .15em .35em;
+  border-radius: 3px;
+  background: rgba(255,255,255,.07);
+  color: rgba(255,255,255,.6);
+  flex-shrink: 0;
+  border: 0.1em solid;
+}
+
+/* Bitrate badge (live speed — shown in left badges group) */
+.sv-stream__bitrate {
+  display: inline-flex; align-items: center;
+  font-size: .7em; font-weight: 600; line-height: 1;
+  padding: .15em .35em;
+  border-radius: 3px;
+  background: rgba(255,255,255,.05);
+  color: rgba(255,255,255,.45);
+  flex-shrink: 0;
+  border: 0.1em solid rgba(255,255,255,.1);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Transcode badge */
+.sv-stream__transcode {
+  display: inline-flex; align-items: center;
+  font-size: .68em; font-weight: 700; line-height: 1;
+  padding: .15em .38em;
+  border-radius: 3px;
+  border: 0.1em solid transparent;
+  flex-shrink: 0;
+  letter-spacing: .02em;
+}
+.sv-stream__transcode--play   { background: rgba(76,175,80,.15);  color: var(--sv-play);   border-color: rgba(76,175,80,.3);   }
+.sv-stream__transcode--stream { background: rgba(33,150,243,.15); color: var(--sv-stream); border-color: rgba(33,150,243,.3);  }
+.sv-stream__transcode--paused { background: rgba(255,255,255,.07); color: rgba(255,255,255,.45); border-color: rgba(255,255,255,.15); }
+.sv-stream__transcode--trans  { background: rgba(255,152,0,.15);  color: var(--sv-trans);  border-color: rgba(255,152,0,.3);   }
+
+/* ── Row 2: user · device · ip + progress ─────────────────────────────────── */
+.sv-stream__sub {
+  grid-row: 3; grid-column: 2;
+  display: flex; align-items: center; gap: .5rem;
+  min-width: 0;
+}
+
+.sv-stream__info {
+  display: flex; align-items: baseline; gap: .3rem;
+  flex: 1; min-width: 0;
+  overflow: hidden;
+  font-size: .77em; color: rgba(255,255,255,.5);
+  line-height: 1;
+}
+
+.sv-stream__user   { font-size: 1em; font-weight: 600; color: rgba(255,255,255,.72); white-space: nowrap; flex-shrink: 0; line-height: 1; }
+.sv-stream__sep    { opacity: .3; flex-shrink: 0; line-height: 1; }
+.sv-stream__device { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; flex-shrink: 1; line-height: 1; }
+.sv-stream__ip     {
+  display: inline-flex; align-items: center;
+  font-family: monospace; font-size: .9em; line-height: 1;
+  background: rgba(255,255,255,.05);
+  padding: .15em .3em; border-radius: 3px;
+  white-space: nowrap;
+}
+
+/* ── Progress block ───────────────────────────────────────────────────────── */
+.sv-stream__progress-wrap {
+  display: flex; align-items: center; gap: .35rem;
+  flex-shrink: 0; min-width: 80px; max-width: 130px;
+}
+.sv-stream__progress {
+  flex: 1; height: 5px;
+  background: rgba(255,255,255,.1);
+  border-radius: 3px; overflow: hidden;
+  min-width: 50px;
+}
+.sv-stream__progress-bar {
+  height: 100%; border-radius: 2px;
+  background: linear-gradient(90deg, var(--sv-play), rgba(76,175,80,.6));
+  transition: width .6s ease;
+}
+.sv-stream--paused .sv-stream__progress-bar { background: var(--sv-paused); }
+.sv-stream--transcode .sv-stream__progress-bar { background: linear-gradient(90deg, var(--sv-trans), rgba(255,152,0,.6)); }
+
+.sv-stream__time {
+  font-size: .72em; color: rgba(255,255,255,.4);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+
+/* ── 10. FOOTER ───────────────────────────────────────────────────────────── */
+.sv-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .35rem 0 .1rem;
+  border-top: 1px solid rgba(255,255,255,.05);
+  margin-top: .2rem;
+  font-size: .75em;
+}
+.sv-footer-left  { display: flex; align-items: center; gap: .4rem; color: rgba(255,255,255,.55); }
+.sv-footer-right { display: flex; align-items: center; gap: .2rem; font-size: .78em; }
+
+/* Badge in footer (stream count) */
+.sv-footer-left .sv-badge-streams {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: 1em; color: rgba(255,255,255,.55);
+}
+.sv-footer-left #sv-badge-count {
+  font-weight: 700; color: rgba(255,255,255,.8);
+}
+.sv-footer-left .sv-badge-label { opacity: .6; }
+.sv-footer-left .sv-badge-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%; display: inline-block; flex-shrink: 0;
+  transition: background .4s ease;
+}
+
+.sv-ts-label { font-weight: 600; color: rgba(255,255,255,.3); }
+.sv-ts-value { font-variant-numeric: tabular-nums; color: rgba(255,255,255,.3); }
+
+/* Pulse animation (active refresh) — flash green once per refresh cycle */
+.sv-pulse {
+  display: inline-block; width: 6px; height: 6px;
+  border-radius: 50%; background: rgba(76,175,80,.2);
+}
+.sv-pulse--active {
+  animation: sv-refresh-flash .9s ease-out 1 forwards;
+}
+@keyframes sv-refresh-flash {
+  0%   { background: rgba(76,175,80,1);   box-shadow: 0 0 5px rgba(76,175,80,.8); }
+  60%  { background: rgba(76,175,80,.5);  box-shadow: 0 0 2px rgba(76,175,80,.3); }
+  100% { background: rgba(76,175,80,.2);  box-shadow: none; }
+}
+
+/* Error badge */
+.sv-err-badge {
+  display: inline-flex; align-items: center; gap: .25rem;
+  font-size: .78em; color: #ff9800;
+  background: rgba(255,152,0,.1);
+  border: 1px solid rgba(255,152,0,.25);
+  padding: .08em .4em; border-radius: 4px;
+  cursor: default;
+}
+
+/* ── 11. TOOL PAGE OVERRIDES ──────────────────────────────────────────────── */
+.sv-tool-page .sv-stream {
+  grid-template-columns: 10px 1fr;
+  padding: .6rem .5rem .6rem .3rem;
+}
+.sv-tool-page .sv-stream__title  { font-size: .92em; }
+.sv-tool-page .sv-stream__info   { font-size: .82em; }
+.sv-tool-page .sv-stream__device { max-width: 200px; }
+.sv-tool-page .sv-stream__progress-wrap { max-width: 160px; min-width: 100px; }
+.sv-tool-page .sv-streams { gap: .65rem; }
+
+/* Kill button (tool page only) */
+.sv-kill-btn {
+  display: inline-flex; align-items: center; gap: .2rem;
+  width: auto !important; max-width: max-content !important;
+  min-width: 0 !important; flex: 0 0 auto !important;
+  flex-shrink: 0; align-self: center;
+  padding: .12em .45em;
+  border-radius: 3px;
+  border: 1px solid rgba(231,76,60,.4);
+  background: rgba(231,76,60,.08);
+  color: rgba(231,76,60,.85);
+  font-size: .68em; font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.sv-kill-btn:hover { background: rgba(231,76,60,.22); color: #e74c3c; border-color: rgba(231,76,60,.6); }
+.sv-kill-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── 12. LOADING SKELETON ─────────────────────────────────────────────────── */
+.sv-skeleton {
+  border-radius: var(--sv-radius);
+  background: linear-gradient(90deg,
+    rgba(255,255,255,.04) 25%,
+    rgba(255,255,255,.08) 50%,
+    rgba(255,255,255,.04) 75%
+  );
+  background-size: 200% 100%;
+  animation: sv-shimmer 1.4s infinite;
+  height: 52px; margin-bottom: var(--sv-row-gap);
+}
+@keyframes sv-shimmer {
+  0%   { background-position:  200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── 13. TOOL PAGE HEADER AREA ────────────────────────────────────────────── */
+.sv-tool-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .75rem 0 .5rem; flex-wrap: wrap; gap: .5rem;
+}
+.sv-tool-title {
+  font-size: 1.2em; font-weight: 700; display: flex; align-items: center; gap: .5rem;
+}
+.sv-tool-controls { display: flex; align-items: center; gap: .5rem; }
+
+/* ── 14. NO-SERVERS STATE ─────────────────────────────────────────────────── */
+.sv-no-servers-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .6rem; padding: 1.5rem 1rem; text-align: center;
+}
+.sv-no-servers-icon {
+  font-size: 1.8em; opacity: .25; margin-bottom: .2rem;
+  color: rgba(255,255,255,.8);
+}
+.sv-no-servers-title {
+  font-size: .85em; color: rgba(255,255,255,.4); font-weight: 500;
+}
+.sv-no-servers-btn {
+  display: inline-flex !important; align-items: center; gap: .4rem;
+  margin-top: .3rem;
+  padding: .35rem .8rem !important;
+  font-size: .78em !important; font-weight: 600;
+  color: rgba(255,255,255,.75) !important;
+  border: 1px solid rgba(255,255,255,.18) !important;
+  border-radius: 5px !important;
+  text-decoration: none !important;
+  background: rgba(255,255,255,.05) !important;
+  transition: background .2s, border-color .2s, color .2s;
+}
+.sv-no-servers-btn:hover {
+  background: rgba(255,255,255,.10) !important;
+  border-color: rgba(255,255,255,.35) !important;
+  color: #fff !important;
+  text-decoration: none !important;
+}
+
+
+/* ── Row 3: server type + badges ──────────────────────────────────────────── */
+.sv-stream__row3 {
+  grid-row: 4; grid-column: 2;
+}
+
+/* Collapsible header row with arrow */
+.sv-stream__row3-hd {
+  display: flex; align-items: center; justify-content: flex-end;
+  cursor: pointer;
+  padding: 0 .3rem;
+  line-height: 1;
+  margin: .15rem -.35rem 0;
+  background: rgba(255,255,255,.03);
+  border-top: 1px solid rgba(255,255,255,.07);
+  user-select: none;
+  transition: background .2s;
+}
+.sv-stream__row3-hd:hover { background: rgba(255,255,255,.07); }
+.sv-stream__row3-hd:hover .sv-stream__row3-arrow { opacity: 1; }
+.sv-stream__row3-arrow {
+  font-size: .55rem; opacity: .55;
+  transition: transform .2s, opacity .15s;
+  transform: rotate(0deg); /* ▲ points up = expanded/open */
+  pointer-events: none; /* clicks always reach parent hd */
+}
+.sv-stream__row3--collapsed .sv-stream__row3-arrow {
+  transform: rotate(180deg); /* ▼ points down = collapsed/closed */
+}
+
+/* Thumbnail panel */
+.sv-stream__row3-bd {
+  padding: .3rem .35rem .35rem 0;
+  display: flex; align-items: flex-start; gap: .65rem;
+}
+.sv-stream__row3--collapsed .sv-stream__row3-bd {
+  display: none;
+}
+.sv-stream__thumb-col {
+  display: flex; flex-direction: column; align-items: stretch;
+  flex-shrink: 0;
+  width: 55px; max-width: 55px;
+  box-sizing: border-box;
+}
+.sv-stream__thumb-img {
+  width: 100%; height: 75px;
+  object-fit: cover; border-radius: 3px;
+  border: 1px solid rgba(255,255,255,.1);
+  display: block; flex-shrink: 0;
+  box-sizing: border-box;
+}
+.sv-stream__thumb-placeholder {
+  width: 100%; height: 75px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 3px;
+  color: rgba(255,255,255,.2); font-size: 1.4em;
+  box-sizing: border-box;
+}
+
+.sv-stream__desc {
+  flex: 1; min-width: 0;
+  font-size: .74em; line-height: 1.45;
+  color: rgba(255,255,255,.45);
+  margin: 0;
+  white-space: normal;
+  overflow: visible;
+}
+
+/* Server TYPE badge (PLEX / JELLYFIN / EMBY) */
+.sv-stream__server-type {
+  display: inline-flex; align-items: center;
+  font-size: .68em; font-weight: 700; line-height: 1;
+  padding: .15em .38em;
+  border-radius: 3px;
+  flex-shrink: 0;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.sv-stream__server-type--plex     { background: rgba(229,160,13,.25); color: var(--sv-plex);   border: 0.1em solid rgba(229,160,13,.3); }
+.sv-stream__server-type--jellyfin { background: rgba(0,164,220,.2);   color: var(--sv-jf);     border: 0.1em solid rgba(0,164,220,.25); }
+.sv-stream__server-type--emby     { background: rgba(82,181,74,.2);   color: var(--sv-emby);   border: 0.1em solid rgba(82,181,74,.25); }
+/* ── 15. RESPONSIVE TWEAKS ────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .sv-stream__progress-wrap { min-width: 60px; }
+}
