@@ -84,9 +84,9 @@ The Dashboard Widget and the Tool Page have independent settings and can be conf
 - Referrer-Policy: same-origin header
 - Cache-Control: no-cache, must-revalidate header
 - AJAX-only enforcement (X-Requested-With check)
-- HTTP method restriction (μόνο GET/POST)
-- URL validation σε outbound HTTP requests (FILTER_VALIDATE_URL)
-- MIME type validation σε proxied images
+- HTTP method restriction (GET/POST only)
+- URL validation on outbound HTTP requests (FILTER_VALIDATE_URL)
+- MIME type validation on proxied images
 
 ---
 
@@ -167,7 +167,7 @@ See [CHANGELOG.md](https://github.com/Lazaros-Chalkidis/unraid-streamviewer/blob
 If you'd like to suggest new features, report a bug, or have any feedback, feel free to open an issue on
 [GitHub](https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues)
 or post on the
-[Unraid Forum](https://forums.unraid.net/topic/).
+[Unraid Forum](https://forums.unraid.net/topic/197757-plugin-stream-viewer/).
 
 ---
 

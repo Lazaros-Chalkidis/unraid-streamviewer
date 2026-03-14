@@ -472,7 +472,7 @@ if ($plugin_version === 'dev') {
   </div>
 
   <div class="sv-footer-row">
-    <a href="https://forums.unraid.net/" id="svSupportLink" class="sv-support-link">Support</a>
+    <a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" id="svSupportLink" class="sv-support-link">Support</a>
     <div class="sv-version-text">Version: <?= htmlspecialchars($plugin_version) ?></div>
   </div>
 
@@ -490,7 +490,7 @@ if ($plugin_version === 'dev') {
           </tr>
         </table>
         <div style="font-size:0.82em;opacity:0.48;margin-bottom:1.1rem;color:#fff;font-style:italic;">Copyright © 2026 Stream Viewer Plugin</div>
-        <div style="margin-bottom:1.1rem;"><a href="https://forums.unraid.net/" target="_blank" rel="noopener" style="color:#4a90e2;text-decoration:none;font-size:0.9em;">Plugin Support Thread</a></div>
+        <div style="margin-bottom:1.1rem;"><a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" target="_blank" rel="noopener" style="color:#4a90e2;text-decoration:none;font-size:0.9em;">Plugin Support Thread</a></div>
       </div>
       <div style="padding:0.9rem;text-align:center;border-top:1px solid rgba(255,255,255,0.1);flex-shrink:0;">
         <button id="svCreditsOkBtn" style="background:#f47d42;border:1px solid #f47d42;color:#fff;padding:0.5rem 2.5rem;font-size:0.9em;font-weight:500;border-radius:4px;cursor:pointer;">OK</button>

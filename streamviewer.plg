@@ -1,0 +1,135 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+ <!ENTITY name      "streamviewer">
+ <!ENTITY author    "Lazaros Chalkidis">
+ <!ENTITY version   "2026.03.14">
+ <!ENTITY branch    "main">
+ <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
+ <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
+ <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
+ <!ENTITY md5       "53bdae4045cc9188af179bc8671beb31">
+ <!ENTITY launch    "Settings/StreamViewerSettings">
+]>
+
+<PLUGIN name="&name;" Title="Stream Viewer" author="&author;" version="&version;"
+        pluginURL="&selfURL;" launch="&launch;"
+        icon="streamviewer.png"
+        min="7.2.0"
+        support="&gitURL;/issues">
+
+<DESCRIPTION>
+StreamViewer is a lightweight Unraid dashboard widget that gives you a real-time overview of active media streams across your Plex, Jellyfin, and Emby servers — all in one place.
+</DESCRIPTION>
+
+<CHANGES>
+# Changelog
+
+## Version 2026.03.14
+
+### First release
+
+- Dashboard Widget: Monitor active streams in real-time from the Unraid dashboard
+- Multi-Server Support: Monitor up to 10 Plex, Jellyfin, and Emby servers simultaneously
+- Stream Details: User, device, IP address, playback progress, quality and codec info per stream
+- Transcode Monitoring: Visual indicators for Direct Play, Direct Stream, and Transcode sessions
+- Kill Session: Terminate active streams directly from the UI (configurable)
+- Plex OAuth: Secure Plex server setup via OAuth — no password ever stored
+- Auto-Rediscover: Automatically recovers Plex server URLs after IP changes
+- Server Filter: Filter streams by server type (Plex / Jellyfin / Emby)
+- Auto Refresh: Configurable polling interval for live updates
+- Mobile Responsive: Works on all screen sizes
+- Performance Friendly: Micro-cache, backoff on errors, lightweight polling
+</CHANGES>
+
+<FILE Name="/boot/config/plugins/&name;/&name;-&version;.txz" Run="upgradepkg --install-new">
+  <URL>&pluginURL;</URL>
+  <MD5>&md5;</MD5>
+</FILE>
+
+<!-- Back up existing user config before the FILE tag writes defaults -->
+<FILE Run="/bin/bash">
+<INLINE>
+if [[ -f /boot/config/plugins/&name;/&name;.cfg ]]; then cp /boot/config/plugins/&name;/&name;.cfg /boot/config/plugins/&name;/&name;.cfg.bak; fi
+</INLINE>
+</FILE>
+
+<!-- Write default config (post-install script restores backup if user had existing config) -->
+<FILE Name="/boot/config/plugins/&name;/&name;.cfg">
+  <INLINE>
+SERVER1_ENABLED="0"
+SERVER1_TYPE=""
+SERVER1_NAME=""
+SERVER1_URL=""
+SERVER1_TOKEN=""
+SERVER2_ENABLED="0"
+SERVER2_TYPE=""
+SERVER2_NAME=""
+SERVER2_URL=""
+SERVER2_TOKEN=""
+REFRESH_ENABLED="1"
+REFRESH_INTERVAL="30"
+WIDGET_MAX_STREAMS="10"
+WIDGET_SHOW_DEVICE="1"
+WIDGET_SHOW_IP="1"
+WIDGET_SHOW_PROGRESS="1"
+WIDGET_SHOW_QUALITY="1"
+WIDGET_SHOW_TRANSCODE="1"
+TOOL_REFRESH_ENABLED="1"
+TOOL_REFRESH_INTERVAL="30"
+TOOL_MAX_STREAMS="0"
+TOOL_SHOW_DEVICE="1"
+TOOL_SHOW_IP="1"
+TOOL_SHOW_PROGRESS="1"
+TOOL_SHOW_QUALITY="1"
+TOOL_SHOW_TRANSCODE="1"
+TOOL_ALLOW_KILL="0"
+  </INLINE>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+# Fix ownership and permissions
+chown -R root:root /usr/local/emhttp/plugins/&name;
+find /usr/local/emhttp/plugins/&name; -type d -exec chmod 755 {} \;
+find /usr/local/emhttp/plugins/&name; -type f -exec chmod 644 {} \;
+find /usr/local/emhttp/plugins/&name; -name "*.page" -exec chmod 755 {} \;
+find /usr/local/emhttp/plugins/&name; -name "*.sh"   -exec chmod 755 {} \;
+
+# Init cache dir with restricted permissions
+mkdir -p /tmp/streamviewer_cache
+chmod 700 /tmp/streamviewer_cache
+
+# Restore user config if update overwrote it with defaults
+CFG=/boot/config/plugins/&name;/&name;.cfg
+BAK=/boot/config/plugins/&name;/&name;.cfg.bak
+if [[ -f "$BAK" ]]; then
+    cp "$BAK" "$CFG"
+    rm -f "$BAK"
+fi
+
+echo ""
+echo "----------------------------------------------------"
+echo " &name; (&branch; build) installed successfully."
+echo " Version : &version;"
+echo " Settings: Settings > Stream Viewer"
+echo "----------------------------------------------------"
+echo ""
+</INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+removepkg &name;-&version;
+rm -rf /usr/local/emhttp/plugins/&name;
+rm -rf /boot/config/plugins/&name;
+rm -rf /tmp/streamviewer_cache
+
+echo ""
+echo "----------------------------------------------------"
+echo " &name; has been removed."
+echo "----------------------------------------------------"
+echo ""
+</INLINE>
+</FILE>
+
+</PLUGIN>
