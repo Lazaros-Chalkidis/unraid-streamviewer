@@ -13,7 +13,6 @@
 .streamviewer-settings input[type="submit"] {
   width: auto !important;
   max-width: max-content !important;
-  display: inline-flex !important;
   flex-shrink: 0 !important;
 }
 

@@ -1068,7 +1068,7 @@ final class StreamViewerEndpoint
 
     private function sanitizeStr(string $s): string
     {
-        return htmlspecialchars(trim($s), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        return trim($s);
     }
 }
 
