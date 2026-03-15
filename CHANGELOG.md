@@ -1,5 +1,19 @@
 # Changelog
 
+## Version 2026.03.15
+
+### Bug Fixes
+
+- Kill Session: Stopping a stream on Plex now correctly disconnects the user in all cases
+- Kill Session: Stopped stream no longer reappears on the dashboard after being terminated
+- Kill Session: Added a short delay after stopping a stream before refreshing, so the server has time to fully close the session
+- Auto Refresh: The "Last Refresh" timer no longer freezes when the server is temporarily unreachable — it now shows how many seconds until the next retry
+- Auto Refresh: Fixed rare issue where the widget could send two overlapping refresh requests at the same time
+- Auto Refresh: Widget now recovers automatically if the browser has slowed down background timers
+- Credits popup: OK button is now correctly centered
+
+---
+
 ## Version 2026.03.14
 
 ### First release
