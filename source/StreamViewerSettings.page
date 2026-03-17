@@ -90,6 +90,7 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['TOOL_SHOW_TRANSCODE']   = $yn($_POST['TOOL_SHOW_TRANSCODE']   ?? '1', '1');
     $new_cfg['TOOL_SHOW_DEVICE']      = $yn($_POST['TOOL_SHOW_DEVICE']      ?? '1', '1');
     $new_cfg['TOOL_ALLOW_KILL']       = $yn($_POST['TOOL_ALLOW_KILL']       ?? '0', '0');
+    $new_cfg['VERIFY_SSL']            = $yn($_POST['VERIFY_SSL']            ?? '0', '0');
 
     $tab = $_POST['sv_active_tab'] ?? 'widget';
     if (!in_array($tab, ['widget', 'plex', 'jellyfin', 'emby'], true)) $tab = 'widget';
@@ -272,6 +273,24 @@ if ($plugin_version === 'dev') {
                 <?= mk_option($cfg['TOOL_ALLOW_KILL'] ?? '0', '1', _('Enabled')) ?>
               </select>
               <div class="sv-hint" style="color:#f47d42;">⚠ Forcibly disconnects users.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sv-card sv-card--collapsed">
+        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetConnectionBd"><span>Connection</span><span class="sv-pill">Network</span></div>
+        <div class="sv-card-bd-collapsible" id="svWidgetConnectionBd" style="display:none;">
+          <div class="sv-row">
+            <div>
+              <div class="sv-label">Verify SSL certificates</div>
+              <div class="sv-desc">Validate TLS certificates when connecting to your media servers. Disable if you use self-signed certs (common on LAN). Connections to plex.tv always verify regardless of this setting.</div>
+            </div>
+            <div class="sv-field">
+              <select name="VERIFY_SSL" class="form-control">
+                <?= mk_option($cfg['VERIFY_SSL'] ?? '0', '0', _('Disabled (Default — self-signed OK)')) ?>
+                <?= mk_option($cfg['VERIFY_SSL'] ?? '0', '1', _('Enabled (strict)')) ?>
+              </select>
             </div>
           </div>
         </div>
@@ -831,15 +850,14 @@ function addDiscoveredServer(btn, servers) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function addJellyfinServer() {
-    var type  = (document.getElementById('svJfType')  || {}).value  || '';
-    var name  = (document.getElementById('svJfName')  || {}).value  || '';
-    var url   = (document.getElementById('svJfUrl')   || {}).value  || '';
-    var token = (document.getElementById('svJfToken') || {}).value  || '';
+    var type  = 'jellyfin';
+    var name  = $.trim((document.getElementById('svJfName')  || {}).value || '');
+    var url   = $.trim((document.getElementById('svJfUrl')   || {}).value || '');
+    var token = $.trim((document.getElementById('svJfToken') || {}).value || '');
 
-    if (!type)  { alert('Please select a server type.'); return; }
     if (!url)   { alert('Please enter the server URL.');  return; }
     if (!token) { alert('Please enter the API key.');     return; }
-    if (!name)  name = (type === 'jellyfin' ? 'Jellyfin' : 'Emby') + ' Server';
+    if (!name)  name = 'Jellyfin Server';
 
     var active = cards.filter(function(c) { return !c.removed; });
     if (active.length >= window.svMaxServers) {
@@ -857,7 +875,6 @@ function addJellyfinServer() {
     });
 
     // Clear the form
-    document.getElementById('svJfType').value  = '';
     document.getElementById('svJfName').value  = '';
     document.getElementById('svJfUrl').value   = '';
     document.getElementById('svJfToken').value = '';
@@ -869,14 +886,17 @@ function addJellyfinServer() {
 }
 
 function testJellyfinServer() {
-    var type  = (document.getElementById('svJfType')  || {}).value  || '';
+    var type  = 'jellyfin';
     var url   = ((document.getElementById('svJfUrl')   || {}).value  || '').replace(/\/$/, '');
     var token = (document.getElementById('svJfToken') || {}).value  || '';
     var btn   = document.getElementById('svJfTestBtn');
     var res   = document.getElementById('svJfTestResult');
 
-    if (!type || !url || !token) {
-        if (res) { res.textContent = '✗ Fill in Type, URL and API Key first.'; res.className = 'sv-inline-result sv-test-err'; res.style.display = ''; }
+    // Brief flash: hide result so re-click is always visible
+    if (res) res.style.display = 'none';
+
+    if (!url || !token) {
+        setTimeout(function() { showResult(res, false, 'Fill in URL and API Key first.'); }, 60);
         return;
     }
 
@@ -897,24 +917,16 @@ function testJellyfinServer() {
         },
         dataType: 'json',
         success: function(data) {
-            if (res) {
-                if (data.ok) {
-                    var ver = data.version ? ' (v' + data.version + ')' : '';
-                    res.textContent = '✓ Connected to ' + (data.server || type) + ver;
-                    res.className   = 'sv-inline-result sv-test-ok';
-                } else {
-                    res.textContent = '✗ ' + (data.error || 'Connection failed');
-                    res.className   = 'sv-inline-result sv-test-err';
-                }
-                res.style.display = '';
+            if (data.ok) {
+                var ver = data.version ? ' (v' + data.version + ')' : '';
+                showResult(res, true, 'Connected to ' + (data.server || type) + ver);
+            } else {
+                showResult(res, false, data.error || 'Connection failed');
             }
         },
         error: function(xhr) {
-            if (res) {
-                res.textContent = '✗ ' + ((xhr.responseJSON && xhr.responseJSON.error) ? xhr.responseJSON.error : 'Request failed');
-                res.className   = 'sv-inline-result sv-test-err';
-                res.style.display = '';
-            }
+            var msg = (xhr.responseJSON && xhr.responseJSON.error) ? xhr.responseJSON.error : 'Request failed';
+            showResult(res, false, msg);
         },
         complete: function() {
             btn.disabled = false;
@@ -1045,21 +1057,81 @@ function updateCountPill() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// RESULT DISPLAY HELPER
+// ══════════════════════════════════════════════════════════════════════════════
+
+function showResult(el, ok, msg) {
+    if (!el) return;
+    msg = msg || '';
+
+    // Detect network errors that suggest ipvlan/macvlan host isolation
+    var networkHint = '';
+    if (!ok) {
+        var lower = msg.toLowerCase();
+        if (lower.indexOf('no route to host') !== -1
+            || lower.indexOf('could not connect') !== -1
+            || lower.indexOf('failed to connect') !== -1
+            || lower.indexOf('connection refused') !== -1
+            || lower.indexOf('timed out') !== -1) {
+            networkHint = '\n💡 If your media server uses a custom Docker network (ipvlan/macvlan), '
+                + 'you need to enable: Settings → Docker → Host access to custom networks. '
+                + '(Stop Docker first, switch to Advanced View.)';
+        }
+    }
+
+    el.textContent = (ok ? '✓ ' : '✗ ') + msg + networkHint;
+    el.className   = 'sv-inline-result ' + (ok ? 'sv-test-ok' : 'sv-test-err');
+    if (networkHint) el.style.whiteSpace = 'pre-line';
+    else el.style.whiteSpace = '';
+    el.style.display = '';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // EMBY ADD / TEST
 // ══════════════════════════════════════════════════════════════════════════════
 
 function testEmbyServer() {
-    var name  = (document.getElementById('svEmbyName')  || {}).value || '';
-    var url   = (document.getElementById('svEmbyUrl')   || {}).value || '';
+    var url   = ((document.getElementById('svEmbyUrl')   || {}).value || '').replace(/\/$/, '');
     var token = (document.getElementById('svEmbyToken') || {}).value || '';
+    var btn   = document.getElementById('svEmbyTestBtn');
     var res   = document.getElementById('svEmbyTestResult');
-    if (!url || !token) { showResult(res, false, 'URL and API Key are required.'); return; }
-    if (res) { res.style.display = ''; res.textContent = 'Testing…'; res.className = 'sv-inline-result'; }
+
+    // Brief flash: hide result so re-click is always visible
+    if (res) res.style.display = 'none';
+
+    if (!url || !token) {
+        setTimeout(function() { showResult(res, false, 'URL and API Key are required.'); }, 60);
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Testing…';
+
     $.ajax({
-        url: SV_API, method: 'GET', dataType: 'json',
-        data: { action: 'test_connection', type: 'emby', url: url, token: token, _svt: window.svToken || '' },
-        success: function(d) { showResult(res, d.ok, d.ok ? 'Connected!' : (d.error || 'Failed')); },
-        error:   function()  { showResult(res, false, 'Request failed.'); }
+        url:      SV_API,
+        method:   'GET',
+        timeout:  12000,
+        headers:  { 'X-Requested-With': 'XMLHttpRequest' },
+        data: {
+            action: 'test_connection',
+            type:   'emby',
+            url:    url,
+            token:  token,
+            _svt:   window.svToken || '',
+        },
+        dataType: 'json',
+        success: function(d) {
+            var ver = d.version ? ' (v' + d.version + ')' : '';
+            showResult(res, d.ok, d.ok ? 'Connected!' + ver : (d.error || 'Failed'));
+        },
+        error: function(xhr) {
+            var msg = (xhr.responseJSON && xhr.responseJSON.error) ? xhr.responseJSON.error : 'Request failed';
+            showResult(res, false, msg);
+        },
+        complete: function() {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa fa-plug"></i> Test Connection';
+        },
     });
 }
 
@@ -1157,9 +1229,12 @@ function setTab(which) {
     });
     var inp = document.getElementById('svActiveTabInput');
     if (inp) inp.value = which;
-    // Show Reset button only on Dashboard Widget tab
+    // Update Reset button label per tab
     var resetBtn = document.getElementById('svResetBtn');
-    if (resetBtn) resetBtn.style.display = (which === 'widget') ? '' : 'none';
+    if (resetBtn) {
+        resetBtn.style.display = '';
+        resetBtn.value = (which === 'widget') ? 'Reset to Defaults' : 'Clear Form';
+    }
     try { sessionStorage.setItem('sv_active_tab', which); } catch(_) {}
     try { history.replaceState(null, '', '#' + which); } catch(_) {}
 }
@@ -1172,21 +1247,57 @@ function resetDefaults() {
     var form = document.querySelector('form[name="streamviewer_settings"]');
     if (!form) return;
     var activeTab = (document.getElementById('svActiveTabInput') || {}).value || 'widget';
-    var defaults = {};
 
     if (activeTab === 'widget') {
-        defaults = { REFRESH_ENABLED:'1', REFRESH_INTERVAL:'30', WIDGET_MAX_STREAMS:'10',
-                     WIDGET_SHOW_DEVICE:'1', WIDGET_SHOW_IP:'1', WIDGET_SHOW_PROGRESS:'1',
-                     WIDGET_SHOW_QUALITY:'1', WIDGET_SHOW_TRANSCODE:'1', TOOL_ALLOW_KILL:'0' };
+        var defaults = {
+            REFRESH_ENABLED:'1', REFRESH_INTERVAL:'30', WIDGET_MAX_STREAMS:'10',
+            WIDGET_SHOW_DEVICE:'1', WIDGET_SHOW_IP:'1', WIDGET_SHOW_PROGRESS:'1',
+            WIDGET_SHOW_QUALITY:'1', WIDGET_SHOW_TRANSCODE:'1', TOOL_ALLOW_KILL:'0',
+            VERIFY_SSL:'0'
+        };
+        Object.keys(defaults).forEach(function(k) {
+            var el = form.querySelector('[name="' + k + '"]');
+            if (el) el.value = defaults[k];
+        });
+        markDirty();
+        alert('Settings reset to defaults. Click "Apply" to save.');
+        return;
     }
 
-    Object.keys(defaults).forEach(function(k) {
-        var el = form.querySelector('[name="' + k + '"]');
-        if (el) el.value = defaults[k];
-    });
+    if (activeTab === 'jellyfin') {
+        var jfName  = document.getElementById('svJfName');
+        var jfUrl   = document.getElementById('svJfUrl');
+        var jfToken = document.getElementById('svJfToken');
+        var jfRes   = document.getElementById('svJfTestResult');
+        if (jfName)  jfName.value  = '';
+        if (jfUrl)   jfUrl.value   = '';
+        if (jfToken) jfToken.value = '';
+        if (jfRes)   jfRes.style.display = 'none';
+        return;
+    }
 
-    markDirty();
-    alert('Settings reset to defaults. Click "Apply" to save.');
+    if (activeTab === 'emby') {
+        var embyName  = document.getElementById('svEmbyName');
+        var embyUrl   = document.getElementById('svEmbyUrl');
+        var embyToken = document.getElementById('svEmbyToken');
+        var embyRes   = document.getElementById('svEmbyTestResult');
+        if (embyName)  embyName.value  = '';
+        if (embyUrl)   embyUrl.value   = '';
+        if (embyToken) embyToken.value = '';
+        if (embyRes)   embyRes.style.display = 'none';
+        return;
+    }
+
+    if (activeTab === 'plex') {
+        // Plex uses OAuth — reset the OAuth UI to initial state
+        var step1   = document.getElementById('svPlexOauthStep1');
+        var step2   = document.getElementById('svPlexOauthStep2');
+        var oauthMsg = document.getElementById('svPlexOauthMsg');
+        if (step1) step1.style.display = '';
+        if (step2) step2.style.display = 'none';
+        if (oauthMsg) oauthMsg.textContent = 'Waiting for you to sign in at plex.tv…';
+        return;
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

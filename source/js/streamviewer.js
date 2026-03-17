@@ -23,7 +23,6 @@ window.__svLoaded = true;
 var _cfg          = {};       // resolved, sanitised config
 var _sessions     = [];       // last-fetched sessions (all servers combined)
 var _serverStats  = [];       // last-fetched per-server status objects
-var _activeFilter = 'all';    // 'all' | 'plex' | 'jellyfin' | 'emby'
 var _context      = 'dash';   // 'dash' (widget) | 'tool'
 var _pollTimer    = null;
 var _inFlight     = false;
@@ -45,7 +44,6 @@ var DOM = {
     pulse:      function() { return document.getElementById('sv-pulse');             },
     errBadge:   function() { return document.getElementById('sv-err-badge');         },
     errCount:   function() { return document.getElementById('sv-err-count');         },
-    tabrow:     function() { return document.getElementById('sv-tabrow');            },
     manualBtn:  function() { return document.getElementById('sv-manual-refresh');    },
     toolRefBtn: function() { return document.getElementById('sv-tool-refresh');      },
 };
@@ -175,9 +173,10 @@ function renderRow(s) {
     var killHtml = '';
     if (cfg.allowKill) {
         killHtml = '<button class="sv-kill-btn"'
-            + ' data-session-id="'  + esc(s.session_id  || '') + '"'
-            + ' data-session-key="' + esc(s.session_key || '') + '"'
-            + ' data-server-name="' + esc(s.server_name || '') + '"'
+            + ' data-session-id="'       + esc(s.session_id         || '') + '"'
+            + ' data-session-key="'      + esc(s.session_key        || '') + '"'
+            + ' data-server-name="'      + esc(s.server_name        || '') + '"'
+            + ' data-plex-session-uuid="'+ esc(s.plex_session_uuid  || '') + '"'
             + ' title="Stop this stream">'
             + '<i class="fa fa-stop" aria-hidden="true"></i> Stop'
             + '</button>';
@@ -373,11 +372,7 @@ function renderStreams(sessions) {
     var emptyState = DOM.emptyState();
     if (!container) return;
 
-    var visible = _activeFilter === 'all'
-        ? sessions
-        : sessions.filter(function(s) { return s.server_type === _activeFilter; });
-
-    visible = sortSessions(visible);
+    var visible = sortSessions(sessions);
 
     var maxS = _cfg.maxStreams || 0;
     if (maxS > 0 && visible.length > maxS) visible = visible.slice(0, maxS);
@@ -470,13 +465,14 @@ function bindKillButtons(container) {
 }
 
 function onKillClick(e) {
-    var btn        = e.currentTarget;
-    var row        = btn.closest('.sv-stream');
-    var sessionId  = btn.dataset.sessionId  || '';
-    var sessionKey = btn.dataset.sessionKey || '';
-    var serverName = btn.dataset.serverName || '';
-    var titleEl    = row && row.querySelector('.sv-stream__title');
-    var title      = titleEl ? titleEl.textContent : (sessionId || 'this stream');
+    var btn             = e.currentTarget;
+    var row             = btn.closest('.sv-stream');
+    var sessionId       = btn.dataset.sessionId       || '';
+    var sessionKey      = btn.dataset.sessionKey      || '';
+    var serverName      = btn.dataset.serverName      || '';
+    var plexSessionUuid = btn.dataset.plexSessionUuid || '';
+    var titleEl         = row && row.querySelector('.sv-stream__title');
+    var title           = titleEl ? titleEl.textContent : (sessionId || 'this stream');
 
     if (!confirm('Stop stream: "' + title + '"?\n\nThis will immediately disconnect the user.')) return;
 
@@ -486,10 +482,10 @@ function onKillClick(e) {
         return;
     }
 
-    doKillSession(btn, row, serverIndex, sessionId, sessionKey);
+    doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSessionUuid);
 }
 
-function doKillSession(btn, row, serverIndex, sessionId, sessionKey) {
+function doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSessionUuid) {
     btn.disabled = true;
     btn.innerHTML = '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i>';
 
@@ -499,16 +495,26 @@ function doKillSession(btn, row, serverIndex, sessionId, sessionKey) {
         timeout:  15000,
         headers:  { 'X-Requested-With': 'XMLHttpRequest' },
         data: {
-            action:       'kill_session',
-            server_index: serverIndex,
-            session_id:   sessionId,
-            session_key:  sessionKey,
-            reason:       'Stream terminated by Unraid administrator',
-            _svt:         _cfg.svToken || '',
+            action:            'kill_session',
+            server_index:      serverIndex,
+            session_id:        sessionId,
+            session_key:       sessionKey,
+            plex_session_uuid: plexSessionUuid || '',
+            reason:            'Stream terminated by Unraid administrator',
+            _svt:              _cfg.svToken || '',
         },
         dataType: 'json',
         success: function(data) {
             if (data && data.ok) {
+                // Fix Αιτία Δ: αμέσως αφαίρεσε από _sessions ώστε το
+                // renderStreams() να μην ξαναβάλει τη σκοτωμένη ταινία
+                // πριν φτάσει το επόμενο server fetch.
+                var killId = sessionId || sessionKey;
+                if (killId) {
+                    _sessions = _sessions.filter(function(s) {
+                        return (s.session_id || s.session_key) !== killId;
+                    });
+                }
                 if (row) {
                     row.style.transition = 'opacity .35s ease, transform .35s ease';
                     row.style.opacity    = '0';
@@ -520,7 +526,13 @@ function doKillSession(btn, row, serverIndex, sessionId, sessionKey) {
                         updateBadge(remaining);
                     }, 380);
                 }
-                setTimeout(fetchSessions, 2000);
+                // Fix Αιτία ΣΤ: 3500ms δίνει στο Plex/Jellyfin χρόνο να κλείσει
+                // τη session πριν κάνουμε re-fetch. Επίσης reset polling ώστε
+                // το interval να μετράει από το φρέσκο fetch.
+                stopPolling();
+                setTimeout(function() {
+                    fetchSessions(function() { startPolling(); });
+                }, 3500);
             } else {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fa fa-stop" aria-hidden="true"></i> Stop';
@@ -593,14 +605,22 @@ function updateErrorIndicator(stats) {
 
 function fetchSessions(onDone) {
     if (Date.now() < _backoffUntil) {
+        // Fix Αιτία Α: ανανέωσε το timestamp ακόμα και σε backoff
+        // ώστε ο χρήστης να ξέρει ότι το polling τρέχει (σε αναμονή).
+        var ts = DOM.timestamp();
+        if (ts) {
+            var remaining = Math.ceil((_backoffUntil - Date.now()) / 1000);
+            ts.textContent = fmtNow() + ' (retry in ' + remaining + 's)';
+        }
         if (typeof onDone === 'function') onDone('backoff', null);
         return;
     }
     if (_inFlight) return;
     _inFlight    = true;
     _lastFetchAt = Date.now();
-    // Safety: release _inFlight lock after 20s max (prevents permanent freeze)
-    var _inFlightTimeout = setTimeout(function() { _inFlight = false; }, 20000);
+    // Fix Αιτία Β: safety timeout > AJAX timeout (38s) για να αποφύγουμε
+    // πρόωρη απελευθέρωση του _inFlight lock και overlapping requests.
+    var _inFlightTimeout = setTimeout(function() { _inFlight = false; }, 40000);
 
     $.ajax({
         url:      '/plugins/streamviewer/streamviewer_api.php',
@@ -691,6 +711,7 @@ function startWatchdog() {
 }
 
 function initVisibilityHandling() {
+    // visibilitychange: tab hidden → stop, tab visible → resume
     document.addEventListener('visibilitychange', function() {
         if (document.hidden) {
             stopPolling();
@@ -701,43 +722,24 @@ function initVisibilityHandling() {
             startPolling();
         }
     });
-}
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 11. SERVER-TYPE FILTER TABS
-// ══════════════════════════════════════════════════════════════════════════════
-
-function initTabs() {
-    var tabrow = DOM.tabrow();
-    if (!tabrow) return;
-
-    tabrow.addEventListener('click', function(e) {
-        var btn = e.target.closest('.sv-servertab');
-        if (btn) setFilter(btn.dataset.filter || 'all');
-    });
-
-    tabrow.addEventListener('keydown', function(e) {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        var btn = e.target.closest('.sv-servertab');
-        if (btn) { e.preventDefault(); setFilter(btn.dataset.filter || 'all'); }
+    // Fix Αιτία Γ: browsers throttle setInterval σε background/low-power mode
+    // ακόμα κι όταν το tab δεν είναι hidden. Ο window focus event δεν υπόκειται
+    // στο ίδιο throttling — τον χρησιμοποιούμε ως safety net.
+    window.addEventListener('focus', function() {
+        if (document.hidden) return;
+        var staleMs = (_cfg.refreshInterval || 30000) * 2;
+        if (_lastFetchAt > 0 && (Date.now() - _lastFetchAt) > staleMs) {
+            _backoffUntil = 0;
+            _inFlight     = false;
+            fetchSessions(function() { startPolling(); });
+        }
     });
 }
 
-function setFilter(filter) {
-    _activeFilter = filter;
-    var tabrow = DOM.tabrow();
-    if (tabrow) {
-        tabrow.querySelectorAll('.sv-servertab').forEach(function(tab) {
-            tab.classList.toggle('sv-servertab--active', tab.dataset.filter === filter);
-        });
-    }
-    renderStreams(_sessions);
-}
-
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 12. REFRESH BUTTONS
+// 11. REFRESH BUTTONS
 // ══════════════════════════════════════════════════════════════════════════════
 
 function wireRefreshBtn(el) {
@@ -772,7 +774,7 @@ function bindRow3Toggles(container) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 13. "NO SERVERS" STATE
+// 12. "NO SERVERS" STATE
 // ══════════════════════════════════════════════════════════════════════════════
 
 function renderNoServers() {
@@ -792,7 +794,7 @@ function renderNoServers() {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 14. CONFIG RESOLUTION
+// 13. CONFIG RESOLUTION
 // ══════════════════════════════════════════════════════════════════════════════
 
 function resolveConfig() {
@@ -823,7 +825,7 @@ function resolveConfig() {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 15. INIT
+// 14. INIT
 // ══════════════════════════════════════════════════════════════════════════════
 
 function init() {
@@ -835,7 +837,6 @@ function init() {
         return;
     }
 
-    initTabs();
     wireRefreshBtn(DOM.manualBtn());
     wireRefreshBtn(DOM.toolRefBtn());
     initVisibilityHandling();
@@ -871,7 +872,7 @@ boot();
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 16. PUBLIC API
+// 15. PUBLIC API
 // ══════════════════════════════════════════════════════════════════════════════
 
 window.StreamViewer = {

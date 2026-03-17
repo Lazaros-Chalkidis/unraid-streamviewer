@@ -211,7 +211,7 @@ if [[ "$LOCAL_INSTALL" == "local" ]]; then
 <PLUGIN name="&name;" Title="Stream Viewer" author="&author;" version="&version;"
         pluginURL="&selfURL;" launch="&launch;"
         icon="streamviewer.png"
-        min="6.9.0"
+        min="7.2.0"
         support="&gitURL;/issues">
 
 <DESCRIPTION>
@@ -288,7 +288,7 @@ else
 <PLUGIN name="&name;" Title="Stream Viewer" author="&author;" version="&version;"
         pluginURL="&selfURL;" launch="&launch;"
         icon="streamviewer.png"
-        min="6.9.0"
+        min="7.2.0"
         support="&gitURL;/issues">
 
 <DESCRIPTION>

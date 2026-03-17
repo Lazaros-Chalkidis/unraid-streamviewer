@@ -87,41 +87,13 @@
   100% { box-shadow: 0 0 0 0   rgba(72,109,186,0);  }
 }
 
-/* ── 5. SERVER FILTER TABS ────────────────────────────────────────────────── */
-.sv-tabrow {
-  display: flex; gap: .25rem; flex-wrap: wrap;
-  padding: .35rem 0 .1rem;
-}
-
-.sv-servertab {
-  display: inline-flex; align-items: center;
-  padding: .2rem .6rem;
-  border-radius: 20px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(255,255,255,.04);
-  color: rgba(255,255,255,.55);
-  font-size: .78em; font-weight: 600;
-  cursor: pointer; white-space: nowrap;
-  transition: background .2s, color .2s, border-color .2s;
-}
-.sv-servertab:hover { background: rgba(255,255,255,.07); color: rgba(255,255,255,.8); }
-.sv-servertab--active {
-  background: rgba(244,125,66,.15) !important;
-  border-color: rgba(244,125,66,.4) !important;
-  color: #f47d42 !important;
-}
-/* Per-type accent colours */
-.sv-servertab[data-filter="plex"].sv-servertab--active    { background: rgba(229,160,13,.12) !important; border-color: rgba(229,160,13,.4) !important; color: var(--sv-plex) !important; }
-.sv-servertab[data-filter="jellyfin"].sv-servertab--active{ background: rgba(0,164,220,.1)  !important; border-color: rgba(0,164,220,.35) !important; color: var(--sv-jf)   !important; }
-.sv-servertab[data-filter="emby"].sv-servertab--active    { background: rgba(82,181,74,.1)  !important; border-color: rgba(82,181,74,.3)  !important; color: var(--sv-emby) !important; }
-
-/* ── 6. BODY + COLLAPSIBLE ────────────────────────────────────────────────── */
+/* ── 5. BODY + COLLAPSIBLE ────────────────────────────────────────────────── */
 .sv-body {
   display: flex; flex-direction: column;
   min-height: 60px;
 }
 
-/* ── 7. STREAMS CONTAINER ─────────────────────────────────────────────────── */
+/* ── 6. STREAMS CONTAINER ─────────────────────────────────────────────────── */
 .sv-streams {
   display: flex; flex-direction: column;
   gap: var(--sv-row-gap);
@@ -129,7 +101,7 @@
   min-height: 40px;
 }
 
-/* ── 8. EMPTY STATE ───────────────────────────────────────────────────────── */
+/* ── 7. EMPTY STATE ───────────────────────────────────────────────────────── */
 .sv-empty-state {
   display: flex; align-items: center; justify-content: center; gap: .4rem;
   padding: 1.1rem .5rem;
@@ -137,7 +109,7 @@
 }
 .sv-empty-icon { font-size: 1em; }
 
-/* ── 9. STREAM ROW ────────────────────────────────────────────────────────── */
+/* ── 8. STREAM ROW ────────────────────────────────────────────────────────── */
 .sv-stream {
   display: grid;
   grid-template-columns: 10px 1fr;
@@ -318,7 +290,7 @@
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 
-/* ── 10. FOOTER ───────────────────────────────────────────────────────────── */
+/* ── 9. FOOTER ───────────────────────────────────────────────────────────── */
 .sv-footer {
   display: flex; align-items: center; justify-content: space-between;
   padding: .35rem 0 .1rem;
@@ -371,7 +343,7 @@
   cursor: default;
 }
 
-/* ── 11. TOOL PAGE OVERRIDES ──────────────────────────────────────────────── */
+/* ── 10. TOOL PAGE OVERRIDES ──────────────────────────────────────────────── */
 .sv-tool-page .sv-stream {
   grid-template-columns: 10px 1fr;
   padding: .6rem .5rem .6rem .3rem;
@@ -403,7 +375,7 @@
 .sv-kill-btn:hover { background: rgba(231,76,60,.22); color: #e74c3c; border-color: rgba(231,76,60,.6); }
 .sv-kill-btn:disabled { opacity: .4; cursor: not-allowed; }
 
-/* ── 12. LOADING SKELETON ─────────────────────────────────────────────────── */
+/* ── 11. LOADING SKELETON ─────────────────────────────────────────────────── */
 .sv-skeleton {
   border-radius: var(--sv-radius);
   background: linear-gradient(90deg,
@@ -420,7 +392,7 @@
   100% { background-position: -200% 0; }
 }
 
-/* ── 13. TOOL PAGE HEADER AREA ────────────────────────────────────────────── */
+/* ── 12. TOOL PAGE HEADER AREA ────────────────────────────────────────────── */
 .sv-tool-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: .75rem 0 .5rem; flex-wrap: wrap; gap: .5rem;
@@ -430,7 +402,7 @@
 }
 .sv-tool-controls { display: flex; align-items: center; gap: .5rem; }
 
-/* ── 14. NO-SERVERS STATE ─────────────────────────────────────────────────── */
+/* ── 13. NO-SERVERS STATE ─────────────────────────────────────────────────── */
 .sv-no-servers-state {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: .6rem; padding: 1.5rem 1rem; text-align: center;
@@ -544,7 +516,7 @@
 .sv-stream__server-type--plex     { background: rgba(229,160,13,.25); color: var(--sv-plex);   border: 0.1em solid rgba(229,160,13,.3); }
 .sv-stream__server-type--jellyfin { background: rgba(0,164,220,.2);   color: var(--sv-jf);     border: 0.1em solid rgba(0,164,220,.25); }
 .sv-stream__server-type--emby     { background: rgba(82,181,74,.2);   color: var(--sv-emby);   border: 0.1em solid rgba(82,181,74,.25); }
-/* ── 15. RESPONSIVE TWEAKS ────────────────────────────────────────────────── */
+/* ── 14. RESPONSIVE TWEAKS ────────────────────────────────────────────────── */
 @media (max-width: 480px) {
   .sv-stream__progress-wrap { min-width: 60px; }
 }

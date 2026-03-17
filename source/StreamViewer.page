@@ -21,9 +21,6 @@ for ($i = 1; $i <= 10; $i++) {
     $enabled_servers[] = ['index' => $i, 'type' => $type, 'name' => $name];
 }
 
-// Unique server types present (for tab rendering)
-$server_types_present = array_values(array_unique(array_column($enabled_servers, 'type')));
-
 // ── Unraid version detection ───────────────────────────────────────────────
 $version_data        = @parse_ini_file('/etc/unraid-version');
 $webgui_version      = $version_data['version'] ?? '0.0.0';
@@ -41,7 +38,6 @@ $tile_config = [
     'showQuality'       => ($cfg['WIDGET_SHOW_QUALITY']   ?? '1') === '1',
     'showTranscode'     => ($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1') === '1',
     'servers'           => $enabled_servers,
-    'serverTypesPresent'=> $server_types_present,
     'isResponsive'      => $isResponsiveWebgui,
     'noServersConfigured' => empty($enabled_servers),
     'allowKill'         => ($cfg['TOOL_ALLOW_KILL'] ?? '0') === '1',
@@ -80,32 +76,6 @@ $render_badge_row = static function(): string {
         <span id="sv-badge-count">0</span>
         <span class="sv-badge-label">Streams</span>
     </span>
-</div>
-HTML;
-};
-
-// ── Server filter tabs ─────────────────────────────────────────────────────
-$render_server_tabs = static function(
-    array $serverTypesPresent,
-    array $enabledServers
-): string {
-    // Only render server-type tabs when more than one server type is configured
-    $multiType = count($serverTypesPresent) > 1;
-
-    $typeLabels = ['plex' => 'Plex', 'jellyfin' => 'Jellyfin', 'emby' => 'Emby'];
-
-    // Only show tabs when more than one server type is configured (no ALL button)
-    if (!$multiType) return '';
-
-    $tabsHtml = '';
-    foreach ($serverTypesPresent as $t) {
-        $label = $typeLabels[$t] ?? ucfirst($t);
-        $tabsHtml .= "<button class=\"sv-servertab\" data-filter=\"{$t}\">{$label}</button>";
-    }
-
-    return <<<HTML
-<div class="sv-tabrow" id="sv-tabrow" role="tablist" aria-label="Filter by server type">
-    {$tabsHtml}
 </div>
 HTML;
 };
@@ -193,7 +163,6 @@ HTML;
 $render_fallback_tbody = static function(
     string $tile_title,
     string $header_html,
-    string $tabs_html,
     string $panel_html,
     string $config_html
 ): string {
@@ -203,11 +172,6 @@ $render_fallback_tbody = static function(
     <tr>
         <td class="next" colspan="3">
             {$header_html}
-        </td>
-    </tr>
-    <tr>
-        <td colspan="3">
-            {$tabs_html}
         </td>
     </tr>
     <tr class="dash_streamviewer_toggle sv-content">
@@ -226,7 +190,6 @@ HTML;
 // ════════════════════════════════════════════════════════════════════════════
 
 $badge_html    = $render_badge_row();
-$tabs_html     = $render_server_tabs($server_types_present, $enabled_servers);
 $panel_html    = $render_streams_panel();
 $config_html   = $render_config($tile_config_json);
 
@@ -250,13 +213,12 @@ $tile = [
 ];
 
 $tile['content'] = $isResponsiveWebgui
-    ? ($header_responsive . $tabs_html . $panel_html . $config_html)
-    : ($header_legacy     . $tabs_html . $panel_html . $config_html);
+    ? ($header_responsive . $panel_html . $config_html)
+    : ($header_legacy     . $panel_html . $config_html);
 
 $fallback_markup = $render_fallback_tbody(
     $tile_title,
     $isResponsiveWebgui ? $header_responsive : $header_legacy,
-    $tabs_html,
     $panel_html,
     $config_html
 );

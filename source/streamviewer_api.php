@@ -21,17 +21,33 @@ final class StreamViewerEndpoint
     private const NONCE_TTL            = 3600;   // seconds
     private const RATE_LIMIT_FILE      = '/tmp/streamviewer_cache/rl';
     private const RATE_LIMIT_MAX       = 120;    // requests per minute per IP
-    private const MICRO_CACHE_MS       = 500;    // deduplicate rapid widget refreshes
+    private const MICRO_CACHE_MS       = 2000;   // deduplicate rapid/parallel widget refreshes
 
     // ── HTTP ───────────────────────────────────────────────────────────────
     private const HTTP_TIMEOUT         = 7;
     private const HTTP_CONNECT_TIMEOUT = 4;
+    private const THUMB_MAX_BYTES      = 5 * 1024 * 1024;  // 5 MB cap for proxied thumbnails
+
+    // ── Runtime state ───────────────────────────────────────────────────
+    private bool $verifySsl = false;
+    private ?array $cfgCache = null;
 
     public function __construct()
     {
         if (!is_dir(self::CACHE_DIR)) {
             @mkdir(self::CACHE_DIR, 0700, true);
         }
+        $this->verifySsl = (($this->loadCfg()['VERIFY_SSL'] ?? '0') === '1');
+    }
+
+    // ── Config (cached per request) ─────────────────────────────────────
+
+    private function loadCfg(): array
+    {
+        if ($this->cfgCache !== null) return $this->cfgCache;
+        $cfg = @parse_plugin_cfg(self::PLUGIN_NAME, true);
+        $this->cfgCache = is_array($cfg) ? $cfg : [];
+        return $this->cfgCache;
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -179,15 +195,7 @@ final class StreamViewerEndpoint
         $routes[$action]();
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // Config helpers
-    // ══════════════════════════════════════════════════════════════════════
-
-    private function loadCfg(): array
-    {
-        $cfg = @parse_plugin_cfg(self::PLUGIN_NAME, true);
-        return is_array($cfg) ? $cfg : [];
-    }
+    // ── Server list builder ────────────────────────────────────────────
 
     private function getEnabledServers(array $cfg): array
     {
@@ -220,12 +228,15 @@ final class StreamViewerEndpoint
         $cached    = $this->cacheGet($cachePath, self::MICRO_CACHE_MS);
         if ($cached !== null) $this->rawJson($cached);
 
-        $servers     = $this->getEnabledServers($cfg);
+        $servers = $this->getEnabledServers($cfg);
+
+        // Parallel fetch: all servers at once via curl_multi
+        $results = $this->fetchAllSessionsParallel($servers);
+
         $sessions    = [];
         $serverStats = [];
-
-        foreach ($servers as $srv) {
-            $result = $this->fetchSessions($srv);
+        foreach ($results as $i => $result) {
+            $srv = $servers[$i];
             $serverStats[] = [
                 'name'            => $srv['name'],
                 'type'            => $srv['type'],
@@ -245,6 +256,97 @@ final class StreamViewerEndpoint
         ]);
         $this->cachePut($cachePath, $json);
         $this->rawJson($json);
+    }
+
+    // Fire all server session requests simultaneously, parse results per type
+    private function fetchAllSessionsParallel(array $servers): array
+    {
+        if (empty($servers) || !function_exists('curl_multi_init')) {
+            // Fallback: sequential
+            $results = [];
+            foreach ($servers as $srv) $results[] = $this->fetchSessions($srv);
+            return $results;
+        }
+
+        $mh      = curl_multi_init();
+        $handles = [];
+        $verify  = $this->verifySsl;
+
+        foreach ($servers as $i => $srv) {
+            [$url, $hdrs] = $this->sessionEndpoint($srv);
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => self::HTTP_TIMEOUT,
+                CURLOPT_CONNECTTIMEOUT => self::HTTP_CONNECT_TIMEOUT,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS      => 3,
+                CURLOPT_SSL_VERIFYPEER => $verify,
+                CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
+                CURLOPT_HTTPHEADER     => $this->buildCurlHeaders($hdrs),
+            ]);
+            curl_multi_add_handle($mh, $ch);
+            $handles[$i] = $ch;
+        }
+
+        // Execute all in parallel
+        do {
+            $status = curl_multi_exec($mh, $active);
+            if ($active) curl_multi_select($mh, 1);
+        } while ($active && $status === CURLM_OK);
+
+        // Collect results
+        $results = [];
+        foreach ($handles as $i => $ch) {
+            $body = curl_multi_getcontent($ch);
+            $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $err  = curl_error($ch) ?: null;
+            curl_multi_remove_handle($mh, $ch);
+            curl_close($ch);
+
+            $srv = $servers[$i];
+            if ($err !== null || $code < 200 || $code >= 300) {
+                // Plex: try auto-rediscover on connection error (sequential fallback)
+                if ($srv['type'] === 'plex' && $code !== 401 && isset($srv['index'])) {
+                    $results[$i] = $this->fetchPlexSessions($srv);
+                    continue;
+                }
+                $errMsg = $err ?? ($code === 401 ? 'Invalid API key' : "HTTP {$code}");
+                $results[$i] = ['ok' => false, 'sessions' => [], 'error' => $errMsg];
+                continue;
+            }
+
+            $results[$i] = $this->parseSessions($srv, $body ?: '');
+        }
+
+        curl_multi_close($mh);
+        return $results;
+    }
+
+    // Build session endpoint URL + headers per server type
+    private function sessionEndpoint(array $srv): array
+    {
+        return match($srv['type']) {
+            'plex' => [
+                $srv['url'] . '/status/sessions',
+                ['X-Plex-Token' => $srv['token'], 'Accept' => 'application/json'],
+            ],
+            default => [
+                $srv['url'] . '/Sessions?ActiveWithinSeconds=960',
+                ['X-Emby-Token' => $srv['token'], 'X-MediaBrowser-Token' => $srv['token'], 'Accept' => 'application/json'],
+            ],
+        };
+    }
+
+    // Route response body to the correct parser
+    private function parseSessions(array $srv, string $body): array
+    {
+        return match($srv['type']) {
+            'plex'     => $this->parsePlexBody($srv, $body),
+            'jellyfin' => $this->parseJellyfinBody($srv, $body),
+            'emby'     => $this->parseEmbyBody($srv, $body),
+            default    => ['ok' => false, 'sessions' => [], 'error' => 'Unknown type'],
+        };
     }
 
     private function fetchSessions(array $srv): array
@@ -288,6 +390,11 @@ final class StreamViewerEndpoint
         if ($httpCode === 401) return ['ok' => false, 'sessions' => [], 'error' => 'Invalid Plex token'];
         if ($httpCode !== 200) return ['ok' => false, 'sessions' => [], 'error' => "HTTP {$httpCode}"];
 
+        return $this->parsePlexBody($srv, $body);
+    }
+
+    private function parsePlexBody(array $srv, string $body): array
+    {
         $data = @json_decode($body, true);
         if (!is_array($data)) return ['ok' => false, 'sessions' => [], 'error' => 'Invalid JSON response'];
 
@@ -328,7 +435,7 @@ final class StreamViewerEndpoint
                 'progress_ms'           => (int)($item['viewOffset']                      ?? 0),
                 'duration_ms'           => (int)($item['duration']                        ?? 0),
                 'bandwidth_kbps'        => (int)($media['bitrate']                        ?? 0),
-                'quality'               => (string)($media['videoResolution']             ?? ''),
+                'quality'               => $this->formatPlexQuality((string)($media['videoResolution'] ?? '')),
                 'bitrate'               => (int)($media['bitrate']                        ?? 0),
                 'container'             => (string)($media['container']                   ?? ''),
                 'video_codec'           => (string)($videoS['codec']                      ?? ''),
@@ -353,6 +460,12 @@ final class StreamViewerEndpoint
             ? 'transcode' : 'direct_stream';
     }
 
+    private function formatPlexQuality(string $res): string
+    {
+        if ($res === '') return '';
+        return is_numeric($res) ? $res . 'p' : $res;
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // Jellyfin session fetching
     // ══════════════════════════════════════════════════════════════════════
@@ -367,9 +480,14 @@ final class StreamViewerEndpoint
         ]);
 
         if ($err !== null) return ['ok' => false, 'sessions' => [], 'error' => $err];
-        if ($httpCode === 401) return ['ok' => false, 'sessions' => [], 'error' => 'Invalid Jellyfin API key'];
+        if ($httpCode === 401) return ['ok' => false, 'sessions' => [], 'error' => 'Invalid API key'];
         if ($httpCode !== 200) return ['ok' => false, 'sessions' => [], 'error' => "HTTP {$httpCode}"];
 
+        return $this->parseJellyfinBody($srv, $body);
+    }
+
+    private function parseJellyfinBody(array $srv, string $body): array
+    {
         $data = @json_decode($body, true);
         if (!is_array($data)) return ['ok' => false, 'sessions' => [], 'error' => 'Invalid JSON response'];
 
@@ -389,26 +507,46 @@ final class StreamViewerEndpoint
             $videoCodec = $audioCodec = $container = $quality = '';
             $bitrate = $audioChannels = 0;
 
+            // Try MediaSources first (present in NowPlayingQueueFullItems),
+            // then fall back to NowPlayingItem.MediaStreams (Jellyfin Sessions API)
             $mediaSources = $nowPlaying['MediaSources'] ?? [];
+            $streams = [];
             if (!empty($mediaSources)) {
                 $src       = $mediaSources[0];
                 $container = (string)($src['Container'] ?? '');
                 $bitrate   = (int)(($src['Bitrate'] ?? 0) / 1000);
-                foreach ($src['MediaStreams'] ?? [] as $s) {
-                    if (($s['Type'] ?? '') === 'Video' && $videoCodec === '') {
-                        $videoCodec = (string)($s['Codec'] ?? '');
-                        $quality    = isset($s['Height']) ? $s['Height'] . 'p' : '';
-                    }
-                    if (($s['Type'] ?? '') === 'Audio' && $audioCodec === '') {
-                        $audioCodec    = (string)($s['Codec']    ?? '');
-                        $audioChannels = (int)($s['Channels']    ?? 0);
-                    }
+                $streams   = $src['MediaStreams'] ?? [];
+            } else {
+                $container = (string)($nowPlaying['Container'] ?? '');
+                $streams   = $nowPlaying['MediaStreams'] ?? [];
+            }
+
+            foreach ($streams as $s) {
+                if (($s['Type'] ?? '') === 'Video' && $videoCodec === '') {
+                    $videoCodec = (string)($s['Codec'] ?? '');
+                    $h = (int)($s['Height'] ?? 0);
+                    if ($h > 0) $quality = $h . 'p';
+                }
+                if (($s['Type'] ?? '') === 'Audio' && $audioCodec === '') {
+                    $audioCodec    = (string)($s['Codec']    ?? '');
+                    $audioChannels = (int)($s['Channels']    ?? 0);
                 }
             }
+
+            // Fallback: top-level Height on NowPlayingItem (Jellyfin)
+            if ($quality === '') {
+                $h = (int)($nowPlaying['Height'] ?? 0);
+                if ($h > 0) $quality = $h . 'p';
+            }
+
             if ($transInfo !== null) {
                 if ($videoCodec === '') $videoCodec = (string)($transInfo['VideoCodec'] ?? '');
                 if ($audioCodec === '') $audioCodec = (string)($transInfo['AudioCodec'] ?? '');
                 if ($bitrate    === 0)  $bitrate    = (int)(($transInfo['Bitrate']      ?? 0) / 1000);
+                if ($quality    === '') {
+                    $h = (int)($transInfo['Height'] ?? 0);
+                    if ($h > 0) $quality = $h . 'p';
+                }
             }
 
             $imageId  = $nowPlaying['SeriesId'] ?? $nowPlaying['SeasonId'] ?? $nowPlaying['Id'] ?? null;
@@ -463,6 +601,14 @@ final class StreamViewerEndpoint
     private function fetchEmbySession(array $srv): array
     {
         $result = $this->fetchJellyfinSessions($srv);
+        foreach ($result['sessions'] as &$s) $s['server_type'] = 'emby';
+        unset($s);
+        return $result;
+    }
+
+    private function parseEmbyBody(array $srv, string $body): array
+    {
+        $result = $this->parseJellyfinBody($srv, $body);
         foreach ($result['sessions'] as &$s) $s['server_type'] = 'emby';
         unset($s);
         return $result;
@@ -573,25 +719,45 @@ final class StreamViewerEndpoint
         $url = trim((string)($_GET['u'] ?? ''));
         if ($url === '') { http_response_code(400); exit('No URL'); }
 
+        // Validate scheme
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+        if (!in_array($scheme, ['http', 'https'], true)) {
+            http_response_code(400); exit('Invalid URL scheme');
+        }
+
+        // Extract host+port from the requested thumbnail URL
+        $reqHost = strtolower((string)(parse_url($url, PHP_URL_HOST) ?: ''));
+        $reqPort = parse_url($url, PHP_URL_PORT);  // null when absent
+
+        // Check against configured server origins (host+port match)
         $allowed = false;
-        $cfg = @parse_plugin_cfg('streamviewer', true) ?: [];
+        $cfg = $this->loadCfg();
         for ($i = 1; $i <= self::MAX_SERVERS; $i++) {
             $srvUrl = rtrim(trim((string)($cfg["SERVER{$i}_URL"] ?? '')), '/');
-            if ($srvUrl !== '' && strpos($url, $srvUrl) === 0) { $allowed = true; break; }
+            if ($srvUrl === '') continue;
+            $srvHost = strtolower((string)(parse_url($srvUrl, PHP_URL_HOST) ?: ''));
+            $srvPort = parse_url($srvUrl, PHP_URL_PORT);
+            if ($srvHost !== '' && $srvHost === $reqHost && $srvPort === $reqPort) {
+                $allowed = true;
+                break;
+            }
         }
-        if (!$allowed && preg_match('#^https?://[a-z0-9-]+\.plex\.direct[:/]#i', $url)) {
+        // Also allow *.plex.direct (Plex relay/tunnel hostnames)
+        if (!$allowed && preg_match('#^[a-z0-9-]+\.plex\.direct$#i', $reqHost)) {
             $allowed = true;
         }
         if (!$allowed) { http_response_code(403); exit('URL not allowed'); }
 
+        $verify = $this->verifySsl;
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_FOLLOWLOCATION => false,             // no redirects — prevent open redirect SSRF
             CURLOPT_TIMEOUT        => 8,
             CURLOPT_CONNECTTIMEOUT => self::HTTP_CONNECT_TIMEOUT,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_MAXFILESIZE    => self::THUMB_MAX_BYTES,
+            CURLOPT_SSL_VERIFYPEER => $verify,
+            CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
             CURLOPT_USERAGENT      => 'StreamViewer/1.0 Unraid',
         ]);
         $body   = curl_exec($ch);
@@ -651,13 +817,21 @@ final class StreamViewerEndpoint
     private function replyTestConnection(): void
     {
         $index = (int)($_GET['server'] ?? 0);
-        if ($index < 1 || $index > self::MAX_SERVERS) $this->json(['error' => 'Invalid server index'], 400);
 
-        $cfg   = $this->loadCfg();
-        $type  = (string)($cfg["SERVER{$index}_TYPE"]  ?? '');
-        $url   = rtrim(trim((string)($cfg["SERVER{$index}_URL"]   ?? '')), '/');
-        $token = trim((string)($cfg["SERVER{$index}_TOKEN"] ?? ''));
-        $name  = trim((string)($cfg["SERVER{$index}_NAME"]  ?? "Server {$index}"));
+        if ($index >= 1 && $index <= self::MAX_SERVERS) {
+            // Mode 1: test a saved server by config index
+            $cfg   = $this->loadCfg();
+            $type  = (string)($cfg["SERVER{$index}_TYPE"]  ?? '');
+            $url   = rtrim(trim((string)($cfg["SERVER{$index}_URL"]   ?? '')), '/');
+            $token = trim((string)($cfg["SERVER{$index}_TOKEN"] ?? ''));
+            $name  = trim((string)($cfg["SERVER{$index}_NAME"]  ?? "Server {$index}"));
+        } else {
+            // Mode 2: test an unsaved server with direct params (add-server forms)
+            $type  = (string)($_GET['type']  ?? '');
+            $url   = rtrim(trim((string)($_GET['url']   ?? '')), '/');
+            $token = trim((string)($_GET['token'] ?? ''));
+            $name  = 'Test';
+        }
 
         if (!in_array($type, self::VALID_TYPES, true)) $this->json(['ok' => false, 'error' => 'Invalid or missing server type']);
         if ($url   === '') $this->json(['ok' => false, 'error' => 'No URL configured']);
@@ -834,7 +1008,7 @@ final class StreamViewerEndpoint
         $pollUrl = 'https://plex.tv/api/v2/pins/' . $pinId;
         if ($pinCode !== '') $pollUrl .= '?code=' . rawurlencode($pinCode);
 
-        [$body, $code, $err] = $this->httpGet($pollUrl, $this->plexHeaders());
+        [$body, $code, $err] = $this->httpGet($pollUrl, $this->plexHeaders(), true);
         if ($err) $this->json(['ok' => false, 'error' => 'plex.tv poll failed: ' . $err], 502);
 
         $data = @json_decode($body, true);
@@ -871,7 +1045,8 @@ final class StreamViewerEndpoint
     {
         [$body, , $err] = $this->httpGet(
             'https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1',
-            $this->plexHeaders($accountToken)
+            $this->plexHeaders($accountToken),
+            true
         );
         if ($err || !$body) return [];
 
@@ -929,7 +1104,7 @@ final class StreamViewerEndpoint
     // ══════════════════════════════════════════════════════════════════════
 
     /** @return array{string|null, int, string|null} [body, httpCode, error] */
-    private function httpGet(string $url, array $headers = []): array
+    private function httpGet(string $url, array $headers = [], bool $forceVerify = false): array
     {
         if (!filter_var($url, FILTER_VALIDATE_URL)
             || !in_array(parse_url($url, PHP_URL_SCHEME), ['http', 'https'], true)) {
@@ -937,6 +1112,7 @@ final class StreamViewerEndpoint
         }
         if (!function_exists('curl_init')) return [null, 0, 'cURL not available'];
 
+        $verify = $forceVerify || $this->verifySsl;
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
@@ -944,8 +1120,8 @@ final class StreamViewerEndpoint
             CURLOPT_CONNECTTIMEOUT => self::HTTP_CONNECT_TIMEOUT,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_MAXREDIRS      => 3,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_SSL_VERIFYPEER => $verify,
+            CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
             CURLOPT_HTTPHEADER     => $this->buildCurlHeaders($headers),
         ]);
         $body = curl_exec($ch);
@@ -955,11 +1131,12 @@ final class StreamViewerEndpoint
         return [$body === false ? null : $body, $code, $err];
     }
 
-    private function httpPost(string $url, array $postData, array $headers = []): array
+    private function httpPost(string $url, array $postData, array $headers = [], bool $forceVerify = false): array
     {
         if (!filter_var($url, FILTER_VALIDATE_URL)) return [null, 0, 'Invalid URL'];
         if (!function_exists('curl_init')) return [null, 0, 'cURL not available'];
 
+        $verify = $forceVerify || $this->verifySsl;
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
@@ -967,8 +1144,8 @@ final class StreamViewerEndpoint
             CURLOPT_CONNECTTIMEOUT => self::HTTP_CONNECT_TIMEOUT,
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => http_build_query($postData),
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_SSL_VERIFYPEER => $verify,
+            CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
             CURLOPT_HTTPHEADER     => $this->buildCurlHeaders($headers),
         ]);
         $body = curl_exec($ch);
