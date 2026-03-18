@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## Version 2026.03.18
+
+### Bug Fixes
+- Emby: Add Server button now works was silently failing due to undefined variable
+- Emby: Kill Session now works fixed Content Type mismatch and added fallback endpoint
+- Jellyfin/Emby: Test Connection now validates the API key, previously only checked server reachability
+- Jellyfin/Emby: Play type (Direct Play / Direct Stream / Transcode) now detects correctly was stuck on Direct Stream due to wrong API field name
+- Transcode speed: No longer disappears between polls, keeps last known value until updated
+- Transcode speed: Badge no longer jumps in width, fixed width speed display
+- Transcode speed: Live updates now work, was frozen after first render
+- Details panel: No longer collapses when play type changes mid stream
+
+### New Features
+- Technical Details: New collapsible row per stream showing video codec, audio codec + channels, audio spatial format (Dolby Atmos), container, subtitles, HW acceleration type, transcode reasons, and transcode buffer % (where available)
+- Transcode speed now visible in widget inside the TRANSCODE badge (Plex only — Jellyfin/Emby APIs don't provide this)
+- Show technical details toggle in Settings → Dashboard Widget → Display
+
+### Cleanup
+- Removed all orphan Tool page code (JS, CSS) — feature was never implemented
+- Renumbered JS sections (1–15) and CSS sections (1–14)
+
 ## Version 2026.03.17
 
 ### Bug Fixes

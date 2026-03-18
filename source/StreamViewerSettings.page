@@ -79,6 +79,7 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['WIDGET_SHOW_PROGRESS'] = $yn($_POST['WIDGET_SHOW_PROGRESS'] ?? '1', '1');
     $new_cfg['WIDGET_SHOW_QUALITY']  = $yn($_POST['WIDGET_SHOW_QUALITY']  ?? '1', '1');
     $new_cfg['WIDGET_SHOW_TRANSCODE']= $yn($_POST['WIDGET_SHOW_TRANSCODE'] ?? '1', '1');
+    $new_cfg['WIDGET_SHOW_DETAILS'] = $yn($_POST['WIDGET_SHOW_DETAILS']  ?? '1', '1');
     $new_cfg['WIDGET_SHOW_DEVICE']   = $yn($_POST['WIDGET_SHOW_DEVICE']   ?? '1', '1');
 
     $new_cfg['TOOL_REFRESH_ENABLED']  = $yn($_POST['TOOL_REFRESH_ENABLED']  ?? '1', '1');
@@ -255,6 +256,10 @@ if ($plugin_version === 'dev') {
           <div class="sv-row">
             <div><div class="sv-label">Show transcode info</div></div>
             <div class="sv-field"><select name="WIDGET_SHOW_TRANSCODE" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1', '0', _('Hide')) ?></select></div>
+          </div>
+          <div class="sv-row">
+            <div><div class="sv-label">Show technical details</div><div class="sv-desc">Collapsible row with codec, audio channels, container, subtitles, HW acceleration and transcode reasons.</div></div>
+            <div class="sv-field"><select name="WIDGET_SHOW_DETAILS" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_DETAILS'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_DETAILS'] ?? '1', '0', _('Hide')) ?></select></div>
           </div>
         </div>
       </div>
@@ -1146,15 +1151,20 @@ function addEmbyServer() {
     if (cards.filter(function(c){ return !c.removed; }).length >= window.svMaxServers) {
         showResult(res, false, 'Maximum ' + window.svMaxServers + ' servers reached.'); return;
     }
-    var ci = ++cardCounter;
-    cards.push({ cardIndex: ci, removed: false,
-        data: { enabled: true, type: 'emby', name: name, url: url, has_token: true, token_placeholder: token }
+
+    addCard({
+        type:              'emby',
+        name:              name,
+        url:               url.replace(/\/$/, ''),
+        enabled:           true,
+        has_token:         true,
+        token_placeholder: token,
     });
+
     document.getElementById('svEmbyName').value  = '';
     document.getElementById('svEmbyUrl').value   = '';
     document.getElementById('svEmbyToken').value = '';
     if (res) res.style.display = 'none';
-    renderAllCards();
     markDirty();
 }
 
@@ -1252,7 +1262,8 @@ function resetDefaults() {
         var defaults = {
             REFRESH_ENABLED:'1', REFRESH_INTERVAL:'30', WIDGET_MAX_STREAMS:'10',
             WIDGET_SHOW_DEVICE:'1', WIDGET_SHOW_IP:'1', WIDGET_SHOW_PROGRESS:'1',
-            WIDGET_SHOW_QUALITY:'1', WIDGET_SHOW_TRANSCODE:'1', TOOL_ALLOW_KILL:'0',
+            WIDGET_SHOW_QUALITY:'1', WIDGET_SHOW_TRANSCODE:'1', WIDGET_SHOW_DETAILS:'1',
+            TOOL_ALLOW_KILL:'0',
             VERIFY_SSL:'0'
         };
         Object.keys(defaults).forEach(function(k) {

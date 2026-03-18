@@ -406,10 +406,12 @@ final class StreamViewerEndpoint
             $stream   = $media['Part'][0] ?? [];
             $videoS   = null;
             $audioS   = null;
+            $subS     = null;
 
             foreach ($stream['Stream'] ?? [] as $s) {
-                if (($s['streamType'] ?? 0) == 1) $videoS = $s;
-                if (($s['streamType'] ?? 0) == 2) $audioS = $s;
+                if (($s['streamType'] ?? 0) == 1 && $videoS === null) $videoS = $s;
+                if (($s['streamType'] ?? 0) == 2 && $audioS === null) $audioS = $s;
+                if (($s['streamType'] ?? 0) == 3 && $subS   === null) $subS   = $s;
             }
 
             $playType  = $this->normalizePlexPlayType($item);
@@ -441,8 +443,14 @@ final class StreamViewerEndpoint
                 'video_codec'           => (string)($videoS['codec']                      ?? ''),
                 'audio_codec'           => (string)($audioS['codec']                      ?? ''),
                 'audio_channels'        => (int)($audioS['channels']                      ?? 0),
+                'audio_spatial'         => '',
+                'subtitle_language'     => (string)($subS['language']                     ?? ''),
+                'subtitle_codec'        => (string)($subS['codec']                        ?? ''),
                 'transcode_video_codec' => ($playType === 'transcode') ? (string)($item['TranscodeSession']['videoCodec'] ?? '') : '',
                 'transcode_speed'       => ($playType === 'transcode') ? (float)($item['TranscodeSession']['speed']       ?? 0) : 0,
+                'hw_accel'              => '',
+                'transcode_reasons'     => '',
+                'transcode_buffer_pct'  => 0,
                 'thumb_url'             => $thumbUrl,
                 'media_type'            => strtolower((string)($item['type']              ?? 'video')),
                 'summary'               => (string)($item['summary']                      ?? ''),
@@ -505,10 +513,9 @@ final class StreamViewerEndpoint
             $state      = ($playState['IsPaused'] ?? false) ? 'paused' : 'playing';
 
             $videoCodec = $audioCodec = $container = $quality = '';
+            $audioSpatial = $subLang = $subCodec = '';
             $bitrate = $audioChannels = 0;
 
-            // Try MediaSources first (present in NowPlayingQueueFullItems),
-            // then fall back to NowPlayingItem.MediaStreams (Jellyfin Sessions API)
             $mediaSources = $nowPlaying['MediaSources'] ?? [];
             $streams = [];
             if (!empty($mediaSources)) {
@@ -522,23 +529,32 @@ final class StreamViewerEndpoint
             }
 
             foreach ($streams as $s) {
-                if (($s['Type'] ?? '') === 'Video' && $videoCodec === '') {
+                $sType = $s['Type'] ?? '';
+                if ($sType === 'Video' && $videoCodec === '') {
                     $videoCodec = (string)($s['Codec'] ?? '');
                     $h = (int)($s['Height'] ?? 0);
                     if ($h > 0) $quality = $h . 'p';
                 }
-                if (($s['Type'] ?? '') === 'Audio' && $audioCodec === '') {
+                if ($sType === 'Audio' && $audioCodec === '') {
                     $audioCodec    = (string)($s['Codec']    ?? '');
                     $audioChannels = (int)($s['Channels']    ?? 0);
+                    $spatial       = (string)($s['AudioSpatialFormat'] ?? '');
+                    if ($spatial !== '' && $spatial !== 'None') $audioSpatial = $spatial;
+                }
+                if ($sType === 'Subtitle' && $subLang === '') {
+                    $subLang  = (string)($s['Language']    ?? $s['DisplayTitle'] ?? '');
+                    $subCodec = (string)($s['Codec']       ?? '');
                 }
             }
 
-            // Fallback: top-level Height on NowPlayingItem (Jellyfin)
             if ($quality === '') {
                 $h = (int)($nowPlaying['Height'] ?? 0);
                 if ($h > 0) $quality = $h . 'p';
             }
 
+            $hwAccel = '';
+            $transcodeReasons = '';
+            $transcodeBufPct = 0.0;
             if ($transInfo !== null) {
                 if ($videoCodec === '') $videoCodec = (string)($transInfo['VideoCodec'] ?? '');
                 if ($audioCodec === '') $audioCodec = (string)($transInfo['AudioCodec'] ?? '');
@@ -546,6 +562,14 @@ final class StreamViewerEndpoint
                 if ($quality    === '') {
                     $h = (int)($transInfo['Height'] ?? 0);
                     if ($h > 0) $quality = $h . 'p';
+                }
+                $hwAccel         = (string)($transInfo['HardwareAccelerationType'] ?? '');
+                $transcodeBufPct = (float)($transInfo['CompletionPercentage']      ?? 0);
+                $reasons         = $transInfo['TranscodeReasons'] ?? [];
+                if (is_array($reasons) && !empty($reasons)) {
+                    $transcodeReasons = implode(', ', array_map(function($r) {
+                        return preg_replace('/([a-z])([A-Z])/', '$1 \$2', (string)$r);
+                    }, $reasons));
                 }
             }
 
@@ -576,8 +600,14 @@ final class StreamViewerEndpoint
                 'video_codec'           => $videoCodec,
                 'audio_codec'           => $audioCodec,
                 'audio_channels'        => $audioChannels,
+                'audio_spatial'         => $audioSpatial,
+                'subtitle_language'     => $subLang,
+                'subtitle_codec'        => $subCodec,
                 'transcode_video_codec' => ($playType === 'transcode') ? (string)($transInfo['VideoCodec'] ?? '') : '',
                 'transcode_speed'       => 0,
+                'hw_accel'              => $hwAccel,
+                'transcode_reasons'     => $transcodeReasons,
+                'transcode_buffer_pct'  => $transcodeBufPct,
                 'thumb_url'             => $thumbUrl,
                 'media_type'            => strtolower((string)($nowPlaying['Type'] ?? 'video')),
                 'summary'               => (string)($nowPlaying['Overview']      ?? ''),
@@ -590,8 +620,11 @@ final class StreamViewerEndpoint
     private function normalizeJfPlayType(?array $transInfo): string
     {
         if ($transInfo === null) return 'direct_play';
-        if (!($transInfo['IsVideoCopy'] ?? true)) return 'transcode';
-        return 'direct_stream';
+        $videoDirect = $transInfo['IsVideoDirect'] ?? true;
+        $audioDirect = $transInfo['IsAudioDirect'] ?? true;
+        if (!$videoDirect) return 'transcode';
+        if (!$audioDirect) return 'direct_stream';
+        return 'direct_play';
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -697,8 +730,14 @@ final class StreamViewerEndpoint
             'video_codec'           => $this->sanitizeStr($raw['video_codec']           ?? ''),
             'audio_codec'           => $this->sanitizeStr($raw['audio_codec']           ?? ''),
             'audio_channels'        => (int)($raw['audio_channels']                     ?? 0),
+            'audio_spatial'         => $this->sanitizeStr($raw['audio_spatial']         ?? ''),
+            'subtitle_language'     => $this->sanitizeStr($raw['subtitle_language']     ?? ''),
+            'subtitle_codec'        => $this->sanitizeStr($raw['subtitle_codec']        ?? ''),
             'transcode_video_codec' => $this->sanitizeStr($raw['transcode_video_codec'] ?? ''),
             'transcode_speed'       => (float)($raw['transcode_speed']                  ?? 0),
+            'hw_accel'              => $this->sanitizeStr($raw['hw_accel']              ?? ''),
+            'transcode_reasons'     => $this->sanitizeStr($raw['transcode_reasons']     ?? ''),
+            'transcode_buffer_pct'  => round((float)($raw['transcode_buffer_pct']       ?? 0), 1),
             'thumb_url'             => $this->sanitizeStr($raw['thumb_url']             ?? ''),
             'summary'               => $this->sanitizeStr($raw['summary']               ?? ''),
         ];
@@ -839,7 +878,7 @@ final class StreamViewerEndpoint
 
         [$testUrl, $headers] = match($type) {
             'plex'             => [$url . '/', ['X-Plex-Token' => $token, 'Accept' => 'application/json']],
-            'jellyfin', 'emby' => [$url . '/System/Info/Public', ['Accept' => 'application/json']],
+            'jellyfin', 'emby' => [$url . '/System/Info', ['X-Emby-Token' => $token, 'Accept' => 'application/json']],
             default            => [$url, []],
         };
 
@@ -928,13 +967,26 @@ final class StreamViewerEndpoint
     {
         if ($sessionId === '') return ['ok' => false, 'error' => 'No session ID provided'];
 
-        $stopUrl = $url . '/Sessions/' . rawurlencode($sessionId) . '/Playing/Stop';
-        [$body, $httpCode, $err] = $this->httpPost($stopUrl, [], [
+        // Try /Sessions/{id}/Playing/Stop (Jellyfin + Emby)
+        $stopUrl = $url . '/Sessions/' . rawurlencode($sessionId) . '/Playing/Stop?api_key=' . urlencode($token);
+        [$body, $httpCode, $err] = $this->httpPostJson($stopUrl, '{}', [
             'X-Emby-Token'         => $token,
             'X-MediaBrowser-Token' => $token,
         ]);
         if ($err !== null) return ['ok' => false, 'error' => $err];
         if ($httpCode >= 200 && $httpCode < 300) return ['ok' => true];
+
+        // Fallback: /Sessions/{id}/Command/Stop (some Emby versions)
+        if ($httpCode === 404) {
+            $cmdUrl = $url . '/Sessions/' . rawurlencode($sessionId) . '/Command/Stop?api_key=' . urlencode($token);
+            [$body, $httpCode, $err] = $this->httpPostJson($cmdUrl, '{}', [
+                'X-Emby-Token'         => $token,
+                'X-MediaBrowser-Token' => $token,
+            ]);
+            if ($err !== null) return ['ok' => false, 'error' => $err];
+            if ($httpCode >= 200 && $httpCode < 300) return ['ok' => true];
+        }
+
         return ['ok' => false, 'error' => "HTTP {$httpCode}"];
     }
 
@@ -1144,6 +1196,31 @@ final class StreamViewerEndpoint
             CURLOPT_CONNECTTIMEOUT => self::HTTP_CONNECT_TIMEOUT,
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => http_build_query($postData),
+            CURLOPT_SSL_VERIFYPEER => $verify,
+            CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
+            CURLOPT_HTTPHEADER     => $this->buildCurlHeaders($headers),
+        ]);
+        $body = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err  = curl_error($ch) ?: null;
+        curl_close($ch);
+        return [$body === false ? null : $body, $code, $err];
+    }
+
+    private function httpPostJson(string $url, string $jsonBody, array $headers = []): array
+    {
+        if (!filter_var($url, FILTER_VALIDATE_URL)) return [null, 0, 'Invalid URL'];
+        if (!function_exists('curl_init')) return [null, 0, 'cURL not available'];
+
+        $headers['Content-Type'] = 'application/json';
+        $verify = $this->verifySsl;
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => self::HTTP_TIMEOUT,
+            CURLOPT_CONNECTTIMEOUT => self::HTTP_CONNECT_TIMEOUT,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $jsonBody,
             CURLOPT_SSL_VERIFYPEER => $verify,
             CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
             CURLOPT_HTTPHEADER     => $this->buildCurlHeaders($headers),

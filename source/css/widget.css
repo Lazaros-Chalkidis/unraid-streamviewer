@@ -239,6 +239,7 @@
 .sv-stream__transcode--stream { background: rgba(33,150,243,.15); color: var(--sv-stream); border-color: rgba(33,150,243,.3);  }
 .sv-stream__transcode--paused { background: rgba(255,255,255,.07); color: rgba(255,255,255,.45); border-color: rgba(255,255,255,.15); }
 .sv-stream__transcode--trans  { background: rgba(255,152,0,.15);  color: var(--sv-trans);  border-color: rgba(255,152,0,.3);   }
+.sv-stream__transcode-speed  { margin-left: .3em; opacity: .75; font-weight: 600; display: inline-block; min-width: 2.8em; text-align: right; }
 
 /* ── Row 2: user · device · ip + progress ─────────────────────────────────── */
 .sv-stream__sub {
@@ -343,18 +344,36 @@
   cursor: default;
 }
 
-/* ── 10. TOOL PAGE OVERRIDES ──────────────────────────────────────────────── */
-.sv-tool-page .sv-stream {
-  grid-template-columns: 10px 1fr;
-  padding: .6rem .5rem .6rem .3rem;
+/* ── 10. TECHNICAL DETAILS (collapsible) ─────────────────────────────────── */
+.sv-stream__details {
+  grid-column: 2; padding: 0 .5rem; cursor: pointer;
 }
-.sv-tool-page .sv-stream__title  { font-size: .92em; }
-.sv-tool-page .sv-stream__info   { font-size: .82em; }
-.sv-tool-page .sv-stream__device { max-width: 200px; }
-.sv-tool-page .sv-stream__progress-wrap { max-width: 160px; min-width: 100px; }
-.sv-tool-page .sv-streams { gap: .65rem; }
+.sv-stream__details-hd {
+  font-size: .7em; color: rgba(255,255,255,.4); padding: .15rem 0;
+  user-select: none; display: flex; align-items: center; gap: .3rem;
+}
+.sv-stream__details-hd:hover { color: rgba(255,255,255,.65); }
+.sv-stream__details-arrow {
+  font-size: .6em; display: inline-block; transition: transform .2s;
+}
+.sv-stream__details--collapsed .sv-stream__details-bd { display: none; }
+.sv-stream__details:not(.sv-stream__details--collapsed) .sv-stream__details-arrow { transform: rotate(90deg); }
+.sv-stream__details-bd {
+  display: flex; flex-wrap: wrap; gap: .25rem; padding: .25rem 0 .4rem;
+}
+.sv-dtag {
+  display: inline-flex; align-items: center;
+  padding: .1rem .4rem; border-radius: 3px;
+  font-size: .68em; font-weight: 600; line-height: 1.3;
+  background: rgba(255,255,255,.06); color: rgba(255,255,255,.6);
+  border: 1px solid rgba(255,255,255,.08);
+}
+.sv-dtag--accent { background: rgba(0,164,220,.1); color: #00a4dc; border-color: rgba(0,164,220,.25); }
+.sv-dtag--sub    { background: rgba(255,255,255,.04); color: rgba(255,255,255,.5); }
+.sv-dtag--hw     { background: rgba(82,181,74,.1); color: #52b54b; border-color: rgba(82,181,74,.25); }
+.sv-dtag--reason { background: rgba(244,125,66,.08); color: rgba(244,125,66,.8); border-color: rgba(244,125,66,.2); font-weight: 500; }
 
-/* Kill button (tool page only) */
+/* ── 11. KILL BUTTON ─────────────────────────────────────────────────────── */
 .sv-kill-btn {
   display: inline-flex; align-items: center; gap: .2rem;
   width: auto !important; max-width: max-content !important;
@@ -375,7 +394,7 @@
 .sv-kill-btn:hover { background: rgba(231,76,60,.22); color: #e74c3c; border-color: rgba(231,76,60,.6); }
 .sv-kill-btn:disabled { opacity: .4; cursor: not-allowed; }
 
-/* ── 11. LOADING SKELETON ─────────────────────────────────────────────────── */
+/* ── 12. LOADING SKELETON ─────────────────────────────────────────────────── */
 .sv-skeleton {
   border-radius: var(--sv-radius);
   background: linear-gradient(90deg,
@@ -391,16 +410,6 @@
   0%   { background-position:  200% 0; }
   100% { background-position: -200% 0; }
 }
-
-/* ── 12. TOOL PAGE HEADER AREA ────────────────────────────────────────────── */
-.sv-tool-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: .75rem 0 .5rem; flex-wrap: wrap; gap: .5rem;
-}
-.sv-tool-title {
-  font-size: 1.2em; font-weight: 700; display: flex; align-items: center; gap: .5rem;
-}
-.sv-tool-controls { display: flex; align-items: center; gap: .5rem; }
 
 /* ── 13. NO-SERVERS STATE ─────────────────────────────────────────────────── */
 .sv-no-servers-state {

@@ -37,6 +37,7 @@ $tile_config = [
     'showProgress'      => ($cfg['WIDGET_SHOW_PROGRESS']  ?? '1') === '1',
     'showQuality'       => ($cfg['WIDGET_SHOW_QUALITY']   ?? '1') === '1',
     'showTranscode'     => ($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1') === '1',
+    'showDetails'       => ($cfg['WIDGET_SHOW_DETAILS']   ?? '1') === '1',
     'servers'           => $enabled_servers,
     'isResponsive'      => $isResponsiveWebgui,
     'noServersConfigured' => empty($enabled_servers),

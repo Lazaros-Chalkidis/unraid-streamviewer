@@ -1,9 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Stream Viewer  —  streamviewer.js
-   Drives the dashboard widget and Tool page.
+   Drives the dashboard widget.
 
-   Config is injected via window.streamviewerConfig (widget/dashboard)
-   or window.streamviewerToolConfig (tool page).
+   Config is injected via window.streamviewerConfig.
 
    Depends on: jQuery (already present in Unraid webgui)
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -23,7 +22,6 @@ window.__svLoaded = true;
 var _cfg          = {};       // resolved, sanitised config
 var _sessions     = [];       // last-fetched sessions (all servers combined)
 var _serverStats  = [];       // last-fetched per-server status objects
-var _context      = 'dash';   // 'dash' (widget) | 'tool'
 var _pollTimer    = null;
 var _inFlight     = false;
 var _backoffUntil = 0;        // timestamp ms — skip fetch until this time
@@ -45,7 +43,6 @@ var DOM = {
     errBadge:   function() { return document.getElementById('sv-err-badge');         },
     errCount:   function() { return document.getElementById('sv-err-count');         },
     manualBtn:  function() { return document.getElementById('sv-manual-refresh');    },
-    toolRefBtn: function() { return document.getElementById('sv-tool-refresh');      },
 };
 
 
@@ -160,14 +157,13 @@ function renderRow(s) {
     if (cfg.showTranscode) {
         var tLabel = isPaused ? 'Paused' : ptm.label;
         var tMod   = isPaused ? 'paused' : ptm.badge;
+        var speedSuffix = '';
+        if (!isPaused && ptm.bar === 'trans' && s.server_type === 'plex') {
+            var speedVal = (s.transcode_speed > 0) ? s.transcode_speed.toFixed(1) + 'x' : '';
+            speedSuffix = '<span class="sv-stream__transcode-speed">' + esc(speedVal) + '</span>';
+        }
         transHtml = '<span class="sv-stream__transcode sv-stream__transcode--' + esc(tMod) + '">'
-            + esc(tLabel) + '</span>';
-    }
-
-    var transSpeedHtml = '';
-    if (_context === 'tool' && !isPaused && ptm.bar === 'trans' && s.transcode_speed > 0) {
-        transSpeedHtml = '<span class="sv-stream__transcode-speed" title="Transcode speed">'
-            + esc(s.transcode_speed.toFixed(1)) + 'x</span>';
+            + esc(tLabel) + speedSuffix + '</span>';
     }
 
     var killHtml = '';
@@ -196,7 +192,7 @@ function renderRow(s) {
 
     var badgesRowHtml = '<div class="sv-stream__badges-row">'
         + '<div class="sv-stream__badges-left">' + badgesLeftHtml + '</div>'
-        + '<div class="sv-stream__badges-right">' + serverTypeBadge + serverBadge + transHtml + transSpeedHtml + killHtml + '</div>'
+        + '<div class="sv-stream__badges-right">' + serverTypeBadge + serverBadge + transHtml + killHtml + '</div>'
         + '</div>';
 
     // Row 3: collapsible thumbnail preview
@@ -253,6 +249,43 @@ function renderRow(s) {
         + progressHtml
         + '</div>';
 
+    // Row 4: collapsible technical details
+    var detailsHtml = '';
+    if (cfg.showDetails) {
+        var tags = [];
+
+        if (s.video_codec)   tags.push('<span class="sv-dtag">' + esc(s.video_codec.toUpperCase()) + '</span>');
+        if (s.audio_codec) {
+            var audioLabel = s.audio_codec.toUpperCase();
+            if (s.audio_channels > 0) {
+                var ch = s.audio_channels;
+                audioLabel += ' ' + (ch === 2 ? '2.0' : ch === 6 ? '5.1' : ch === 8 ? '7.1' : String(ch) + 'ch');
+            }
+            tags.push('<span class="sv-dtag">' + esc(audioLabel) + '</span>');
+        }
+        if (s.audio_spatial)    tags.push('<span class="sv-dtag sv-dtag--accent">' + esc(s.audio_spatial) + '</span>');
+        if (s.container)        tags.push('<span class="sv-dtag">' + esc(s.container.toUpperCase()) + '</span>');
+        if (s.subtitle_language) {
+            var subLabel = s.subtitle_language;
+            if (s.subtitle_codec) subLabel += ' (' + s.subtitle_codec.toUpperCase() + ')';
+            tags.push('<span class="sv-dtag sv-dtag--sub">Sub: ' + esc(subLabel) + '</span>');
+        }
+        if (s.hw_accel && s.hw_accel !== 'none') {
+            tags.push('<span class="sv-dtag sv-dtag--hw">HW: ' + esc(s.hw_accel.toUpperCase()) + '</span>');
+        } else if (s.play_type === 'transcode') {
+            tags.push('<span class="sv-dtag sv-dtag--hw">HW: SW</span>');
+        }
+        if (s.transcode_reasons) tags.push('<span class="sv-dtag sv-dtag--reason">' + esc(s.transcode_reasons) + '</span>');
+        if (s.transcode_buffer_pct > 0) tags.push('<span class="sv-dtag">Buffer: ' + esc(s.transcode_buffer_pct.toFixed(0)) + '%</span>');
+
+        if (tags.length > 0) {
+            detailsHtml = '<div class="sv-stream__details sv-stream__details--collapsed">'
+                + '<div class="sv-stream__details-hd"><span class="sv-stream__details-arrow">&#9654;</span> Details</div>'
+                + '<div class="sv-stream__details-bd">' + tags.join('') + '</div>'
+                + '</div>';
+        }
+    }
+
     return '<div class="' + rowClass + '"'
         + ' role="listitem"'
         + ' data-server-type="' + esc(s.server_type)      + '"'
@@ -263,7 +296,7 @@ function renderRow(s) {
         + ' data-play-type="'   + esc(s.play_type   || '') + '"'
         + ' data-bandwidth="'   + (s.bandwidth_kbps > 0 ? '1' : '0') + '"'
         + '>'
-        + barHtml + badgesRowHtml + titleHtml + subHtml + badgesHtml
+        + barHtml + badgesRowHtml + titleHtml + subHtml + detailsHtml + badgesHtml
         + '</div>';
 }
 
@@ -279,13 +312,24 @@ function buildSkeletons() {
 // Patch a single existing stream row with updated dynamic data (no DOM replacement).
 // Returns true if a full rebuild is needed (e.g. title changed = different media).
 function patchRow(el, s) {
-    // Full rebuild if title, state, quality or play_type changed
+    // Full rebuild if title or quality changed (different media)
     var titleEl = el.querySelector('.sv-stream__title');
     if (titleEl && titleEl.title !== (s.title || '')) return true;
-    if (el.dataset.state     !== (s.state     || '')) return true;
     if (el.dataset.quality   !== (s.quality   || '')) return true;
-    if (el.dataset.playType  !== (s.play_type || '')) return true;
     if (el.dataset.bandwidth  !== (s.bandwidth_kbps > 0 ? '1' : '0')) return true;
+
+    // play_type or state changed: rebuild but preserve details open state
+    var needRebuild = false;
+    if (el.dataset.state    !== (s.state     || '')) needRebuild = true;
+    if (el.dataset.playType !== (s.play_type || '')) needRebuild = true;
+    if (needRebuild) {
+        var detailsWasOpen = false;
+        var det = el.querySelector('.sv-stream__details');
+        if (det && !det.classList.contains('sv-stream__details--collapsed')) detailsWasOpen = true;
+        el.dataset._detailsOpen = detailsWasOpen ? '1' : '0';
+        return true;
+    }
+
     var isPaused = (s.state || '').toLowerCase() === 'paused';
     var ptm      = playTypeMeta(s.play_type);
     var barMod   = isPaused ? 'paused' : ptm.bar;
@@ -316,14 +360,18 @@ function patchRow(el, s) {
         if (timeEl.textContent !== wantTime) timeEl.textContent = wantTime;
     }
 
-    // Transcode badge label + modifier class
+    // Transcode badge label + modifier class (preserve nested speed span)
     var trans = el.querySelector('.sv-stream__transcode');
     if (trans) {
         var tLabel = isPaused ? 'Paused' : ptm.label;
         var tMod   = isPaused ? 'paused' : ptm.badge;
         var wantTransClass = 'sv-stream__transcode sv-stream__transcode--' + tMod;
         if (trans.className !== wantTransClass) trans.className = wantTransClass;
-        if (trans.textContent !== tLabel) trans.textContent = tLabel;
+        // Update only the text node, not the speed span
+        var textNode = trans.firstChild;
+        if (textNode && textNode.nodeType === 3) {
+            if (textNode.textContent !== tLabel) textNode.textContent = tLabel;
+        }
     }
 
     // State icon (play/pause) in title row
@@ -364,6 +412,22 @@ function patchRow(el, s) {
         if (bitrateEl.textContent !== wantBitrate) bitrateEl.textContent = wantBitrate;
     }
 
+    // Live transcode speed update (inside transcode badge) — keep last known value when API returns 0
+    var speedEl = el.querySelector('.sv-stream__transcode .sv-stream__transcode-speed');
+    if (speedEl && s.transcode_speed > 0) {
+        var wantSpeed = s.transcode_speed.toFixed(1) + 'x';
+        if (speedEl.textContent !== wantSpeed) speedEl.textContent = wantSpeed;
+    }
+
+    // Live transcode buffer update (inside details)
+    var bufferTags = el.querySelectorAll('.sv-dtag');
+    bufferTags.forEach(function(tag) {
+        if (tag.textContent.indexOf('Buffer:') === 0 && s.transcode_buffer_pct > 0) {
+            var wantBuf = 'Buffer: ' + s.transcode_buffer_pct.toFixed(0) + '%';
+            if (tag.textContent !== wantBuf) tag.textContent = wantBuf;
+        }
+    });
+
     return false; // no rebuild needed
 }
 
@@ -396,6 +460,16 @@ function renderStreams(sessions) {
     container.querySelectorAll('.sv-stream__row3:not(.sv-stream__row3--collapsed)').forEach(function(r) {
         var row = r.closest('.sv-stream');
         if (row && row.dataset.sessionId) openSessions[row.dataset.sessionId] = true;
+    });
+
+    // Preserve open details panels
+    var openDetails = {};
+    container.querySelectorAll('.sv-stream').forEach(function(row) {
+        var sid = row.dataset.sessionId;
+        if (!sid) return;
+        var det = row.querySelector('.sv-stream__details');
+        if (det && !det.classList.contains('sv-stream__details--collapsed')) openDetails[sid] = true;
+        if (row.dataset._detailsOpen === '1') openDetails[sid] = true;
     });
 
     var newIds = {};
@@ -433,6 +507,15 @@ function renderStreams(sessions) {
         if (row) {
             var r3 = row.querySelector('.sv-stream__row3');
             if (r3) r3.classList.remove('sv-stream__row3--collapsed');
+        }
+    });
+
+    // Restore open details panels
+    Object.keys(openDetails).forEach(function(sid) {
+        var row = container.querySelector('.sv-stream[data-session-id="' + sid + '"]');
+        if (row) {
+            var det = row.querySelector('.sv-stream__details');
+            if (det) det.classList.remove('sv-stream__details--collapsed');
         }
     });
 
@@ -629,7 +712,6 @@ function fetchSessions(onDone) {
         headers:  { 'X-Requested-With': 'XMLHttpRequest' },
         data: {
             action:  'get_sessions',
-            context: _context,
             _svt:    _cfg.svToken || '',
         },
         dataType: 'json',
@@ -771,6 +853,13 @@ function bindRow3Toggles(container) {
         var row3 = hd.closest('.sv-stream__row3');
         if (row3) row3.classList.toggle('sv-stream__row3--collapsed');
     });
+
+    container.addEventListener('click', function(e) {
+        var hd = e.target.closest('.sv-stream__details-hd');
+        if (!hd) return;
+        var det = hd.closest('.sv-stream__details');
+        if (det) det.classList.toggle('sv-stream__details--collapsed');
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -798,7 +887,7 @@ function renderNoServers() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function resolveConfig() {
-    var raw = window.streamviewerConfig || window.streamviewerToolConfig || {};
+    var raw = window.streamviewerConfig || {};
 
     // refreshInterval comes from PHP already in ms (seconds * 1000)
     var ri = parseInt(raw.refreshInterval, 10) || 30000;
@@ -814,12 +903,11 @@ function resolveConfig() {
         showProgress:        raw.showProgress !== false,
         showQuality:         raw.showQuality  !== false,
         showTranscode:       raw.showTranscode !== false,
+        showDetails:         raw.showDetails  !== false,
         allowKill:           raw.allowKill    === true,
-        servers:             Array.isArray(raw.servers)            ? raw.servers            : [],
-        serverTypesPresent:  Array.isArray(raw.serverTypesPresent) ? raw.serverTypesPresent : [],
+        servers:             Array.isArray(raw.servers) ? raw.servers : [],
         noServersConfigured: raw.noServersConfigured === true,
         isResponsive:        raw.isResponsive !== false,
-        context:             raw.context === 'tool' ? 'tool' : 'dash',
     };
 }
 
@@ -829,8 +917,7 @@ function resolveConfig() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function init() {
-    _cfg     = resolveConfig();
-    _context = _cfg.context;
+    _cfg = resolveConfig();
 
     if (_cfg.noServersConfigured) {
         renderNoServers();
@@ -838,17 +925,7 @@ function init() {
     }
 
     wireRefreshBtn(DOM.manualBtn());
-    wireRefreshBtn(DOM.toolRefBtn());
     initVisibilityHandling();
-
-    // Apply tool-page CSS class
-    if (_context === 'tool') {
-        var c = DOM.container();
-        if (c) {
-            var b = c.closest('.sv-body');
-            if (b) b.classList.add('sv-tool-page');
-        }
-    }
 
     // Loading skeleton
     var container  = DOM.container();
