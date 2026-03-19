@@ -1,5 +1,5 @@
 
-## Version 2026.03.19
+## Version 2026.03.19a
 
 ### Bug Fixes
 - Plex: Auto rediscover no longer switches from local to remote URL (or vice versa) after server restart

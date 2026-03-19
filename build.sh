@@ -212,7 +212,7 @@ if [[ "$LOCAL_INSTALL" == "local" ]]; then
         pluginURL="&selfURL;" launch="&launch;"
         icon="streamviewer.png"
         min="7.2.0"
-        support="&gitURL;/issues">
+        support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
 
 <DESCRIPTION>
 ${PLG_DESCRIPTION}
@@ -289,7 +289,7 @@ else
         pluginURL="&selfURL;" launch="&launch;"
         icon="streamviewer.png"
         min="7.2.0"
-        support="&gitURL;/issues">
+        support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
 
 <DESCRIPTION>
 ${PLG_DESCRIPTION}

@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "streamviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.03.19">
+ <!ENTITY version   "2026.03.19a">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "8d6a7caf96e8f75b3ab8de829be55cf0">
+ <!ENTITY md5       "4623a7d612029c65bcc8c58d2cb77a34">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
@@ -15,14 +15,27 @@
         pluginURL="&selfURL;" launch="&launch;"
         icon="streamviewer.png"
         min="7.2.0"
-        support="&gitURL;/issues">
+        support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
 
 <DESCRIPTION>
 StreamViewer is a lightweight Unraid dashboard widget that gives you a real-time overview of active media streams across your Plex, Jellyfin, and Emby servers — all in one place.
 </DESCRIPTION>
 
 <CHANGES>
-# CHANGELOG
+
+## Version 2026.03.19a
+
+### Bug Fixes
+- Plex: Auto rediscover no longer switches from local to remote URL (or vice versa) after server restart
+- Plex: Auto rediscover sort order fixed, was preferring remote over local connections
+
+### New Features
+- Credits modal: Widget and Settings adaptive to Dynamix color theme: Black - Light - Gray - Azure
+- Smart rediscover: Retries 3 times before triggering URL rediscovery
+- Smart rediscover: Respects URL type — local stays local, remote stays remote
+- Jellyfin/Emby: Local container IP auto-discovery via Docker Engine API (no shell exec)
+
+---
 
 ## Version 2026.03.18
 
@@ -44,6 +57,8 @@ StreamViewer is a lightweight Unraid dashboard widget that gives you a real-time
 ### Cleanup
 - Removed all orphan Tool page code (JS, CSS) — feature was never implemented
 - Renumbered JS sections (1–15) and CSS sections (1–14)
+
+---
 
 ## Version 2026.03.17
 
