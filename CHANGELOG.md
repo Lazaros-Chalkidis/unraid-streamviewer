@@ -1,4 +1,17 @@
-# CHANGELOG
+
+## Version 2026.03.19
+
+### Bug Fixes
+- Plex: Auto rediscover no longer switches from local to remote URL (or vice versa) after server restart
+- Plex: Auto rediscover sort order fixed, was preferring remote over local connections
+
+### New Features
+- Credits modal: Widget and Settings adaptive to Dynamix color theme: Black - Light - Gray - Azure
+- Smart rediscover: Retries 3 times before triggering URL rediscovery
+- Smart rediscover: Respects URL type — local stays local, remote stays remote
+- Jellyfin/Emby: Local container IP auto-discovery via Docker Engine API (no shell exec)
+
+---
 
 ## Version 2026.03.18
 
@@ -20,6 +33,8 @@
 ### Cleanup
 - Removed all orphan Tool page code (JS, CSS) — feature was never implemented
 - Renumbered JS sections (1–15) and CSS sections (1–14)
+
+---
 
 ## Version 2026.03.17
 

@@ -3,7 +3,34 @@
    /plugins/streamviewer/css/settings.css
    ========================================================================== */
 
-/* ── 1. FOUC PREVENTION ───────────────────────────────────────────────────── */
+/* ── 1. CSS CUSTOM PROPERTIES ────────────────────────────────────────────── */
+:root {
+  /* Theme-adaptive (dark default) */
+  --sv-c-text:          rgba(255,255,255,.85);
+  --sv-c-text-mid:      rgba(255,255,255,.65);
+  --sv-c-text-muted:    rgba(255,255,255,.45);
+  --sv-c-text-faint:    rgba(255,255,255,.30);
+  --sv-c-border:        rgba(255,255,255,.10);
+  --sv-c-border-strong: rgba(255,255,255,.18);
+  --sv-c-border-subtle: rgba(255,255,255,.06);
+  --sv-c-bg-hover:      rgba(255,255,255,.07);
+  --sv-c-bg-subtle:     rgba(255,255,255,.04);
+  --sv-c-bg-faint:      rgba(255,255,255,.025);
+}
+.sv-light {
+  --sv-c-text:          rgba(0,0,0,.85);
+  --sv-c-text-mid:      rgba(0,0,0,.65);
+  --sv-c-text-muted:    rgba(0,0,0,.50);
+  --sv-c-text-faint:    rgba(0,0,0,.30);
+  --sv-c-border:        rgba(0,0,0,.12);
+  --sv-c-border-strong: rgba(0,0,0,.20);
+  --sv-c-border-subtle: rgba(0,0,0,.08);
+  --sv-c-bg-hover:      rgba(0,0,0,.05);
+  --sv-c-bg-subtle:     rgba(0,0,0,.04);
+  --sv-c-bg-faint:      rgba(0,0,0,.02);
+}
+
+/* ── 2. FOUC PREVENTION ──────────────────────────────────────────────────── */
 .streamviewer-settings,
 .sv-credits-top { visibility: visible !important; }
 
@@ -32,7 +59,7 @@
   padding: 1rem; box-sizing: border-box;
   display: grid; gap: 0;
   background: rgba(0,0,0,0.2);
-  border: 1px solid rgba(255,255,255,0.12);
+  border: 1px solid var(--sv-c-border);
   border-radius: 1px;
 }
 @media (max-width: 768px) { .streamviewer-settings .sv-settings-panel { padding: .75rem; } }
@@ -46,17 +73,17 @@
 .sv-tab {
   display: inline-flex; align-items: center; gap: .4rem;
   padding: .55rem .9rem;
-  border: 1px solid rgba(255,255,255,.12); border-bottom: 0;
+  border: 1px solid var(--sv-c-border); border-bottom: 0;
   border-radius: .55rem .55rem 0 0;
-  background: rgba(255,255,255,.04); color: rgba(255,255,255,.75);
+  background: var(--sv-c-bg-subtle); color: var(--sv-c-text-mid);
   cursor: pointer; font-weight: 700; user-select: none;
   transition: background .25s ease, color .25s ease, border-color .25s ease;
 }
 .sv-tab .sv-tabicon { opacity: .9; font-size: 1.05em; transform: translateY(1px); }
-.sv-tab:hover { background: rgba(255,255,255,.06) !important; color: rgba(255,255,255,.9) !important; }
+.sv-tab:hover { background: var(--sv-c-border-subtle) !important; color: var(--sv-c-text) !important; }
 .sv-tab.active {
   background: rgba(0,0,0,.35) !important;
-  color: #fff !important;
+  color: var(--sv-c-text) !important;
   border-color: rgba(244,125,66,.55) !important;
 }
 
@@ -70,7 +97,7 @@
 
 .sv-credits {
   font-size: .82em !important; text-decoration: none !important;
-  color: rgba(255,255,255,.55) !important; cursor: pointer !important;
+  color: var(--sv-c-text-muted) !important; cursor: pointer !important;
   display: inline-flex !important; align-items: center !important;
   border: 0 !important; background: transparent !important;
   transition: color .25s ease !important;
@@ -79,19 +106,19 @@
 
 /* ── 5. CARDS ─────────────────────────────────────────────────────────────── */
 .sv-card {
-  border: 1px solid rgba(255,255,255,.10);
-  background: rgba(255,255,255,.02);
+  border: 1px solid var(--sv-c-border);
+  background: var(--sv-c-bg-faint);
   border-radius: 10px; overflow: hidden; margin-bottom: 1rem;
   transition: border-color .2s;
 }
 .sv-card:last-child { margin-bottom: 0; }
-.sv-card:hover { border-color: rgba(255,255,255,.16); }
+.sv-card:hover { border-color: var(--sv-c-border-strong); }
 
 .sv-card-hd {
   display: flex; align-items: center; gap: .6rem;
   padding: .7rem 1rem;
-  background: rgba(255,255,255,.04);
-  border-bottom: 1px solid rgba(255,255,255,.07);
+  background: var(--sv-c-bg-subtle);
+  border-bottom: 1px solid var(--sv-c-bg-hover);
   font-weight: 700; font-size: .9em;
   cursor: default;
 }
@@ -99,7 +126,7 @@
   cursor: pointer; user-select: none; position: relative; padding-right: 2.5rem;
   transition: background .25s ease;
 }
-.sv-card-hd--toggle:hover { background: rgba(255,255,255,.05); }
+.sv-card-hd--toggle:hover { background: var(--sv-c-bg-hover); }
 .sv-card-hd--toggle::after {
   content: "▲"; position: absolute; right: 1rem; top: 50%;
   transform: translateY(-50%); font-size: .65rem; opacity: .5;
@@ -117,7 +144,7 @@
   border-radius: 0.4rem !important;
   padding: .18rem .44rem;
   font-size: .72em; font-weight: 400;
-  color: rgba(255,255,255,.9);
+  color: var(--sv-c-text);
   white-space: nowrap;
   transition: background .25s ease, border-color .25s ease;
 }
@@ -126,14 +153,14 @@
 .sv-row {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5rem;
   padding: .6rem 0;
-  border-bottom: 1px solid rgba(255,255,255,.05);
+  border-bottom: 1px solid var(--sv-c-bg-hover);
 }
 .sv-row:last-child { border-bottom: 0; padding-bottom: 0; }
 .sv-row > div:first-child { flex: 1; min-width: 0; }
 
 .sv-label { font-weight: 600; font-size: .9em; margin-bottom: .15rem; }
-.sv-desc  { font-size: .82em; color: rgba(255,255,255,.55); line-height: 1.45; }
-.sv-hint  { font-size: .78em; color: rgba(255,255,255,.4); margin-top: .3rem; line-height: 1.4; }
+.sv-desc  { font-size: .82em; color: var(--sv-c-text-muted); line-height: 1.45; }
+.sv-hint  { font-size: .78em; color: var(--sv-c-text-faint); margin-top: .3rem; line-height: 1.4; }
 
 .sv-field {
   flex-shrink: 0; width: 220px;
@@ -146,15 +173,15 @@
 
 /* ── 7. SERVER CARDS ──────────────────────────────────────────────────────── */
 /* ── Accordion ───────────────────────────────────────────────────────────── */
-.sv-accordion { border:1px solid rgba(255,255,255,.1); border-radius:6px; overflow:hidden; margin-top:.75rem; }
+.sv-accordion { border:1px solid var(--sv-c-border); border-radius:6px; overflow:hidden; margin-top:.75rem; }
 .sv-accordion-hd {
     display:flex; align-items:center; justify-content:space-between;
-    padding:.6rem .9rem; background:rgba(255,255,255,.04);
+    padding:.6rem .9rem; background:var(--sv-c-bg-subtle);
     cursor:pointer; user-select:none; font-weight:600; font-size:.9em;
     position:relative; padding-right:2.5rem;
     transition:background .25s ease;
 }
-.sv-accordion-hd:hover { background:rgba(255,255,255,.08); }
+.sv-accordion-hd:hover { background:var(--sv-c-border-subtle); }
 .sv-accordion-hd::after {
     content:"▲"; position:absolute; right:1rem; top:50%;
     transform:translateY(-50%); font-size:.65rem; opacity:.5;
@@ -169,7 +196,7 @@
 .sv-plex-signin-btn {
   display: inline-flex !important; align-items: center !important;
   background: transparent !important;
-  border: 1px solid #e5a00d !important;
+  border: 1.5px solid #e5a00d !important;
   color: #e5a00d !important;
   padding: .2rem .5rem !important;
   font-size: .7em !important; font-weight: 700 !important; letter-spacing: .05em !important;
@@ -179,9 +206,15 @@
   line-height: 1.4 !important; height: auto !important; min-height: 0 !important;
 }
 .sv-plex-signin-btn:hover { background: rgba(229,160,13,.12) !important; }
+.sv-light .sv-plex-signin-btn {
+  background: #e5a00d !important;
+  color: #fff !important;
+  border-color: #d4920b !important;
+}
+.sv-light .sv-plex-signin-btn:hover { background: #d4920b !important; }
 
 .sv-server-card {
-  border: 1px solid rgba(255,255,255,.10);
+  border: 1px solid var(--sv-c-border);
   border-radius: 8px;
   margin-bottom: .75rem;
   overflow: hidden;
@@ -194,8 +227,8 @@
 .sv-server-card-hd {
   display: flex; align-items: center; justify-content: space-between;
   padding: .55rem .85rem;
-  background: rgba(255,255,255,.03);
-  border-bottom: 1px solid rgba(255,255,255,.07);
+  background: var(--sv-c-bg-faint);
+  border-bottom: 1px solid var(--sv-c-bg-hover);
   gap: .5rem;
 }
 .sv-server-card-bd { padding: .75rem .85rem; }
@@ -207,7 +240,7 @@
 .sv-server-toggle input[type="checkbox"] { cursor: pointer; }
 .sv-server-toggle-label {
   font-weight: 600; font-size: .88em;
-  color: rgba(255,255,255,.85);
+  color: var(--sv-c-text);
 }
 
 .sv-server-card-actions {
@@ -229,7 +262,7 @@
 .sv-field-label {
   display: block;
   font-size: .78em; font-weight: 600;
-  color: rgba(255,255,255,.55);
+  color: var(--sv-c-text-muted);
   margin-bottom: .25rem;
   user-select: none;
 }
@@ -317,7 +350,7 @@
 }
 .sv-disc-name {
   font-weight: 600; font-size: .9em;
-  color: rgba(255,255,255,.85);
+  color: var(--sv-c-text);
 }
 .sv-disc-already {
   display: inline-flex !important; align-items: center !important;
@@ -347,14 +380,20 @@
 .sv-action-btn {
   display: inline-flex; align-items: center; gap: .3rem;
   padding: .25rem .6rem;
-  background: rgba(255,255,255,.05);
-  border: 1px solid rgba(255,255,255,.12);
+  background: var(--sv-c-bg-hover);
+  border: 1px solid var(--sv-c-border);
   border-radius: 4px;
-  color: rgba(255,255,255,.7); font-size: .8em;
+  color: var(--sv-c-text-mid); font-size: .8em;
   cursor: pointer;
   transition: background .2s;
 }
-.sv-action-btn:hover { background: rgba(255,255,255,.09); color: #fff; }
+.sv-action-btn:hover { background: var(--sv-c-border-subtle); color: var(--sv-c-text); }
+.sv-light .sv-action-btn {
+  background: var(--sv-c-bg-hover);
+  border: 1.5px solid var(--sv-c-border-strong);
+  color: var(--sv-c-text);
+}
+.sv-light .sv-action-btn:hover { background: rgba(0,0,0,.1); }
 
 /* ── 10. TEST RESULT ──────────────────────────────────────────────────────── */
 .sv-test-result {
@@ -363,6 +402,8 @@
 }
 .sv-test-ok  { background: rgba(82,181,74,.12); border: 1px solid rgba(82,181,74,.3);  color: #52b54b; }
 .sv-test-err { background: rgba(231,76,60,.10); border: 1px solid rgba(231,76,60,.25); color: #e74c3c; }
+.sv-light .sv-test-ok  { background: rgba(82,181,74,.08); border: 1px solid rgba(82,181,74,.4);  color: #2e7d26; }
+.sv-light .sv-test-err { background: rgba(231,76,60,.08); border: 1px solid rgba(231,76,60,.35); color: #c0392b; }
 
 /* ── 11. INFO BOX ─────────────────────────────────────────────────────────── */
 .sv-info-box {
@@ -378,10 +419,10 @@
 }
 .sv-info-body {
   font-size: .82em; line-height: 1.55;
-  color: rgba(255,255,255,.6);
+  color: var(--sv-c-text-mid);
 }
 .sv-info-body code {
-  background: rgba(255,255,255,.08);
+  background: var(--sv-c-border-subtle);
   padding: .1em .35em; border-radius: 3px;
   font-family: monospace; font-size: .95em;
 }
@@ -389,14 +430,14 @@
 /* ── 12. NO-SERVERS PLACEHOLDER ───────────────────────────────────────────── */
 .sv-no-servers {
   text-align: center; padding: 1.5rem 1rem;
-  color: rgba(255,255,255,.35); font-style: italic; font-size: .9em;
+  color: var(--sv-c-text-faint); font-style: italic; font-size: .9em;
 }
 
 /* ── 13. FOOTER ───────────────────────────────────────────────────────────── */
 .sv-footer {
   display: flex; gap: .6rem; padding: 1rem;
-  border-top: 1px solid rgba(255,255,255,.08);
-  background: rgba(255,255,255,.03);
+  border-top: 1px solid var(--sv-c-border-subtle);
+  background: var(--sv-c-bg-faint);
   justify-content: center; align-items: center;
   border-bottom-right-radius: 10px;
   border-bottom-left-radius: 10px;
@@ -423,3 +464,27 @@
 /* ── 14. COLLAPSED CARD STATE ─────────────────────────────────────────────── */
 .sv-card.sv-collapsed .sv-card-bd { display: none; }
 .sv-card.sv-collapsed .sv-card-hd { border-bottom: 0; }
+
+/* ── 15. CREDITS MODAL ──────────────────────────────────────────────────── */
+.sv-credits-modal-box {
+  width: 456px; max-width: 94vw; height: 384px;
+  background: #1a1a1a; color: rgba(255,255,255,.9);
+  border: 1px solid var(--sv-c-border); border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0,0,0,.75);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.sv-credits-title {
+  font-size: 1.3em; margin-bottom: 1.5rem; font-weight: 700; color: #fff;
+}
+.sv-credits-copy {
+  font-size: .82em; opacity: .48; margin-bottom: 1.1rem; color: #fff; font-style: italic;
+}
+.sv-credits-footer {
+  padding: .9rem; text-align: center; border-top: 1px solid var(--sv-c-border); flex-shrink: 0;
+}
+.sv-light .sv-credits-modal-box {
+  background: #fff; color: rgba(0,0,0,.85);
+  box-shadow: 0 8px 40px rgba(0,0,0,.25);
+}
+.sv-light .sv-credits-title { color: rgba(0,0,0,.9); }
+.sv-light .sv-credits-copy  { color: rgba(0,0,0,.55); }

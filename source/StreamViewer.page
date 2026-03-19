@@ -8,6 +8,11 @@ require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
 // ── Config ─────────────────────────────────────────────────────────────────
 $cfg = @parse_plugin_cfg('streamviewer', true) ?: [];
 
+// ── Theme detection (light/dark) ──────────────────────────────────────────
+$dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
+$unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
+$sv_light     = in_array($unraid_theme, ['white', 'azure'], true);
+
 // ── Build enabled server list for JS ──────────────────────────────────────
 $enabled_servers = [];
 for ($i = 1; $i <= 10; $i++) {
@@ -165,11 +170,12 @@ $render_fallback_tbody = static function(
     string $tile_title,
     string $header_html,
     string $panel_html,
-    string $config_html
+    string $config_html,
+    string $lightClass
 ): string {
     return <<<HTML
 <link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/widget.css">
-<tbody id="db-streamviewer" title="{$tile_title}">
+<tbody id="db-streamviewer" title="{$tile_title}" class="{$lightClass}">
     <tr>
         <td class="next" colspan="3">
             {$header_html}
@@ -213,15 +219,20 @@ $tile = [
     'style'   => '/plugins/streamviewer/css/widget.css',
 ];
 
-$tile['content'] = $isResponsiveWebgui
-    ? ($header_responsive . $panel_html . $config_html)
-    : ($header_legacy     . $panel_html . $config_html);
+$lightClass = $sv_light ? ' sv-light' : '';
+
+$tile['content'] = '<div class="sv-widget-wrap' . $lightClass . '">'
+    . ($isResponsiveWebgui
+        ? ($header_responsive . $panel_html . $config_html)
+        : ($header_legacy     . $panel_html . $config_html))
+    . '</div>';
 
 $fallback_markup = $render_fallback_tbody(
     $tile_title,
     $isResponsiveWebgui ? $header_responsive : $header_legacy,
     $panel_html,
-    $config_html
+    $config_html,
+    trim($lightClass)
 );
 
 // ── Register or fall back ──────────────────────────────────────────────────

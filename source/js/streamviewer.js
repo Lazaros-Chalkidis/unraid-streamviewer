@@ -913,10 +913,26 @@ function resolveConfig() {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 14. INIT
+// 14. THEME DETECTION (light/dark)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function detectTheme() {
+    var bg = getComputedStyle(document.body).backgroundColor || '';
+    var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    if (!m) return;
+    var luminance = ((+m[1]) * 299 + (+m[2]) * 587 + (+m[3]) * 114) / 1000;
+    var isLight = luminance > 128;
+    var wrap = document.querySelector('.sv-widget-wrap') || document.getElementById('db-streamviewer');
+    if (wrap) wrap.classList.toggle('sv-light', isLight);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 15. INIT
 // ══════════════════════════════════════════════════════════════════════════════
 
 function init() {
+    detectTheme();
     _cfg = resolveConfig();
 
     if (_cfg.noServersConfigured) {
@@ -949,7 +965,7 @@ boot();
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 15. PUBLIC API
+// 16. PUBLIC API
 // ══════════════════════════════════════════════════════════════════════════════
 
 window.StreamViewer = {

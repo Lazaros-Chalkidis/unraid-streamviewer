@@ -28,6 +28,10 @@ final class StreamViewerEndpoint
     private const HTTP_CONNECT_TIMEOUT = 4;
     private const THUMB_MAX_BYTES      = 5 * 1024 * 1024;  // 5 MB cap for proxied thumbnails
 
+    // ── Rediscover ──────────────────────────────────────────────────────
+    private const REDISCOVER_AFTER     = 3;       // consecutive failures before rediscover
+    private const DOCKER_SOCKET        = '/var/run/docker.sock';
+
     // ── Runtime state ───────────────────────────────────────────────────
     private bool $verifySsl = false;
     private ?array $cfgCache = null;
@@ -48,6 +52,48 @@ final class StreamViewerEndpoint
         $cfg = @parse_plugin_cfg(self::PLUGIN_NAME, true);
         $this->cfgCache = is_array($cfg) ? $cfg : [];
         return $this->cfgCache;
+    }
+
+    // ── URL type detection ──────────────────────────────────────────────
+
+    private function isLocalUrl(string $url): bool
+    {
+        $host = (string)(parse_url($url, PHP_URL_HOST) ?: '');
+        if ($host === '' || $host === 'localhost' || $host === '127.0.0.1') return true;
+        // RFC1918 private ranges
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            return (bool)(
+                filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false
+            );
+        }
+        // .local hostnames
+        return str_ends_with(strtolower($host), '.local');
+    }
+
+    // ── Per-server failure counter (file-based in /tmp) ─────────────────
+
+    private function failFile(int $index): string
+    {
+        return self::CACHE_DIR . '/fail_' . $index;
+    }
+
+    private function getFailureCount(int $index): int
+    {
+        $f = $this->failFile($index);
+        if (!is_file($f)) return 0;
+        return (int)@file_get_contents($f);
+    }
+
+    private function incrementFailure(int $index): int
+    {
+        $count = $this->getFailureCount($index) + 1;
+        @file_put_contents($this->failFile($index), (string)$count, LOCK_EX);
+        return $count;
+    }
+
+    private function resetFailure(int $index): void
+    {
+        @unlink($this->failFile($index));
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -304,19 +350,46 @@ final class StreamViewerEndpoint
             curl_multi_remove_handle($mh, $ch);
             curl_close($ch);
 
-            $srv = $servers[$i];
-            if ($err !== null || $code < 200 || $code >= 300) {
-                // Plex: try auto-rediscover on connection error (sequential fallback)
-                if ($srv['type'] === 'plex' && $code !== 401 && isset($srv['index'])) {
-                    $results[$i] = $this->fetchPlexSessions($srv);
-                    continue;
-                }
-                $errMsg = $err ?? ($code === 401 ? 'Invalid API key' : "HTTP {$code}");
+            $srv   = $servers[$i];
+            $index = (int)($srv['index'] ?? 0);
+
+            // Success → reset failure counter, parse response
+            if ($err === null && $code >= 200 && $code < 300) {
+                if ($index > 0) $this->resetFailure($index);
+                $results[$i] = $this->parseSessions($srv, $body ?: '');
+                continue;
+            }
+
+            // Auth error → don't count as connection failure
+            if ($code === 401) {
+                $results[$i] = ['ok' => false, 'sessions' => [], 'error' => 'Invalid API key'];
+                continue;
+            }
+
+            // Connection error → increment failure counter
+            $failures = ($index > 0) ? $this->incrementFailure($index) : 999;
+
+            // Below threshold → return error, let next poll retry
+            if ($failures < self::REDISCOVER_AFTER) {
+                $errMsg = $err ?? "HTTP {$code}";
                 $results[$i] = ['ok' => false, 'sessions' => [], 'error' => $errMsg];
                 continue;
             }
 
-            $results[$i] = $this->parseSessions($srv, $body ?: '');
+            // Threshold reached → try rediscover based on server type
+            $newUrl = $this->tryRediscover($srv);
+            if ($newUrl !== '' && $newUrl !== rtrim($srv['url'], '/') && $index > 0) {
+                $this->updateServerUrl($index, $newUrl);
+                $srv['url'] = $newUrl;
+                // Retry once with new URL
+                $results[$i] = $this->fetchSessions($srv);
+                if (($results[$i]['ok'] ?? false) && $index > 0) {
+                    $this->resetFailure($index);
+                }
+            } else {
+                $errMsg = $err ?? "HTTP {$code}";
+                $results[$i] = ['ok' => false, 'sessions' => [], 'error' => $errMsg];
+            }
         }
 
         curl_multi_close($mh);
@@ -370,21 +443,6 @@ final class StreamViewerEndpoint
             'X-Plex-Token' => $srv['token'],
             'Accept'       => 'application/json',
         ]);
-
-        // On connection error (not auth), try auto-rediscover once
-        $isConnErr = ($err !== null) || ($httpCode !== 0 && $httpCode !== 200 && $httpCode !== 401);
-        if ($isConnErr && $httpCode !== 401 && isset($srv['index'])) {
-            $newUrl = $this->plexRediscoverUrl($srv);
-            if ($newUrl !== '' && $newUrl !== rtrim($srv['url'], '/')) {
-                $this->updateServerUrl((int)$srv['index'], $newUrl);
-                $srv['url'] = $newUrl;
-                $url        = $newUrl . '/status/sessions';
-                [$body, $httpCode, $err] = $this->httpGet($url, [
-                    'X-Plex-Token' => $srv['token'],
-                    'Accept'       => 'application/json',
-                ]);
-            }
-        }
 
         if ($err !== null) return ['ok' => false, 'sessions' => [], 'error' => $err];
         if ($httpCode === 401) return ['ok' => false, 'sessions' => [], 'error' => 'Invalid Plex token'];
@@ -1076,16 +1134,38 @@ final class StreamViewerEndpoint
     // Plex discovery & URL auto-rediscover
     // ══════════════════════════════════════════════════════════════════════
 
+    // Route to correct discovery method based on server type
+    private function tryRediscover(array $srv): string
+    {
+        return match($srv['type']) {
+            'plex'             => $this->plexRediscoverUrl($srv),
+            'jellyfin', 'emby' => $this->isLocalUrl($srv['url'] ?? '')
+                                    ? $this->dockerDiscoverUrl($srv)
+                                    : '',  // remote JF/Emby cannot be rediscovered
+            default            => '',
+        };
+    }
+
     private function plexRediscoverUrl(array $srv): string
     {
         $token = $srv['token'] ?? '';
         $name  = $srv['name']  ?? '';
         if ($token === '') return '';
 
+        $currentIsLocal = $this->isLocalUrl($srv['url'] ?? '');
+
         foreach ($this->plexDiscover($token) as $s) {
             if (trim($s['name']) !== trim($name)) continue;
-            $conns = array_filter($s['connections'], fn($c) => !$c['relay']);
-            usort($conns, fn($a, $b) => (int)$a['local'] - (int)$b['local']);
+            // Filter: no relay, and match current URL type (local↔local, remote↔remote)
+            $conns = array_filter($s['connections'], function($c) use ($currentIsLocal) {
+                if ($c['relay']) return false;
+                return $currentIsLocal ? $c['local'] : !$c['local'];
+            });
+            // Sort: prefer local first (for local), prefer non-local first (for remote)
+            usort($conns, fn($a, $b) => $currentIsLocal
+                ? (int)$b['local'] - (int)$a['local']
+                : (int)$a['local'] - (int)$b['local']
+            );
             foreach ($conns as $conn) {
                 if (!empty($conn['uri'])) return rtrim($conn['uri'], '/');
             }
@@ -1131,6 +1211,62 @@ final class StreamViewerEndpoint
             ];
         }
         return $servers;
+    }
+
+    // ── Docker socket discovery (Jellyfin/Emby local containers) ────────
+
+    private function dockerDiscoverUrl(array $srv): string
+    {
+        $currentUrl = $srv['url'] ?? '';
+        if (!$this->isLocalUrl($currentUrl)) return '';  // only for local URLs
+        if (!file_exists(self::DOCKER_SOCKET)) return '';
+
+        $port = (int)(parse_url($currentUrl, PHP_URL_PORT) ?: 0);
+        $scheme = parse_url($currentUrl, PHP_URL_SCHEME) ?: 'http';
+        if ($port <= 0) return '';
+
+        // Query Docker Engine API via Unix socket
+        $ch = curl_init('http://localhost/containers/json');
+        curl_setopt_array($ch, [
+            CURLOPT_UNIX_SOCKET_PATH => self::DOCKER_SOCKET,
+            CURLOPT_RETURNTRANSFER   => true,
+            CURLOPT_TIMEOUT          => 5,
+            CURLOPT_CONNECTTIMEOUT   => 3,
+        ]);
+        $body = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($body === false || $code !== 200) return '';
+        $containers = @json_decode($body, true);
+        if (!is_array($containers)) return '';
+
+        // Find container exposing our port
+        foreach ($containers as $c) {
+            $networks = $c['NetworkSettings']['Networks'] ?? [];
+            $ports    = $c['Ports'] ?? [];
+
+            // Check if this container exposes the matching port
+            $matchPort = false;
+            foreach ($ports as $p) {
+                $privPort = (int)($p['PrivatePort'] ?? 0);
+                $pubPort  = (int)($p['PublicPort']  ?? 0);
+                if ($privPort === $port || $pubPort === $port) {
+                    $matchPort = true;
+                    break;
+                }
+            }
+            if (!$matchPort) continue;
+
+            // Get the container IP from any custom network, or the default
+            foreach ($networks as $net) {
+                $ip = (string)($net['IPAddress'] ?? '');
+                if ($ip !== '' && $ip !== '0.0.0.0') {
+                    return $scheme . '://' . $ip . ':' . $port;
+                }
+            }
+        }
+        return '';
     }
 
     private function updateServerUrl(int $index, string $newUrl): bool

@@ -161,14 +161,22 @@ if ($plugin_version === 'dev') {
 }
 ?>
 
+<?php
+// ── Theme detection (light/dark) ──────────────────────────────────────────
+$dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
+$unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
+$sv_light     = in_array($unraid_theme, ['white', 'azure'], true);
+$lightClass   = $sv_light ? ' sv-light' : '';
+?>
+
 <style>.streamviewer-settings,.sv-credits-top{visibility:hidden;}</style>
 <link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/settings.css">
 
-<div class="sv-credits-top">
+<div class="sv-credits-top<?= $lightClass ?>">
   <a href="#" class="sv-credits" id="svCreditsLink">Credits</a>
 </div>
 
-<form name="streamviewer_settings" method="post" class="streamviewer-settings" autocomplete="off">
+<form name="streamviewer_settings" method="post" class="streamviewer-settings<?= $lightClass ?>" autocomplete="off">
 
   <!-- ── Top tabs: Dashboard Widget · Plex · Jellyfin · Emby ──────── -->
   <div class="sv-tabs" id="svTopTabs">
@@ -502,21 +510,21 @@ if ($plugin_version === 'dev') {
 
   <!-- ── Credits modal ──────────────────────────────────────────────── -->
   <div id="svCreditsModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
-    <div style="width:456px;max-width:94vw;height:384px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.13);border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.75);overflow:hidden;display:flex;flex-direction:column;">
+    <div class="sv-credits-modal-box">
       <div style="padding:2.2rem 2.5rem 1.5rem;text-align:center;flex:1;display:flex;flex-direction:column;justify-content:center;">
         <div style="margin-bottom:1.1rem;"><img src="/plugins/streamviewer/streamviewer.png" alt="StreamViewer" style="width:46px;height:46px;"></div>
-        <div style="font-size:1.3em;margin-bottom:1.5rem;font-weight:700;color:#fff;">Stream Viewer</div>
-        <table style="width:auto;margin:0 auto 1.5rem;border-collapse:collapse;font-size:0.95em;color:rgba(255,255,255,0.9);">
+        <div class="sv-credits-title">Stream Viewer</div>
+        <table style="width:auto;margin:0 auto 1.5rem;border-collapse:collapse;font-size:0.95em;">
           <tr>
             <td style="padding:0.4rem 1rem 0.4rem 0;vertical-align:middle;"><img src="/plugins/streamviewer/avatar.png" alt="" style="width:42px;height:42px;border-radius:50%;object-fit:cover;display:block;"></td>
             <td style="padding:0.4rem 2rem 0.4rem 0;font-weight:600;text-align:left;vertical-align:middle;">Lazaros Chalkidis</td>
-            <td style="padding:0.4rem 0;opacity:0.72;text-align:left;vertical-align:middle;">Development</td>
+            <td style="padding:0.4rem 0;opacity:0.6;text-align:left;vertical-align:middle;">Development</td>
           </tr>
         </table>
-        <div style="font-size:0.82em;opacity:0.48;margin-bottom:1.1rem;color:#fff;font-style:italic;">Copyright © 2026 Stream Viewer Plugin</div>
+        <div class="sv-credits-copy">Copyright © 2026 Stream Viewer Plugin</div>
         <div style="margin-bottom:1.1rem;"><a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" target="_blank" rel="noopener" style="color:#4a90e2;text-decoration:none;font-size:0.9em;">Plugin Support Thread</a></div>
       </div>
-      <div style="padding:0.9rem;text-align:center;border-top:1px solid rgba(255,255,255,0.1);flex-shrink:0;">
+      <div class="sv-credits-footer">
         <button id="svCreditsOkBtn" style="background:#f47d42;border:1px solid #f47d42;color:#fff;padding:0.5rem 2.5rem;font-size:0.9em;font-weight:500;border-radius:4px;cursor:pointer;">OK</button>
       </div>
     </div>
