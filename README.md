@@ -3,8 +3,11 @@
 A real time media stream monitor and statistics tracker for Unraid. View active streams from your Plex, Jellyfin and Emby servers directly from the dashboard, and track watch history, library content and user activity through a dedicated statistics page.
 
 <p align="center">
-  <img src="https://img.shields.io" />
-  <img src="https://img.shields.io" />
+  <img src="https://img.shields.io/github/v/release/Lazaros-Chalkidis/unraid-streamviewer?label=Latest%20Version&color=blue" style="margin: 4px;" />&nbsp;
+  <img src="https://img.shields.io/github/last-commit/Lazaros-Chalkidis/unraid-streamviewer?label=Last%20Update" style="margin: 4px;" />&nbsp;
+  <img src="https://img.shields.io/github/downloads/Lazaros-Chalkidis/unraid-streamviewer/total?label=Downloads&color=brightgreen" style="margin: 4px;" />&nbsp;
+  <img src="https://img.shields.io/github/issues/Lazaros-Chalkidis/unraid-streamviewer?label=Issues" style="margin: 4px;" />&nbsp;
+  <img src="https://img.shields.io/github/license/Lazaros-Chalkidis/unraid-streamviewer?label=License" style="margin: 4px;" />
 </p>
 
 # unraid-streamviewer
