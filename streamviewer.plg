@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "streamviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.03.19a">
+ <!ENTITY version   "2026.03.25">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "4623a7d612029c65bcc8c58d2cb77a34">
+ <!ENTITY md5       "63dccd9f314247aad9d956a593dc4549">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
@@ -18,10 +18,32 @@
         support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
 
 <DESCRIPTION>
-StreamViewer is a lightweight Unraid dashboard widget that gives you a real-time overview of active media streams across your Plex, Jellyfin, and Emby servers — all in one place.
+A real-time media stream monitor and statistics tracker for Plex, Jellyfin and Emby servers on Unraid.
 </DESCRIPTION>
 
 <CHANGES>
+
+## Version 2026.03.25
+
+### Bug Fixes
+- Fixed stream duration being cut off in widget, seconds now fully visible
+- Fixed widget freeze after ~1 hour (automatic CSRF token renewal with sliding expiration)
+- Fixed Jellyfin and Emby API session endpoint corrections
+
+### New Features
+- Statistics Tool page (Beta) with Dashboard, Libraries, Users, History, Graphs and Alerts tabs
+- Transcode speed badge on active transcodes
+- Docker CPU and RAM stats in widget footer with color thresholds (orange 50%, red 70%)
+
+### Improvements
+- Widget badges uniform height and styling across all types
+- All transcode badges now uppercase (DIRECT STREAM, DIRECT PLAY, TRANSCODE)
+- STOP button text-only, matching other badge sizes
+- Settings page restructured into Widget Settings
+- Statistics Settings sections
+- Incremental database migration system for seamless future upgrades
+
+---
 
 ## Version 2026.03.19a
 
@@ -32,8 +54,8 @@ StreamViewer is a lightweight Unraid dashboard widget that gives you a real-time
 ### New Features
 - Credits modal: Widget and Settings adaptive to Dynamix color theme: Black - Light - Gray - Azure
 - Smart rediscover: Retries 3 times before triggering URL rediscovery
-- Smart rediscover: Respects URL type — local stays local, remote stays remote
-- Jellyfin/Emby: Local container IP auto-discovery via Docker Engine API (no shell exec)
+- Smart rediscover: Respects URL type, local stays local, remote stays remote
+- Jellyfin/Emby: Local container IP auto discovery via Docker Engine API
 
 ---
 
@@ -159,15 +181,16 @@ WIDGET_SHOW_IP="1"
 WIDGET_SHOW_PROGRESS="1"
 WIDGET_SHOW_QUALITY="1"
 WIDGET_SHOW_TRANSCODE="1"
-TOOL_REFRESH_ENABLED="1"
-TOOL_REFRESH_INTERVAL="30"
-TOOL_MAX_STREAMS="0"
-TOOL_SHOW_DEVICE="1"
-TOOL_SHOW_IP="1"
-TOOL_SHOW_PROGRESS="1"
-TOOL_SHOW_QUALITY="1"
-TOOL_SHOW_TRANSCODE="1"
+WIDGET_SHOW_DETAILS="1"
+WIDGET_DETAILS_OPEN="0"
+WIDGET_SHOW_DOCKER="1"
 TOOL_ALLOW_KILL="0"
+VERIFY_SSL="0"
+STATS_ENABLED="0"
+STATS_DB_PATH="/mnt/user/appdata/Stream-Viewer"
+STATS_RETENTION_DAYS="90"
+STATS_ANONYMIZE_IP="0"
+LIB_SECTIONS_OPEN="0"
   </INLINE>
 </FILE>
 

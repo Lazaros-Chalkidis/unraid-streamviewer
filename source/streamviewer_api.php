@@ -18,7 +18,7 @@ final class StreamViewerEndpoint
     // ── Cache & rate limiting ──────────────────────────────────────────────
     private const CACHE_DIR            = '/tmp/streamviewer_cache';
     private const NONCE_FILE           = '/tmp/streamviewer_cache/nonce';
-    private const NONCE_TTL            = 3600;   // seconds
+    private const NONCE_TTL            = 14400;  // 4 hours (sliding: renewed on each valid request)
     private const RATE_LIMIT_FILE      = '/tmp/streamviewer_cache/rl';
     private const RATE_LIMIT_MAX       = 120;    // requests per minute per IP
     private const MICRO_CACHE_MS       = 2000;   // deduplicate rapid/parallel widget refreshes
@@ -32,9 +32,19 @@ final class StreamViewerEndpoint
     private const REDISCOVER_AFTER     = 3;       // consecutive failures before rediscover
     private const DOCKER_SOCKET        = '/var/run/docker.sock';
 
+    // ── Stats / History ─────────────────────────────────────────────────
+    private const STATS_DB_NAME        = 'streamviewer.db';
+    private const STATS_DEFAULT_PATH   = '/mnt/user/appdata/Stream-Viewer';
+    private const STATS_RETENTION_DAYS = 90;
+    private const STATS_PRUNE_CHANCE   = 50;    // 1-in-N requests triggers prune
+    private const STATS_SCHEMA_VER     = 3;
+    private const STATS_BUSY_TIMEOUT   = 3000;  // ms -- SQLite WAL busy wait
+    private const LIBRARY_CACHE_TTL    = 300;   // seconds -- 5 min cache for library data
+
     // ── Runtime state ───────────────────────────────────────────────────
     private bool $verifySsl = false;
     private ?array $cfgCache = null;
+    private ?\SQLite3 $db = null;
 
     public function __construct()
     {
@@ -54,6 +64,410 @@ final class StreamViewerEndpoint
         return $this->cfgCache;
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // Stats -- SQLite database layer
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Validate and return the configured stats DB directory.
+     * Whitelist: must start with /mnt/user/ and resolve to the same prefix.
+     */
+    private function statsDbDir(): ?string
+    {
+        $cfg  = $this->loadCfg();
+        if (($cfg['STATS_ENABLED'] ?? '0') !== '1') return null;
+
+        $dir = trim((string)($cfg['STATS_DB_PATH'] ?? ''));
+        if ($dir === '') $dir = self::STATS_DEFAULT_PATH;
+
+        // Security: path traversal protection -- whitelist /mnt/user/ only
+        $real = @realpath($dir);
+        if ($real === false) {
+            // Directory may not exist yet -- validate parent
+            $parent = @realpath(dirname($dir));
+            if ($parent === false || strncmp($parent, '/mnt/user/', 10) !== 0) return null;
+            @mkdir($dir, 0700, true);
+            $real = @realpath($dir);
+            if ($real === false) return null;
+        }
+        if (strncmp($real, '/mnt/user/', 10) !== 0) return null;
+        return $real;
+    }
+
+    /**
+     * Open (or create) the SQLite database.  WAL mode, prepared-statements only.
+     */
+    private function openDb(): ?\SQLite3
+    {
+        if ($this->db !== null) return $this->db;
+
+        $dir = $this->statsDbDir();
+        if ($dir === null) return null;
+
+        $dbFile = $dir . '/' . self::STATS_DB_NAME;
+        $isNew  = !is_file($dbFile);
+
+        try {
+            $db = new \SQLite3($dbFile);
+        } catch (\Exception $e) {
+            return null;
+        }
+
+        $db->busyTimeout(self::STATS_BUSY_TIMEOUT);
+        $db->exec('PRAGMA journal_mode = WAL');
+        $db->exec('PRAGMA synchronous  = NORMAL');
+        $db->exec('PRAGMA foreign_keys = OFF');
+
+        // Set secure permissions (owner-only read/write)
+        @chmod($dbFile, 0600);
+
+        if ($isNew) {
+            $this->statsCreateBaseTables($db);
+        }
+
+        $this->runMigrations($db);
+
+        $this->db = $db;
+        return $db;
+    }
+
+    private function getSchemaVersion(\SQLite3 $db): int
+    {
+        // sv_meta table might not exist yet
+        $r = @$db->querySingle("SELECT val FROM sv_meta WHERE key='schema_version'");
+        return (int)$r;
+    }
+
+    private function setSchemaVersion(\SQLite3 $db, int $ver): void
+    {
+        $db->exec("INSERT OR REPLACE INTO sv_meta(key,val) VALUES('schema_version','" . $ver . "')");
+    }
+
+    /**
+     * Create all base tables (v1). Idempotent: uses CREATE TABLE IF NOT EXISTS.
+     * Called only on first run (new DB file).
+     */
+    private function statsCreateBaseTables(\SQLite3 $db): void
+    {
+        $db->exec('BEGIN EXCLUSIVE');
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS active_sessions (
+                session_key   TEXT PRIMARY KEY,
+                session_id    TEXT NOT NULL DEFAULT '',
+                user          TEXT NOT NULL DEFAULT 'Unknown',
+                title         TEXT NOT NULL DEFAULT '',
+                media_type    TEXT NOT NULL DEFAULT 'video',
+                server_name   TEXT NOT NULL DEFAULT '',
+                server_type   TEXT NOT NULL DEFAULT '',
+                play_type     TEXT NOT NULL DEFAULT 'direct_play',
+                ip_address    TEXT NOT NULL DEFAULT '',
+                device        TEXT NOT NULL DEFAULT '',
+                quality       TEXT NOT NULL DEFAULT '',
+                bandwidth_kbps INTEGER NOT NULL DEFAULT 0,
+                duration_ms   INTEGER NOT NULL DEFAULT 0,
+                progress_ms   INTEGER NOT NULL DEFAULT 0,
+                first_seen    INTEGER NOT NULL DEFAULT 0,
+                last_seen     INTEGER NOT NULL DEFAULT 0
+            )
+        ");
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS watch_history (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_key  TEXT NOT NULL,
+                user         TEXT NOT NULL DEFAULT 'Unknown',
+                title        TEXT NOT NULL DEFAULT '',
+                media_type   TEXT NOT NULL DEFAULT 'video',
+                server_name  TEXT NOT NULL DEFAULT '',
+                server_type  TEXT NOT NULL DEFAULT '',
+                play_type    TEXT NOT NULL DEFAULT 'direct_play',
+                ip_address   TEXT NOT NULL DEFAULT '',
+                device       TEXT NOT NULL DEFAULT '',
+                quality      TEXT NOT NULL DEFAULT '',
+                bandwidth_kbps INTEGER NOT NULL DEFAULT 0,
+                duration_sec INTEGER NOT NULL DEFAULT 0,
+                started_at   INTEGER NOT NULL DEFAULT 0,
+                ended_at     INTEGER NOT NULL DEFAULT 0
+            )
+        ");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_wh_ended   ON watch_history(ended_at)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_wh_user    ON watch_history(user)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_wh_server  ON watch_history(server_type)");
+
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS library_cache (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                server_index  INTEGER NOT NULL,
+                server_name   TEXT NOT NULL DEFAULT '',
+                server_type   TEXT NOT NULL DEFAULT '',
+                library_id    TEXT NOT NULL DEFAULT '',
+                library_name  TEXT NOT NULL DEFAULT '',
+                library_type  TEXT NOT NULL DEFAULT '',
+                total_items   INTEGER NOT NULL DEFAULT 0,
+                episode_count INTEGER NOT NULL DEFAULT 0,
+                synced_at     INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(server_index, library_id)
+            )
+        ");
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS recently_added (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                server_index  INTEGER NOT NULL,
+                server_name   TEXT NOT NULL DEFAULT '',
+                server_type   TEXT NOT NULL DEFAULT '',
+                title         TEXT NOT NULL DEFAULT '',
+                media_type    TEXT NOT NULL DEFAULT '',
+                library_name  TEXT NOT NULL DEFAULT '',
+                added_at      INTEGER NOT NULL DEFAULT 0,
+                synced_at     INTEGER NOT NULL DEFAULT 0
+            )
+        ");
+
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS sv_meta (
+                key TEXT PRIMARY KEY,
+                val TEXT NOT NULL DEFAULT ''
+            )
+        ");
+
+        $this->setSchemaVersion($db, 1);
+        $db->exec('COMMIT');
+    }
+
+    /**
+     * Incremental migration runner.
+     * Each migration runs outside a transaction with @ to safely handle
+     * re-runs (e.g. ALTER TABLE on a column that already exists).
+     * Migrations are never skipped: they run in order from current version + 1.
+     * Data is never deleted, only new columns/tables/indexes are added.
+     */
+    private function runMigrations(\SQLite3 $db): void
+    {
+        // Ensure sv_meta exists (handles pre-migration DBs)
+        @$db->exec("CREATE TABLE IF NOT EXISTS sv_meta (key TEXT PRIMARY KEY, val TEXT NOT NULL DEFAULT '')");
+
+        $currentVer = $this->getSchemaVersion($db);
+        if ($currentVer >= self::STATS_SCHEMA_VER) return;
+
+        $migrations = [
+            // v1 -> v2: library cache + recently added (already in base tables, safe no-op)
+            2 => function(\SQLite3 $db) {
+                @$db->exec("
+                    CREATE TABLE IF NOT EXISTS library_cache (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        server_index INTEGER NOT NULL, server_name TEXT NOT NULL DEFAULT '',
+                        server_type TEXT NOT NULL DEFAULT '', library_id TEXT NOT NULL DEFAULT '',
+                        library_name TEXT NOT NULL DEFAULT '', library_type TEXT NOT NULL DEFAULT '',
+                        total_items INTEGER NOT NULL DEFAULT 0, episode_count INTEGER NOT NULL DEFAULT 0,
+                        synced_at INTEGER NOT NULL DEFAULT 0, UNIQUE(server_index, library_id)
+                    )
+                ");
+                @$db->exec("
+                    CREATE TABLE IF NOT EXISTS recently_added (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        server_index INTEGER NOT NULL, server_name TEXT NOT NULL DEFAULT '',
+                        server_type TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
+                        media_type TEXT NOT NULL DEFAULT '', library_name TEXT NOT NULL DEFAULT '',
+                        added_at INTEGER NOT NULL DEFAULT 0, synced_at INTEGER NOT NULL DEFAULT 0
+                    )
+                ");
+            },
+
+            // v2 -> v3: add type_label column for S03E04 display in recently added
+            3 => function(\SQLite3 $db) {
+                @$db->exec("ALTER TABLE recently_added ADD COLUMN type_label TEXT NOT NULL DEFAULT ''");
+            },
+        ];
+
+        foreach ($migrations as $ver => $fn) {
+            if ($currentVer < $ver) {
+                try {
+                    $fn($db);
+                } catch (\Throwable $e) {
+                    // Migration failed but continue: next run will retry
+                }
+                $this->setSchemaVersion($db, $ver);
+            }
+        }
+    }
+
+    // ── Recording hook -- called from replyGetSessions() ─────────────────
+
+    /**
+     * Record active sessions into SQLite. Sessions that disappear are
+     * moved to watch_history.  Runs passively on every poll cycle.
+     */
+    private function recordSessions(array $sessions): void
+    {
+        $db = $this->openDb();
+        if ($db === null) return;
+
+        $now = time();
+        $cfg = $this->loadCfg();
+        $anonymize = (($cfg['STATS_ANONYMIZE_IP'] ?? '0') === '1');
+
+        // Minimum duration to record (avoid partial/accidental plays)
+        $minDurationSec = 30;
+
+        $db->exec('BEGIN');
+
+        // 1. Collect current session keys
+        $currentKeys = [];
+        foreach ($sessions as $s) {
+            $key = $this->statsSessionKey($s);
+            $currentKeys[$key] = true;
+
+            $ip = $anonymize ? $this->anonymizeIp((string)($s['ip_address'] ?? ''))
+                             : (string)($s['ip_address'] ?? '');
+
+            // Upsert into active_sessions
+            $stmt = $db->prepare("
+                INSERT INTO active_sessions
+                    (session_key, session_id, user, title, media_type, server_name, server_type,
+                     play_type, ip_address, device, quality, bandwidth_kbps, duration_ms,
+                     progress_ms, first_seen, last_seen)
+                VALUES (:sk, :sid, :user, :title, :mt, :sn, :st, :pt, :ip, :dev,
+                        :qual, :bw, :dur, :prog, :now, :now)
+                ON CONFLICT(session_key) DO UPDATE SET
+                    progress_ms = :prog,
+                    duration_ms = :dur,
+                    last_seen   = :now,
+                    play_type   = :pt,
+                    quality     = :qual,
+                    bandwidth_kbps = :bw
+            ");
+            $stmt->bindValue(':sk',    $key,                                    SQLITE3_TEXT);
+            $stmt->bindValue(':sid',   (string)($s['session_id'] ?? ''),        SQLITE3_TEXT);
+            $stmt->bindValue(':user',  (string)($s['user'] ?? 'Unknown'),       SQLITE3_TEXT);
+            $stmt->bindValue(':title', (string)($s['title'] ?? ''),             SQLITE3_TEXT);
+            $stmt->bindValue(':mt',    (string)($s['media_type'] ?? 'video'),   SQLITE3_TEXT);
+            $stmt->bindValue(':sn',    (string)($s['server_name'] ?? ''),       SQLITE3_TEXT);
+            $stmt->bindValue(':st',    (string)($s['server_type'] ?? ''),       SQLITE3_TEXT);
+            $stmt->bindValue(':pt',    (string)($s['play_type'] ?? 'direct_play'), SQLITE3_TEXT);
+            $stmt->bindValue(':ip',    $ip,                                     SQLITE3_TEXT);
+            $stmt->bindValue(':dev',   (string)($s['device'] ?? ''),            SQLITE3_TEXT);
+            $stmt->bindValue(':qual',  (string)($s['quality'] ?? ''),           SQLITE3_TEXT);
+            $stmt->bindValue(':bw',    (int)($s['bandwidth_kbps'] ?? 0),        SQLITE3_INTEGER);
+            $stmt->bindValue(':dur',   (int)($s['duration_ms'] ?? 0),           SQLITE3_INTEGER);
+            $stmt->bindValue(':prog',  (int)($s['progress_ms'] ?? 0),           SQLITE3_INTEGER);
+            $stmt->bindValue(':now',   $now,                                    SQLITE3_INTEGER);
+            $stmt->execute();
+            $stmt->close();
+        }
+
+        // 2. Find ended sessions (in active_sessions but not in current poll)
+        $ended = $db->query("SELECT * FROM active_sessions");
+        $moveStmt = $db->prepare("
+            INSERT INTO watch_history
+                (session_key, user, title, media_type, server_name, server_type,
+                 play_type, ip_address, device, quality, bandwidth_kbps,
+                 duration_sec, started_at, ended_at)
+            VALUES (:sk, :user, :title, :mt, :sn, :st, :pt, :ip, :dev,
+                    :qual, :bw, :dur, :start, :end)
+        ");
+        $delStmt = $db->prepare("DELETE FROM active_sessions WHERE session_key = :sk");
+
+        while ($row = $ended->fetchArray(SQLITE3_ASSOC)) {
+            if (isset($currentKeys[$row['session_key']])) continue;
+
+            $durationSec = max(0, (int)$row['last_seen'] - (int)$row['first_seen']);
+            if ($durationSec < $minDurationSec) {
+                // Too short -- just delete, don't record
+                $delStmt->bindValue(':sk', $row['session_key'], SQLITE3_TEXT);
+                $delStmt->execute();
+                $delStmt->reset();
+                continue;
+            }
+
+            $moveStmt->bindValue(':sk',    $row['session_key'],  SQLITE3_TEXT);
+            $moveStmt->bindValue(':user',  $row['user'],         SQLITE3_TEXT);
+            $moveStmt->bindValue(':title', $row['title'],        SQLITE3_TEXT);
+            $moveStmt->bindValue(':mt',    $row['media_type'],   SQLITE3_TEXT);
+            $moveStmt->bindValue(':sn',    $row['server_name'],  SQLITE3_TEXT);
+            $moveStmt->bindValue(':st',    $row['server_type'],  SQLITE3_TEXT);
+            $moveStmt->bindValue(':pt',    $row['play_type'],    SQLITE3_TEXT);
+            $moveStmt->bindValue(':ip',    $row['ip_address'],   SQLITE3_TEXT);
+            $moveStmt->bindValue(':dev',   $row['device'],       SQLITE3_TEXT);
+            $moveStmt->bindValue(':qual',  $row['quality'],      SQLITE3_TEXT);
+            $moveStmt->bindValue(':bw',    (int)$row['bandwidth_kbps'], SQLITE3_INTEGER);
+            $moveStmt->bindValue(':dur',   $durationSec,         SQLITE3_INTEGER);
+            $moveStmt->bindValue(':start', (int)$row['first_seen'], SQLITE3_INTEGER);
+            $moveStmt->bindValue(':end',   (int)$row['last_seen'],  SQLITE3_INTEGER);
+            $moveStmt->execute();
+            $moveStmt->reset();
+
+            $delStmt->bindValue(':sk', $row['session_key'], SQLITE3_TEXT);
+            $delStmt->execute();
+            $delStmt->reset();
+        }
+        $moveStmt->close();
+        $delStmt->close();
+
+        $db->exec('COMMIT');
+
+        // 3. Probabilistic prune (1-in-N chance)
+        if (mt_rand(1, self::STATS_PRUNE_CHANCE) === 1) {
+            $this->statsPrune($db);
+        }
+    }
+
+    /**
+     * Build a unique key for a session. Combines server+sessionId so that
+     * the same stream across poll cycles is recognized as one session.
+     */
+    private function statsSessionKey(array $s): string
+    {
+        $parts = [
+            (string)($s['server_type'] ?? ''),
+            (string)($s['server_name'] ?? ''),
+            (string)($s['session_id']  ?? ''),
+            (string)($s['session_key'] ?? ''),
+        ];
+        return hash('sha256', implode('|', $parts));
+    }
+
+    private function anonymizeIp(string $ip): string
+    {
+        if ($ip === '' || $ip === 'Unknown') return $ip;
+        // IPv4: zero out last octet.  IPv6: zero out last 80 bits
+        if (strpos($ip, ':') !== false) {
+            $parts = explode(':', $ip);
+            $n = count($parts);
+            for ($i = max(0, $n - 5); $i < $n; $i++) $parts[$i] = '0';
+            return implode(':', $parts);
+        }
+        $parts = explode('.', $ip);
+        if (count($parts) === 4) $parts[3] = '0';
+        return implode('.', $parts);
+    }
+
+    /**
+     * Check if an IP address is private/local (RFC1918 + loopback).
+     */
+    private function isPrivateIp(string $ip): bool
+    {
+        if ($ip === '' || $ip === 'Unknown') return true;
+        if (!filter_var($ip, FILTER_VALIDATE_IP)) return true;
+        // Returns false for private/reserved IPs, so negate
+        return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
+    }
+
+    /**
+     * Delete watch_history rows older than retention limit.
+     */
+    private function statsPrune(\SQLite3 $db): void
+    {
+        $cfg  = $this->loadCfg();
+        $days = (int)($cfg['STATS_RETENTION_DAYS'] ?? self::STATS_RETENTION_DAYS);
+        if ($days < 7)   $days = 7;
+        if ($days > 365) $days = 365;
+
+        $cutoff = time() - ($days * 86400);
+        $stmt = $db->prepare("DELETE FROM watch_history WHERE ended_at < :cutoff AND ended_at > 0");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $stmt->execute();
+        $stmt->close();
+    }
+
     // ── URL type detection ──────────────────────────────────────────────
 
     private function isLocalUrl(string $url): bool
@@ -67,7 +481,8 @@ final class StreamViewerEndpoint
             );
         }
         // .local hostnames
-        return str_ends_with(strtolower($host), '.local');
+        $lower = strtolower($host);
+        return substr($lower, -6) === '.local';
     }
 
     // ── Per-server failure counter (file-based in /tmp) ─────────────────
@@ -138,6 +553,11 @@ final class StreamViewerEndpoint
         }
         if ((time() - (int)$data['ts']) > self::NONCE_TTL) $this->json(['error' => 'Token expired'], 403);
         if (!hash_equals((string)$data['token'], $provided)) $this->json(['error' => 'Invalid token'], 403);
+
+        // Sliding expiration: renew timestamp on every successful check
+        // so the token stays alive as long as the widget is actively polling
+        $data['ts'] = time();
+        @file_put_contents(self::NONCE_FILE, json_encode($data), LOCK_EX);
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -235,6 +655,22 @@ final class StreamViewerEndpoint
             'kill_session'    => fn() => $this->replyKillSession(),
             'plex_create_pin' => fn() => $this->replyPlexCreatePin(),
             'plex_poll_pin'   => fn() => $this->replyPlexPollPin(),
+            // Stats endpoints
+            'get_stats'       => fn() => $this->replyGetStats(),
+            'get_daily_chart' => fn() => $this->replyGetDailyChart(),
+            'get_top_media'   => fn() => $this->replyGetTopMedia(),
+            'get_top_users'   => fn() => $this->replyGetTopUsers(),
+            'get_history'     => fn() => $this->replyGetHistory(),
+            // Library endpoints
+            'get_libraries'      => fn() => $this->replyGetLibraries(),
+            'get_recently_added' => fn() => $this->replyGetRecentlyAdded(),
+            'sync_libraries'     => fn() => $this->replySyncLibraries(),
+            // User endpoints
+            'get_user_stats'     => fn() => $this->replyGetUserStats(),
+            // Graph endpoints
+            'get_graph_data'     => fn() => $this->replyGetGraphData(),
+            // Alert endpoints
+            'get_alerts'         => fn() => $this->replyGetAlerts(),
         ];
 
         if (!isset($routes[$action])) $this->json(['error' => 'Invalid action'], 400);
@@ -293,14 +729,35 @@ final class StreamViewerEndpoint
             foreach ($result['sessions'] ?? [] as $s) $sessions[] = $s;
         }
 
+        // Docker container resource stats (cached 15s)
+        // On first load (no cache), return empty to avoid ~7s delay from Docker stats API.
+        // Next poll cycle will populate the cache.
+        $dockerStats = [];
+        $dockerCachePath = self::CACHE_DIR . '/docker_stats.json';
+        $dockerCached = $this->cacheGet($dockerCachePath, 15000);
+        if ($dockerCached !== null) {
+            $dockerStats = @json_decode($dockerCached, true) ?: [];
+        } elseif (count($sessions) > 0) {
+            // Only fetch Docker stats when there are active streams
+            try {
+                $dockerStats = $this->getDockerStats($servers);
+                @file_put_contents($dockerCachePath, json_encode($dockerStats));
+            } catch (\Throwable $e) {}
+        }
+
         $json = (string)json_encode([
             'sessions'       => $sessions,
             'servers'        => $serverStats,
+            'docker_stats'   => $dockerStats,
             'total_sessions' => count($sessions),
             'timestamp'      => time(),
             'no_servers'     => empty($servers),
         ]);
         $this->cachePut($cachePath, $json);
+
+        // Passive recording: log sessions to SQLite for stats (non-blocking)
+        try { $this->recordSessions($sessions); } catch (\Throwable $e) { /* never block the widget */ }
+
         $this->rawJson($json);
     }
 
@@ -475,7 +932,8 @@ final class StreamViewerEndpoint
             $playType  = $this->normalizePlexPlayType($item);
             $thumbPath = $item['grandparentThumb'] ?? $item['parentThumb'] ?? $item['thumb'] ?? null;
             $thumbUrl  = ($thumbPath !== null && $thumbPath !== '' && $srv['url'] !== '')
-                ? rtrim($srv['url'], '/') . $thumbPath . '?X-Plex-Token=' . urlencode($srv['token'])
+                ? rtrim($srv['url'], '/') . '/photo/:/transcode?width=300&height=450&minSize=1&url='
+                  . urlencode($thumbPath) . '&X-Plex-Token=' . urlencode($srv['token'])
                 : '';
 
             $sessions[] = $this->normalizeSession([
@@ -633,7 +1091,7 @@ final class StreamViewerEndpoint
 
             $imageId  = $nowPlaying['SeriesId'] ?? $nowPlaying['SeasonId'] ?? $nowPlaying['Id'] ?? null;
             $thumbUrl = ($imageId && $srv['url'] !== '')
-                ? rtrim($srv['url'], '/') . '/Items/' . urlencode($imageId) . '/Images/Primary?maxHeight=70&maxWidth=50&api_key=' . urlencode($srv['token'])
+                ? rtrim($srv['url'], '/') . '/Items/' . urlencode($imageId) . '/Images/Primary?maxHeight=300&maxWidth=200&quality=90&api_key=' . urlencode($srv['token'])
                 : '';
 
             $sessions[] = $this->normalizeSession([
@@ -949,13 +1407,1377 @@ final class StreamViewerEndpoint
             $version = '';
             $data    = @json_decode($body, true);
             if (is_array($data)) $version = (string)($data['version'] ?? $data['Version'] ?? '');
-            if ($type === 'plex' && $version === '' && str_contains((string)$body, 'MediaContainer')) {
+            if ($type === 'plex' && $version === '' && strpos((string)$body, 'MediaContainer') !== false) {
                 if (preg_match('/version="([^"]+)"/', (string)$body, $m)) $version = $m[1];
             }
             $this->json(['ok' => true, 'server' => $name, 'type' => $type, 'version' => $version, 'http' => $httpCode]);
         }
 
         $this->json(['ok' => false, 'server' => $name, 'error' => "HTTP {$httpCode}"]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Stats API endpoints
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Helper: validate period param and return Unix cutoff timestamp.
+     */
+    private function statsPeriodCutoff(): int
+    {
+        $period = (string)($_GET['period'] ?? '30d');
+        $days = match($period) {
+            '7d'  => 7,
+            '90d' => 90,
+            default => 30,
+        };
+        return time() - ($days * 86400);
+    }
+
+    /**
+     * GET ?action=get_stats&period=30d
+     * Returns summary cards: total plays, hours watched, unique users,
+     * peak concurrent, play type breakdown.
+     */
+    private function replyGetStats(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $cutoff = $this->statsPeriodCutoff();
+
+        // Total plays + total duration
+        $stmt = $db->prepare("
+            SELECT COUNT(*) AS total_plays,
+                   COALESCE(SUM(duration_sec), 0) AS total_seconds
+            FROM watch_history WHERE ended_at >= :cutoff
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $r = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
+        $stmt->close();
+        $totalPlays   = (int)($r['total_plays'] ?? 0);
+        $totalSeconds = (int)($r['total_seconds'] ?? 0);
+
+        // Unique users
+        $stmt = $db->prepare("
+            SELECT COUNT(DISTINCT user) AS cnt FROM watch_history WHERE ended_at >= :cutoff
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $uniqueUsers = (int)($stmt->execute()->fetchArray(SQLITE3_ASSOC)['cnt'] ?? 0);
+        $stmt->close();
+
+        // Peak concurrent (approximate via hourly buckets)
+        $stmt = $db->prepare("
+            SELECT MAX(cnt) AS peak FROM (
+                SELECT COUNT(*) AS cnt
+                FROM watch_history
+                WHERE ended_at >= :cutoff
+                GROUP BY CAST(started_at / 3600 AS INTEGER)
+            )
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $peak = (int)($stmt->execute()->fetchArray(SQLITE3_ASSOC)['peak'] ?? 0);
+        $stmt->close();
+
+        // Also count currently active
+        $activeCnt = (int)$db->querySingle("SELECT COUNT(*) FROM active_sessions");
+        if ($activeCnt > $peak) $peak = $activeCnt;
+
+        // Play type breakdown (3 types only, remote is separate)
+        $stmt = $db->prepare("
+            SELECT play_type, COUNT(*) AS cnt
+            FROM watch_history WHERE ended_at >= :cutoff
+            GROUP BY play_type
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $playTypes = ['direct_play' => 0, 'direct_stream' => 0, 'transcode' => 0];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $pt = (string)($row['play_type'] ?? '');
+            if (isset($playTypes[$pt])) $playTypes[$pt] = (int)$row['cnt'];
+        }
+        $stmt->close();
+
+        // Remote percentage (calculated from IP, not play_type)
+        $stmt = $db->prepare("
+            SELECT ip_address FROM watch_history WHERE ended_at >= :cutoff AND ip_address != ''
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $ipTotal = 0;
+        $ipRemote = 0;
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $ipTotal++;
+            if (!$this->isPrivateIp((string)$row['ip_address'])) $ipRemote++;
+        }
+        $stmt->close();
+        $remotePct = ($ipTotal > 0) ? round(($ipRemote / $ipTotal) * 100) : 0;
+
+        $this->json([
+            'total_plays'    => $totalPlays,
+            'hours_watched'  => round($totalSeconds / 3600, 1),
+            'unique_users'   => $uniqueUsers,
+            'peak_concurrent'=> $peak,
+            'play_types'     => $playTypes,
+            'remote_pct'     => $remotePct,
+        ]);
+    }
+
+    /**
+     * GET ?action=get_daily_chart&period=30d
+     * Returns daily aggregated stream counts per server type.
+     */
+    private function replyGetDailyChart(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $cutoff = $this->statsPeriodCutoff();
+
+        $stmt = $db->prepare("
+            SELECT DATE(ended_at, 'unixepoch', 'localtime') AS day,
+                   server_type,
+                   COUNT(*) AS cnt
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+            GROUP BY day, server_type
+            ORDER BY day ASC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+
+        $rawDays = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $d = (string)($row['day'] ?? '');
+            if (!isset($rawDays[$d])) $rawDays[$d] = ['date' => $d, 'plex' => 0, 'jellyfin' => 0, 'emby' => 0];
+            $st = (string)($row['server_type'] ?? '');
+            if (isset($rawDays[$d][$st])) $rawDays[$d][$st] = (int)$row['cnt'];
+        }
+        $stmt->close();
+
+        // Fill gaps: continuous date range from cutoff to today
+        $days = [];
+        $start = new \DateTime("@{$cutoff}");
+        $start->setTimezone(new \DateTimeZone(date_default_timezone_get()));
+        $end = new \DateTime('now', new \DateTimeZone(date_default_timezone_get()));
+        $period = new \DatePeriod($start, new \DateInterval('P1D'), $end->modify('+1 day'));
+        foreach ($period as $dt) {
+            $d = $dt->format('Y-m-d');
+            $days[] = $rawDays[$d] ?? ['date' => $d, 'plex' => 0, 'jellyfin' => 0, 'emby' => 0];
+        }
+
+        $this->json(['daily' => $days]);
+    }
+
+    /**
+     * GET ?action=get_top_media&period=30d&limit=10
+     * Returns most watched titles.
+     */
+    private function replyGetTopMedia(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $cutoff = $this->statsPeriodCutoff();
+        $limit  = min(50, max(1, (int)($_GET['limit'] ?? 10)));
+
+        $stmt = $db->prepare("
+            SELECT title, media_type,
+                   COUNT(*) AS plays,
+                   COUNT(DISTINCT user) AS users,
+                   COALESCE(SUM(duration_sec), 0) AS total_sec
+            FROM watch_history
+            WHERE ended_at >= :cutoff AND title != ''
+            GROUP BY title
+            ORDER BY plays DESC
+            LIMIT :limit
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $stmt->bindValue(':limit',  $limit,  SQLITE3_INTEGER);
+        $res = $stmt->execute();
+
+        $items = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $items[] = [
+                'title'      => $row['title'],
+                'media_type' => $row['media_type'],
+                'plays'      => (int)$row['plays'],
+                'users'      => (int)$row['users'],
+                'hours'      => round((int)$row['total_sec'] / 3600, 1),
+            ];
+        }
+        $stmt->close();
+
+        $this->json(['media' => $items]);
+    }
+
+    /**
+     * GET ?action=get_top_users&period=30d&limit=10
+     * Returns top users by play count and hours.
+     */
+    private function replyGetTopUsers(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $cutoff = $this->statsPeriodCutoff();
+        $limit  = min(50, max(1, (int)($_GET['limit'] ?? 10)));
+
+        $stmt = $db->prepare("
+            SELECT user,
+                   COUNT(*) AS plays,
+                   GROUP_CONCAT(DISTINCT server_type) AS servers,
+                   COALESCE(SUM(duration_sec), 0) AS total_sec
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+            GROUP BY user
+            ORDER BY plays DESC
+            LIMIT :limit
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $stmt->bindValue(':limit',  $limit,  SQLITE3_INTEGER);
+        $res = $stmt->execute();
+
+        $items = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $items[] = [
+                'user'    => $row['user'],
+                'plays'   => (int)$row['plays'],
+                'servers' => $row['servers'],
+                'hours'   => round((int)$row['total_sec'] / 3600, 1),
+            ];
+        }
+        $stmt->close();
+
+        $this->json(['users' => $items]);
+    }
+
+    /**
+     * GET ?action=get_history&period=30d&page=1&per_page=20&user=&server_type=&play_type=&media_type=&search=
+     * Returns paginated watch history with summary.
+     */
+    private function replyGetHistory(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $cutoff   = $this->statsPeriodCutoff();
+        $page     = max(1, (int)($_GET['page'] ?? 1));
+        $perPage  = min(100, max(5, (int)($_GET['per_page'] ?? 20)));
+        $offset   = ($page - 1) * $perPage;
+
+        // Optional filters (sanitized via prepared statements)
+        $filterUser   = trim((string)($_GET['user'] ?? ''));
+        $filterServer = trim((string)($_GET['server_type'] ?? ''));
+        $filterPlay   = trim((string)($_GET['play_type'] ?? ''));
+        $filterMedia  = trim((string)($_GET['media_type'] ?? ''));
+        $filterSearch = trim((string)($_GET['search'] ?? ''));
+
+        $where = "ended_at >= :cutoff";
+        $binds = [':cutoff' => [$cutoff, SQLITE3_INTEGER]];
+
+        if ($filterUser !== '') {
+            $where .= " AND user = :user";
+            $binds[':user'] = [$filterUser, SQLITE3_TEXT];
+        }
+        if ($filterServer !== '' && in_array($filterServer, self::VALID_TYPES, true)) {
+            $where .= " AND server_type = :st";
+            $binds[':st'] = [$filterServer, SQLITE3_TEXT];
+        }
+        if ($filterPlay !== '' && in_array($filterPlay, ['direct_play','direct_stream','transcode'], true)) {
+            $where .= " AND play_type = :pt";
+            $binds[':pt'] = [$filterPlay, SQLITE3_TEXT];
+        }
+        if ($filterMedia !== '' && in_array($filterMedia, ['movie','episode','track'], true)) {
+            $where .= " AND media_type = :mt";
+            $binds[':mt'] = [$filterMedia, SQLITE3_TEXT];
+        }
+        if ($filterSearch !== '') {
+            $safeSearch = str_replace(['%', '_', '\\'], ['\\%', '\\_', '\\\\'], $filterSearch);
+            $where .= " AND title LIKE :search ESCAPE '\\'";
+            $binds[':search'] = ['%' . $safeSearch . '%', SQLITE3_TEXT];
+        }
+
+        // Count + summary
+        $sumStmt = $db->prepare("
+            SELECT COUNT(*) AS cnt,
+                   COALESCE(SUM(duration_sec), 0) AS total_sec
+            FROM watch_history WHERE {$where}
+        ");
+        foreach ($binds as $k => [$v, $t]) $sumStmt->bindValue($k, $v, $t);
+        $sumRow = $sumStmt->execute()->fetchArray(SQLITE3_ASSOC);
+        $sumStmt->close();
+        $total    = (int)($sumRow['cnt'] ?? 0);
+        $totalSec = (int)($sumRow['total_sec'] ?? 0);
+        $avgSec   = $total > 0 ? (int)round($totalSec / $total) : 0;
+
+        // Remote count for summary
+        $remStmt = $db->prepare("
+            SELECT ip_address FROM watch_history WHERE {$where} AND ip_address != ''
+        ");
+        foreach ($binds as $k => [$v, $t]) $remStmt->bindValue($k, $v, $t);
+        $remRes = $remStmt->execute();
+        $ipCount = 0; $remoteCount = 0;
+        while ($rr = $remRes->fetchArray(SQLITE3_ASSOC)) {
+            $ipCount++;
+            if (!$this->isPrivateIp((string)$rr['ip_address'])) $remoteCount++;
+        }
+        $remStmt->close();
+        $remotePct = ($ipCount > 0) ? (int)round(($remoteCount / $ipCount) * 100) : 0;
+
+        // Distinct users (for user filter dropdown)
+        $usersStmt = $db->prepare("
+            SELECT DISTINCT user FROM watch_history WHERE ended_at >= :cutoff ORDER BY user ASC
+        ");
+        $usersStmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $usersRes = $usersStmt->execute();
+        $userList = [];
+        while ($ur = $usersRes->fetchArray(SQLITE3_ASSOC)) {
+            $userList[] = (string)$ur['user'];
+        }
+        $usersStmt->close();
+
+        // Rows
+        $stmt = $db->prepare("
+            SELECT user, title, media_type, server_name, server_type,
+                   play_type, ip_address, duration_sec, started_at, ended_at
+            FROM watch_history
+            WHERE {$where}
+            ORDER BY ended_at DESC
+            LIMIT :limit OFFSET :offset
+        ");
+        foreach ($binds as $k => [$v, $t]) $stmt->bindValue($k, $v, $t);
+        $stmt->bindValue(':limit',  $perPage, SQLITE3_INTEGER);
+        $stmt->bindValue(':offset', $offset,  SQLITE3_INTEGER);
+        $res = $stmt->execute();
+
+        $rows = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $ip = (string)$row['ip_address'];
+            $rows[] = [
+                'user'        => $row['user'],
+                'title'       => $row['title'],
+                'media_type'  => $row['media_type'],
+                'server_name' => $row['server_name'],
+                'server_type' => $row['server_type'],
+                'play_type'   => $row['play_type'],
+                'ip_address'  => $ip,
+                'is_local'    => ($ip !== '') ? $this->isPrivateIp($ip) : true,
+                'duration'    => $this->formatDurationHMS((int)$row['duration_sec']),
+                'duration_sec'=> (int)$row['duration_sec'],
+                'started_at'  => (int)$row['started_at'],
+                'ended_at'    => (int)$row['ended_at'],
+            ];
+        }
+        $stmt->close();
+
+        $this->json([
+            'rows'       => $rows,
+            'total'      => $total,
+            'page'       => $page,
+            'per_page'   => $perPage,
+            'pages'      => (int)ceil($total / $perPage),
+            'total_sec'  => $totalSec,
+            'avg_sec'    => $avgSec,
+            'remote_pct' => $remotePct,
+            'user_list'  => $userList,
+        ]);
+    }
+
+    private function formatDurationHMS(int $sec): string
+    {
+        if ($sec < 0) $sec = 0;
+        $h = intdiv($sec, 3600);
+        $m = intdiv($sec % 3600, 60);
+        $s = $sec % 60;
+        return sprintf('%d:%02d:%02d', $h, $m, $s);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // User stats endpoint
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * GET ?action=get_user_stats&period=30d
+     * Returns detailed per-user statistics.
+     */
+    private function replyGetUserStats(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $cutoff = $this->statsPeriodCutoff();
+
+        // Per-user aggregates
+        $stmt = $db->prepare("
+            SELECT user,
+                   COUNT(*) AS plays,
+                   COALESCE(SUM(duration_sec), 0) AS total_sec,
+                   GROUP_CONCAT(DISTINCT server_type) AS servers,
+                   MAX(ended_at) AS last_seen
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+            GROUP BY user
+            ORDER BY plays DESC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+
+        $users = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $userName = (string)$row['user'];
+
+            // Per-user media type breakdown
+            $mtStmt = $db->prepare("
+                SELECT media_type, COUNT(*) AS cnt
+                FROM watch_history
+                WHERE user = :user AND ended_at >= :cutoff
+                GROUP BY media_type
+            ");
+            $mtStmt->bindValue(':user', $userName, SQLITE3_TEXT);
+            $mtStmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+            $mtRes = $mtStmt->execute();
+            $mediaBreakdown = ['movie' => 0, 'episode' => 0, 'track' => 0];
+            while ($mt = $mtRes->fetchArray(SQLITE3_ASSOC)) {
+                $key = (string)($mt['media_type'] ?? '');
+                if (isset($mediaBreakdown[$key])) $mediaBreakdown[$key] = (int)$mt['cnt'];
+            }
+            $mtStmt->close();
+
+            // Per-user play type breakdown
+            $ptStmt = $db->prepare("
+                SELECT play_type, COUNT(*) AS cnt
+                FROM watch_history
+                WHERE user = :user AND ended_at >= :cutoff
+                GROUP BY play_type
+            ");
+            $ptStmt->bindValue(':user', $userName, SQLITE3_TEXT);
+            $ptStmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+            $ptRes = $ptStmt->execute();
+            $playBreakdown = ['direct_play' => 0, 'direct_stream' => 0, 'transcode' => 0];
+            while ($pt = $ptRes->fetchArray(SQLITE3_ASSOC)) {
+                $key = (string)($pt['play_type'] ?? '');
+                if (isset($playBreakdown[$key])) $playBreakdown[$key] = (int)$pt['cnt'];
+            }
+            $ptStmt->close();
+
+            // Last IP and device
+            $lastStmt = $db->prepare("
+                SELECT ip_address, device
+                FROM watch_history
+                WHERE user = :user AND ended_at >= :cutoff
+                ORDER BY ended_at DESC
+                LIMIT 1
+            ");
+            $lastStmt->bindValue(':user', $userName, SQLITE3_TEXT);
+            $lastStmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+            $lastRow = $lastStmt->execute()->fetchArray(SQLITE3_ASSOC);
+            $lastStmt->close();
+
+            $lastIp     = (string)($lastRow['ip_address'] ?? '');
+            $lastDevice = (string)($lastRow['device'] ?? '');
+            $isLocal    = ($lastIp !== '') ? $this->isPrivateIp($lastIp) : true;
+
+            // Check if currently active
+            $activeStmt = $db->prepare("
+                SELECT COUNT(*) AS cnt FROM active_sessions WHERE user = :user
+            ");
+            $activeStmt->bindValue(':user', $userName, SQLITE3_TEXT);
+            $isActive = ((int)($activeStmt->execute()->fetchArray(SQLITE3_ASSOC)['cnt'] ?? 0)) > 0;
+            $activeStmt->close();
+
+            $users[] = [
+                'user'           => $userName,
+                'plays'          => (int)$row['plays'],
+                'hours'          => round((int)$row['total_sec'] / 3600, 1),
+                'servers'        => (string)$row['servers'],
+                'last_seen'      => (int)$row['last_seen'],
+                'last_ip'        => $lastIp,
+                'last_device'    => $lastDevice,
+                'is_local'       => $isLocal,
+                'is_active'      => $isActive,
+                'media'          => $mediaBreakdown,
+                'play_types'     => $playBreakdown,
+            ];
+        }
+        $stmt->close();
+
+        // Summary
+        $totalUsers = count($users);
+        $totalPlays = 0;
+        $totalHours = 0;
+        $mostActive = '';
+        $maxPlays   = 0;
+        foreach ($users as $u) {
+            $totalPlays += $u['plays'];
+            $totalHours += $u['hours'];
+            if ($u['plays'] > $maxPlays) { $maxPlays = $u['plays']; $mostActive = $u['user']; }
+        }
+
+        $this->json([
+            'users'       => $users,
+            'total_users' => $totalUsers,
+            'most_active' => $mostActive,
+            'avg_plays'   => $totalUsers > 0 ? round($totalPlays / $totalUsers, 1) : 0,
+            'avg_hours'   => $totalUsers > 0 ? round($totalHours / $totalUsers, 1) : 0,
+        ]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Graph data endpoint
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * GET ?action=get_graph_data&period=30d
+     * Returns all data needed for the Graphs tab charts.
+     */
+    private function replyGetGraphData(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $cutoff = $this->statsPeriodCutoff();
+
+        // 1. Watch time per day per server (line chart)
+        $stmt = $db->prepare("
+            SELECT DATE(ended_at, 'unixepoch', 'localtime') AS day,
+                   server_type,
+                   COALESCE(SUM(duration_sec), 0) AS total_sec
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+            GROUP BY day, server_type
+            ORDER BY day ASC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $watchDays = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $d = (string)$row['day'];
+            if (!isset($watchDays[$d])) $watchDays[$d] = ['date' => $d, 'plex' => 0, 'jellyfin' => 0, 'emby' => 0];
+            $st = (string)($row['server_type'] ?? '');
+            if (isset($watchDays[$d][$st])) {
+                $watchDays[$d][$st] = round((int)$row['total_sec'] / 3600, 2);
+            }
+        }
+        $stmt->close();
+
+        // 2. Peak viewing hours (bar chart, 0-23)
+        $stmt = $db->prepare("
+            SELECT CAST(strftime('%H', ended_at, 'unixepoch', 'localtime') AS INTEGER) AS hour,
+                   COUNT(*) AS cnt
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+            GROUP BY hour
+            ORDER BY hour ASC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $peakHours = array_fill(0, 24, 0);
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $h = (int)($row['hour'] ?? 0);
+            if ($h >= 0 && $h < 24) $peakHours[$h] = (int)$row['cnt'];
+        }
+        $stmt->close();
+
+        // 3. Play type distribution (donut)
+        $stmt = $db->prepare("
+            SELECT play_type, COUNT(*) AS cnt
+            FROM watch_history WHERE ended_at >= :cutoff
+            GROUP BY play_type
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $playDist = ['direct_play' => 0, 'direct_stream' => 0, 'transcode' => 0];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $pt = (string)($row['play_type'] ?? '');
+            if (isset($playDist[$pt])) $playDist[$pt] = (int)$row['cnt'];
+        }
+        $stmt->close();
+
+        // 4. Media type distribution (donut)
+        $stmt = $db->prepare("
+            SELECT media_type, COUNT(*) AS cnt
+            FROM watch_history WHERE ended_at >= :cutoff
+            GROUP BY media_type
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $mediaDist = ['movie' => 0, 'episode' => 0, 'track' => 0];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $mt = (string)($row['media_type'] ?? '');
+            if (isset($mediaDist[$mt])) $mediaDist[$mt] = (int)$row['cnt'];
+        }
+        $stmt->close();
+
+        // 5. User activity - hours per user (horizontal bar)
+        $stmt = $db->prepare("
+            SELECT user, COALESCE(SUM(duration_sec), 0) AS total_sec
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+            GROUP BY user
+            ORDER BY total_sec DESC
+            LIMIT 10
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $userActivity = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $userActivity[] = [
+                'user'  => (string)$row['user'],
+                'hours' => round((int)$row['total_sec'] / 3600, 1),
+            ];
+        }
+        $stmt->close();
+
+        // 6. Local vs remote per day (stacked bar)
+        $stmt = $db->prepare("
+            SELECT DATE(ended_at, 'unixepoch', 'localtime') AS day,
+                   ip_address
+            FROM watch_history
+            WHERE ended_at >= :cutoff AND ip_address != ''
+            ORDER BY day ASC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $lrDays = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $d = (string)$row['day'];
+            if (!isset($lrDays[$d])) $lrDays[$d] = ['date' => $d, 'local' => 0, 'remote' => 0];
+            if ($this->isPrivateIp((string)$row['ip_address'])) {
+                $lrDays[$d]['local']++;
+            } else {
+                $lrDays[$d]['remote']++;
+            }
+        }
+        $stmt->close();
+
+        // 7. Bandwidth per day (line chart, sum of bandwidth_kbps * duration)
+        $stmt = $db->prepare("
+            SELECT DATE(ended_at, 'unixepoch', 'localtime') AS day,
+                   COALESCE(SUM(bandwidth_kbps), 0) AS total_kbps,
+                   COUNT(*) AS cnt
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+            GROUP BY day
+            ORDER BY day ASC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $bwDays = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $avgMbps = (int)$row['cnt'] > 0
+                ? round(((int)$row['total_kbps'] / (int)$row['cnt']) / 1000, 1)
+                : 0;
+            $bwDays[] = [
+                'date'     => (string)$row['day'],
+                'avg_mbps' => $avgMbps,
+            ];
+        }
+        $stmt->close();
+
+        // Fill date gaps for continuous timelines
+        $fillDates = function(int $cutoff, array $rawDays, array $template): array {
+            $days = [];
+            $start = new \DateTime("@{$cutoff}");
+            $start->setTimezone(new \DateTimeZone(date_default_timezone_get()));
+            $end = new \DateTime('now', new \DateTimeZone(date_default_timezone_get()));
+            $period = new \DatePeriod($start, new \DateInterval('P1D'), $end->modify('+1 day'));
+            foreach ($period as $dt) {
+                $d = $dt->format('Y-m-d');
+                $days[] = $rawDays[$d] ?? array_merge(['date' => $d], $template);
+            }
+            return $days;
+        };
+
+        // Convert bwDays array to keyed
+        $bwKeyed = [];
+        foreach ($bwDays as $b) $bwKeyed[$b['date']] = $b;
+
+        $this->json([
+            'watch_time_daily'   => $fillDates($cutoff, $watchDays, ['plex' => 0, 'jellyfin' => 0, 'emby' => 0]),
+            'peak_hours'         => $peakHours,
+            'play_type_dist'     => $playDist,
+            'media_type_dist'    => $mediaDist,
+            'user_activity'      => $userActivity,
+            'local_remote_daily' => $fillDates($cutoff, $lrDays, ['local' => 0, 'remote' => 0]),
+            'bandwidth_daily'    => $fillDates($cutoff, $bwKeyed, ['avg_mbps' => 0]),
+        ]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Library endpoints
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * GET ?action=get_alerts&period=30d
+     * Returns alerts: buffering warnings, inactive users, transcode ratio.
+     */
+    private function replyGetAlerts(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $periodMap = ['7d' => 7, '30d' => 30, '90d' => 90];
+        $days = $periodMap[$_GET['period'] ?? '30d'] ?? 30;
+        $cutoff = time() - ($days * 86400);
+
+        // 1. Buffering warnings: sessions under 120 seconds, grouped by title
+        $bufferStmt = $db->prepare("
+            SELECT title, user, server_type, COUNT(*) AS cnt,
+                   ROUND(AVG(duration_sec)) AS avg_dur
+            FROM watch_history
+            WHERE ended_at >= :cutoff AND duration_sec > 0 AND duration_sec < 120
+            GROUP BY title, user
+            HAVING cnt >= 2
+            ORDER BY cnt DESC
+            LIMIT 20
+        ");
+        $bufferStmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $bufRes = $bufferStmt->execute();
+        $buffering = [];
+        while ($row = $bufRes->fetchArray(SQLITE3_ASSOC)) {
+            $buffering[] = $row;
+        }
+
+        // 2. Inactive users: users who have history but no activity in last N days
+        $inactiveStmt = $db->prepare("
+            SELECT user, MAX(ended_at) AS last_seen,
+                   COUNT(*) AS total_plays
+            FROM watch_history
+            GROUP BY user
+            HAVING last_seen < :cutoff
+            ORDER BY last_seen ASC
+            LIMIT 20
+        ");
+        $inactiveStmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $inRes = $inactiveStmt->execute();
+        $inactive = [];
+        while ($row = $inRes->fetchArray(SQLITE3_ASSOC)) {
+            $inactive[] = $row;
+        }
+
+        // 3. Transcode ratio
+        $totalStmt = $db->prepare("
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN play_type = 'transcode' THEN 1 ELSE 0 END) AS tc_count
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+        ");
+        $totalStmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $tcRow = $totalStmt->execute()->fetchArray(SQLITE3_ASSOC);
+        $total = (int)($tcRow['total'] ?? 0);
+        $tcCount = (int)($tcRow['tc_count'] ?? 0);
+        $tcPct = $total > 0 ? round($tcCount / $total * 100) : 0;
+
+        // Top transcode users
+        $tcUsersStmt = $db->prepare("
+            SELECT user, COUNT(*) AS tc_plays,
+                   ROUND(COUNT(*) * 100.0 / NULLIF((SELECT COUNT(*) FROM watch_history WHERE ended_at >= :cutoff2 AND user = wh.user), 0)) AS tc_pct
+            FROM watch_history wh
+            WHERE ended_at >= :cutoff AND play_type = 'transcode'
+            GROUP BY user
+            ORDER BY tc_plays DESC
+            LIMIT 10
+        ");
+        $tcUsersStmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $tcUsersStmt->bindValue(':cutoff2', $cutoff, SQLITE3_INTEGER);
+        $tcUsersRes = $tcUsersStmt->execute();
+        $tcUsers = [];
+        while ($row = $tcUsersRes->fetchArray(SQLITE3_ASSOC)) {
+            $tcUsers[] = $row;
+        }
+
+        // Severity levels
+        $tcSeverity = 'ok';
+        if ($tcPct >= 70) $tcSeverity = 'critical';
+        elseif ($tcPct >= 40) $tcSeverity = 'warning';
+
+        $alertCount = count($buffering) + count($inactive) + ($tcSeverity !== 'ok' ? 1 : 0);
+
+        $this->json([
+            'alert_count' => $alertCount,
+            'buffering'   => $buffering,
+            'inactive'    => $inactive,
+            'transcode'   => [
+                'total'    => $total,
+                'tc_count' => $tcCount,
+                'tc_pct'   => $tcPct,
+                'severity' => $tcSeverity,
+                'users'    => $tcUsers,
+            ],
+        ]);
+    }
+
+    /**
+     * GET ?action=get_libraries
+     * Returns cached library data per server. Auto-syncs if stale.
+     */
+    private function replyGetLibraries(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $cfg     = $this->loadCfg();
+        $servers = $this->getEnabledServers($cfg);
+
+        // Check cache freshness, sync if stale
+        $now     = time();
+        $lastSync = (int)$db->querySingle("SELECT MAX(synced_at) FROM library_cache");
+        if (($now - $lastSync) > self::LIBRARY_CACHE_TTL) {
+            $this->syncLibraryData($db, $servers);
+        }
+
+        // Build response from cache
+        $result = [];
+        foreach ($servers as $srv) {
+            $srvData = [
+                'index'     => $srv['index'],
+                'name'      => $srv['name'],
+                'type'      => $srv['type'],
+                'online'    => true,
+                'synced_at' => 0,
+                'libraries' => [],
+            ];
+
+            $stmt = $db->prepare("
+                SELECT library_name, library_type, total_items, episode_count, synced_at
+                FROM library_cache
+                WHERE server_index = :idx
+                ORDER BY library_type ASC, library_name ASC
+            ");
+            $stmt->bindValue(':idx', $srv['index'], SQLITE3_INTEGER);
+            $res = $stmt->execute();
+            while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+                $srvData['libraries'][] = [
+                    'name'          => $row['library_name'],
+                    'type'          => $row['library_type'],
+                    'total_items'   => (int)$row['total_items'],
+                    'episode_count' => (int)$row['episode_count'],
+                ];
+                $srvData['synced_at'] = max($srvData['synced_at'], (int)$row['synced_at']);
+            }
+            $stmt->close();
+
+            // Watched counts from watch_history (distinct titles per server+media_type)
+            // Step 1: get total watched per media_type for this server
+            $watchedByType = [];
+            $typeToLibs = [];   // group library indices by type
+            $typeTotals = [];   // total items per type across all libs
+            foreach ($srvData['libraries'] as $idx => &$lib) {
+                $lib['watched'] = 0;
+                $t = $lib['type'];
+                if (!isset($typeToLibs[$t])) { $typeToLibs[$t] = []; $typeTotals[$t] = 0; }
+                $typeToLibs[$t][] = $idx;
+                $typeTotals[$t] += ($lib['total_items'] ?? 0);
+            }
+            unset($lib);
+
+            foreach ($typeToLibs as $libType => $indices) {
+                $mediaTypes = $this->libraryTypeToMediaTypes($libType);
+                if (empty($mediaTypes)) continue;
+                $placeholders = implode(',', array_fill(0, count($mediaTypes), '?'));
+                $q = $db->prepare("
+                    SELECT COUNT(DISTINCT title) AS cnt
+                    FROM watch_history
+                    WHERE server_name = ? AND media_type IN ({$placeholders})
+                ");
+                $q->bindValue(1, $srv['name'], SQLITE3_TEXT);
+                foreach ($mediaTypes as $k => $mt) $q->bindValue($k + 2, $mt, SQLITE3_TEXT);
+                $totalWatched = (int)($q->execute()->fetchArray(SQLITE3_ASSOC)['cnt'] ?? 0);
+                $q->close();
+
+                // Step 2: distribute proportionally across libraries of this type
+                $totalForType = $typeTotals[$libType];
+                if ($totalForType > 0 && $totalWatched > 0) {
+                    foreach ($indices as $idx) {
+                        $libItems = $srvData['libraries'][$idx]['total_items'] ?? 0;
+                        if ($libItems > 0) {
+                            $share = round($totalWatched * ($libItems / $totalForType));
+                            $srvData['libraries'][$idx]['watched'] = min((int)$share, $libItems);
+                        }
+                    }
+                }
+            }
+
+            $result[] = $srvData;
+        }
+
+        // Summary
+        $totalItems = 0;
+        $totalLibs  = 0;
+        foreach ($result as $s) {
+            foreach ($s['libraries'] as $l) {
+                $totalItems += $l['total_items'];
+                $totalLibs++;
+            }
+        }
+
+        $this->json([
+            'servers'      => $result,
+            'total_items'  => $totalItems,
+            'total_libs'   => $totalLibs,
+            'server_count' => count($servers),
+        ]);
+    }
+
+    /**
+     * GET ?action=get_recently_added&limit=10
+     * Returns recently added items from cache.
+     */
+    private function replyGetRecentlyAdded(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $limit = min(50, max(1, (int)($_GET['limit'] ?? 10)));
+
+        $stmt = $db->prepare("
+            SELECT title, media_type, server_name, server_type, library_name, added_at,
+                   COALESCE(type_label, '-') AS type_label
+            FROM recently_added
+            ORDER BY added_at DESC
+            LIMIT :limit
+        ");
+        $stmt->bindValue(':limit', $limit, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+
+        $items = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            // Check if watched (exists in watch_history)
+            $wStmt = $db->prepare("
+                SELECT COUNT(*) AS cnt FROM watch_history
+                WHERE title = :title AND server_name = :sn
+            ");
+            $wStmt->bindValue(':title', $row['title'], SQLITE3_TEXT);
+            $wStmt->bindValue(':sn', $row['server_name'], SQLITE3_TEXT);
+            $watched = ((int)($wStmt->execute()->fetchArray(SQLITE3_ASSOC)['cnt'] ?? 0)) > 0;
+            $wStmt->close();
+
+            $items[] = [
+                'title'        => $row['title'],
+                'media_type'   => $row['media_type'],
+                'type_label'   => $row['type_label'] ?? '-',
+                'server_name'  => $row['server_name'],
+                'server_type'  => $row['server_type'],
+                'library_name' => $row['library_name'],
+                'added_at'     => (int)$row['added_at'],
+                'watched'      => $watched,
+            ];
+        }
+        $stmt->close();
+
+        $this->json(['items' => $items]);
+    }
+
+    /**
+     * GET ?action=sync_libraries
+     * Force a fresh sync of all library data.
+     */
+    private function replySyncLibraries(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $cfg     = $this->loadCfg();
+        $servers = $this->getEnabledServers($cfg);
+        $synced  = $this->syncLibraryData($db, $servers);
+
+        $this->json(['ok' => true, 'synced_servers' => $synced]);
+    }
+
+    // ── Library sync engine ──────────────────────────────────────────────
+
+    /**
+     * Fetch library data from all servers and store in cache.
+     * Returns number of successfully synced servers.
+     */
+    private function syncLibraryData(\SQLite3 $db, array $servers): int
+    {
+        $now = time();
+        $synced = 0;
+
+        foreach ($servers as $srv) {
+            try {
+                $libraries    = $this->fetchServerLibraries($srv);
+                $recentItems  = $this->fetchServerRecentlyAdded($srv);
+            } catch (\Throwable $e) {
+                continue; // Server offline or error, keep stale cache
+            }
+
+            if ($libraries === null) continue;
+
+            $db->exec('BEGIN');
+
+            // Clear old cache for this server
+            $delLib = $db->prepare("DELETE FROM library_cache WHERE server_index = :idx");
+            $delLib->bindValue(':idx', $srv['index'], SQLITE3_INTEGER);
+            $delLib->execute();
+            $delLib->close();
+
+            $delRecent = $db->prepare("DELETE FROM recently_added WHERE server_index = :idx");
+            $delRecent->bindValue(':idx', $srv['index'], SQLITE3_INTEGER);
+            $delRecent->execute();
+            $delRecent->close();
+
+            // Insert libraries
+            $insLib = $db->prepare("
+                INSERT INTO library_cache
+                    (server_index, server_name, server_type, library_id, library_name,
+                     library_type, total_items, episode_count, synced_at)
+                VALUES (:idx, :sn, :st, :lid, :ln, :lt, :ti, :ec, :now)
+            ");
+            foreach ($libraries as $lib) {
+                $insLib->bindValue(':idx',  $srv['index'],                          SQLITE3_INTEGER);
+                $insLib->bindValue(':sn',   $this->sanitizeStr($srv['name']),        SQLITE3_TEXT);
+                $insLib->bindValue(':st',   $this->sanitizeStr($srv['type']),        SQLITE3_TEXT);
+                $insLib->bindValue(':lid',  $this->sanitizeStr($lib['id'] ?? ''),    SQLITE3_TEXT);
+                $insLib->bindValue(':ln',   $this->sanitizeStr($lib['name'] ?? ''),  SQLITE3_TEXT);
+                $insLib->bindValue(':lt',   $this->sanitizeStr($lib['type'] ?? ''),  SQLITE3_TEXT);
+                $insLib->bindValue(':ti',   (int)($lib['total_items'] ?? 0),         SQLITE3_INTEGER);
+                $insLib->bindValue(':ec',   (int)($lib['episode_count'] ?? 0),       SQLITE3_INTEGER);
+                $insLib->bindValue(':now',  $now,                                    SQLITE3_INTEGER);
+                $insLib->execute();
+                $insLib->reset();
+            }
+            $insLib->close();
+
+            // Insert recently added
+            if (is_array($recentItems)) {
+                $insRecent = $db->prepare("
+                    INSERT INTO recently_added
+                        (server_index, server_name, server_type, title, media_type,
+                         library_name, type_label, added_at, synced_at)
+                    VALUES (:idx, :sn, :st, :title, :mt, :ln, :tl, :at, :now)
+                ");
+                foreach ($recentItems as $item) {
+                    $insRecent->bindValue(':idx',   $srv['index'],                              SQLITE3_INTEGER);
+                    $insRecent->bindValue(':sn',    $this->sanitizeStr($srv['name']),            SQLITE3_TEXT);
+                    $insRecent->bindValue(':st',    $this->sanitizeStr($srv['type']),            SQLITE3_TEXT);
+                    $insRecent->bindValue(':title', $this->sanitizeStr($item['title'] ?? ''),    SQLITE3_TEXT);
+                    $insRecent->bindValue(':mt',    $this->sanitizeStr($item['media_type'] ?? ''), SQLITE3_TEXT);
+                    $insRecent->bindValue(':ln',    $this->sanitizeStr($item['library'] ?? ''),  SQLITE3_TEXT);
+                    $insRecent->bindValue(':tl',    $this->sanitizeStr($item['type_label'] ?? '-'), SQLITE3_TEXT);
+                    $insRecent->bindValue(':at',    (int)($item['added_at'] ?? 0),               SQLITE3_INTEGER);
+                    $insRecent->bindValue(':now',   $now,                                        SQLITE3_INTEGER);
+                    $insRecent->execute();
+                    $insRecent->reset();
+                }
+                $insRecent->close();
+            }
+
+            $db->exec('COMMIT');
+            $synced++;
+        }
+
+        return $synced;
+    }
+
+    /**
+     * Map library_type to media_type values used in watch_history.
+     */
+    private function libraryTypeToMediaTypes(string $libType): array
+    {
+        return match($libType) {
+            'movie'  => ['movie'],
+            'show'   => ['episode'],
+            'artist', 'music' => ['track'],
+            default  => [],
+        };
+    }
+
+    // ── Per-server library fetchers ──────────────────────────────────────
+
+    private function fetchServerLibraries(array $srv): ?array
+    {
+        return match($srv['type']) {
+            'plex'     => $this->fetchPlexLibraries($srv),
+            'jellyfin' => $this->fetchJfLibraries($srv),
+            'emby'     => $this->fetchJfLibraries($srv), // same API
+            default    => null,
+        };
+    }
+
+    private function fetchServerRecentlyAdded(array $srv): ?array
+    {
+        return match($srv['type']) {
+            'plex'     => $this->fetchPlexRecentlyAdded($srv),
+            'jellyfin' => $this->fetchJfRecentlyAdded($srv),
+            'emby'     => $this->fetchJfRecentlyAdded($srv),
+            default    => null,
+        };
+    }
+
+    // ── Plex library fetch ───────────────────────────────────────────────
+
+    private function fetchPlexLibraries(array $srv): ?array
+    {
+        $url = $srv['url'] . '/library/sections';
+        [$body, $code, $err] = $this->httpGet($url, [
+            'X-Plex-Token' => $srv['token'],
+            'Accept'        => 'application/json',
+        ]);
+        if ($body === null || $code < 200 || $code >= 300) return null;
+
+        $data = @json_decode($body, true);
+        $dirs = $data['MediaContainer']['Directory'] ?? [];
+        if (!is_array($dirs)) return null;
+
+        $libraries = [];
+        foreach ($dirs as $dir) {
+            $secId   = (string)($dir['key'] ?? '');
+            $secType = (string)($dir['type'] ?? '');
+            $secName = (string)($dir['title'] ?? '');
+
+            if ($secId === '') continue;
+            // Validate section ID (numeric only for Plex)
+            if (!ctype_digit($secId)) continue;
+
+            $libType = match($secType) {
+                'movie'  => 'movie',
+                'show'   => 'show',
+                'artist' => 'music',
+                'photo'  => 'photo',
+                default  => $secType,
+            };
+
+            // Fetch count (lightweight, no item data)
+            $countUrl = $srv['url'] . '/library/sections/' . $secId . '/all?X-Plex-Container-Size=0&X-Plex-Container-Start=0';
+            [$cBody, $cCode] = $this->httpGet($countUrl, [
+                'X-Plex-Token' => $srv['token'],
+                'Accept'        => 'application/json',
+            ]);
+            $totalItems = 0;
+            $episodeCount = 0;
+            if ($cBody !== null && $cCode >= 200 && $cCode < 300) {
+                $cData = @json_decode($cBody, true);
+                $totalItems = (int)($cData['MediaContainer']['totalSize'] ?? 0);
+            }
+
+            // For TV shows, also get episode count
+            if ($secType === 'show' && $totalItems > 0) {
+                $epUrl = $srv['url'] . '/library/sections/' . $secId . '/all?type=4&X-Plex-Container-Size=0&X-Plex-Container-Start=0';
+                [$eBody, $eCode] = $this->httpGet($epUrl, [
+                    'X-Plex-Token' => $srv['token'],
+                    'Accept'        => 'application/json',
+                ]);
+                if ($eBody !== null && $eCode >= 200 && $eCode < 300) {
+                    $eData = @json_decode($eBody, true);
+                    $episodeCount = (int)($eData['MediaContainer']['totalSize'] ?? 0);
+                }
+            }
+
+            $libraries[] = [
+                'id'            => $secId,
+                'name'          => $secName,
+                'type'          => $libType,
+                'total_items'   => $totalItems,
+                'episode_count' => $episodeCount,
+            ];
+        }
+
+        return $libraries;
+    }
+
+    private function fetchPlexRecentlyAdded(array $srv): ?array
+    {
+        $url = $srv['url'] . '/library/recentlyAdded?X-Plex-Container-Size=10&X-Plex-Container-Start=0';
+        [$body, $code, $err] = $this->httpGet($url, [
+            'X-Plex-Token' => $srv['token'],
+            'Accept'        => 'application/json',
+        ]);
+        if ($body === null || $code < 200 || $code >= 300) return null;
+
+        $data  = @json_decode($body, true);
+        $items = $data['MediaContainer']['Metadata'] ?? [];
+        if (!is_array($items)) return null;
+
+        $result = [];
+        foreach ($items as $item) {
+            $type = (string)($item['type'] ?? '');
+            $mediaType = match($type) {
+                'movie'   => 'movie',
+                'episode' => 'episode',
+                'season'  => 'episode',
+                'track'   => 'track',
+                'album'   => 'album',
+                default   => $type,
+            };
+
+            $typeLabel = '-';
+            if ($type === 'season') {
+                $title = (string)($item['parentTitle'] ?? $item['title'] ?? '');
+                $sNum = (int)($item['index'] ?? 0);
+                $leafCount = (int)($item['leafCount'] ?? 0);
+                $typeLabel = $sNum > 0
+                    ? 'S' . str_pad((string)$sNum, 2, '0', STR_PAD_LEFT)
+                      . ($leafCount > 0 ? ' (' . $leafCount . 'ep)' : '')
+                    : '-';
+            } elseif ($type === 'episode') {
+                $title = (string)($item['grandparentTitle'] ?? $item['title'] ?? '');
+                $sNum = (int)($item['parentIndex'] ?? 0);
+                $eNum = (int)($item['index'] ?? 0);
+                $typeLabel = $sNum > 0 || $eNum > 0
+                    ? 'S' . str_pad((string)$sNum, 2, '0', STR_PAD_LEFT) . 'E' . str_pad((string)$eNum, 2, '0', STR_PAD_LEFT)
+                    : '-';
+            } elseif ($type === 'track') {
+                $title = (string)($item['grandparentTitle'] ?? $item['title'] ?? '');
+            } else {
+                $title = (string)($item['title'] ?? '');
+            }
+
+            $result[] = [
+                'title'      => $title,
+                'media_type' => $mediaType,
+                'type_label' => $typeLabel,
+                'library'    => (string)($item['librarySectionTitle'] ?? ''),
+                'added_at'   => (int)($item['addedAt'] ?? 0),
+            ];
+        }
+
+        return $result;
+    }
+
+    // ── Jellyfin/Emby library fetch ──────────────────────────────────────
+
+    private function fetchJfLibraries(array $srv): ?array
+    {
+        $url = $srv['url'] . '/Library/VirtualFolders';
+        [$body, $code, $err] = $this->httpGet($url, [
+            'X-Emby-Token'         => $srv['token'],
+            'X-MediaBrowser-Token' => $srv['token'],
+            'Accept'                => 'application/json',
+        ]);
+        if ($body === null || $code < 200 || $code >= 300) return null;
+
+        $folders = @json_decode($body, true);
+        if (!is_array($folders)) return null;
+
+        $libraries = [];
+        foreach ($folders as $folder) {
+            $libId   = (string)($folder['ItemId'] ?? '');
+            $libName = (string)($folder['Name'] ?? '');
+            $collType = strtolower((string)($folder['CollectionType'] ?? ''));
+
+            if ($libId === '' || $libName === '') continue;
+            // Validate ID: alphanumeric + hyphens only
+            if (!preg_match('/^[a-zA-Z0-9\-]+$/', $libId)) continue;
+
+            $libType = match($collType) {
+                'movies'      => 'movie',
+                'tvshows'     => 'show',
+                'music'       => 'music',
+                'photos'      => 'photo',
+                'homevideos'  => 'photo',
+                default       => $collType,
+            };
+
+            // Fetch item count
+            $countUrl = $srv['url'] . '/Items?ParentId=' . rawurlencode($libId)
+                      . '&Recursive=true&Limit=0&Fields=BasicSyncInfo';
+            [$cBody, $cCode] = $this->httpGet($countUrl, [
+                'X-Emby-Token'         => $srv['token'],
+                'X-MediaBrowser-Token' => $srv['token'],
+                'Accept'                => 'application/json',
+            ]);
+            $totalItems = 0;
+            $episodeCount = 0;
+            if ($cBody !== null && $cCode >= 200 && $cCode < 300) {
+                $cData = @json_decode($cBody, true);
+                $totalItems = (int)($cData['TotalRecordCount'] ?? 0);
+            }
+
+            // For TV shows, get episode count separately
+            if ($libType === 'show' && $totalItems > 0) {
+                $epUrl = $srv['url'] . '/Items?ParentId=' . rawurlencode($libId)
+                       . '&Recursive=true&IncludeItemTypes=Episode&Limit=0';
+                [$eBody, $eCode] = $this->httpGet($epUrl, [
+                    'X-Emby-Token'         => $srv['token'],
+                    'X-MediaBrowser-Token' => $srv['token'],
+                    'Accept'                => 'application/json',
+                ]);
+                if ($eBody !== null && $eCode >= 200 && $eCode < 300) {
+                    $eData = @json_decode($eBody, true);
+                    $episodeCount = (int)($eData['TotalRecordCount'] ?? 0);
+                }
+            }
+
+            $libraries[] = [
+                'id'            => $libId,
+                'name'          => $libName,
+                'type'          => $libType,
+                'total_items'   => $totalItems,
+                'episode_count' => $episodeCount,
+            ];
+        }
+
+        return $libraries;
+    }
+
+    private function fetchJfRecentlyAdded(array $srv): ?array
+    {
+        $url = $srv['url'] . '/Items?SortBy=DateCreated&SortOrder=Descending&Limit=10'
+             . '&Recursive=true&IncludeItemTypes=Movie,Episode,Season,Audio,MusicAlbum'
+             . '&Fields=DateCreated';
+        [$body, $code, $err] = $this->httpGet($url, [
+            'X-Emby-Token'         => $srv['token'],
+            'X-MediaBrowser-Token' => $srv['token'],
+            'Accept'                => 'application/json',
+        ]);
+        if ($body === null || $code < 200 || $code >= 300) return null;
+
+        $data  = @json_decode($body, true);
+        $items = $data['Items'] ?? [];
+        if (!is_array($items)) return null;
+
+        $result = [];
+        foreach ($items as $item) {
+            $type = (string)($item['Type'] ?? '');
+            $mediaType = match($type) {
+                'Movie'      => 'movie',
+                'Episode'    => 'episode',
+                'Season'     => 'episode',
+                'Audio'      => 'track',
+                'MusicAlbum' => 'album',
+                default      => strtolower($type),
+            };
+
+            $typeLabel = '-';
+            if ($type === 'Season') {
+                $title = (string)($item['SeriesName'] ?? $item['Name'] ?? '');
+                $sNum = (int)($item['IndexNumber'] ?? 0);
+                $typeLabel = $sNum > 0
+                    ? 'S' . str_pad((string)$sNum, 2, '0', STR_PAD_LEFT)
+                    : '-';
+            } elseif ($type === 'Episode') {
+                $title = (string)($item['SeriesName'] ?? $item['Name'] ?? '');
+                $sNum = (int)($item['ParentIndexNumber'] ?? 0);
+                $eNum = (int)($item['IndexNumber'] ?? 0);
+                $typeLabel = $sNum > 0 || $eNum > 0
+                    ? 'S' . str_pad((string)$sNum, 2, '0', STR_PAD_LEFT) . 'E' . str_pad((string)$eNum, 2, '0', STR_PAD_LEFT)
+                    : '-';
+            } elseif ($type === 'Audio') {
+                $title = (string)($item['AlbumArtist'] ?? $item['Name'] ?? '');
+            } else {
+                $title = (string)($item['Name'] ?? '');
+            }
+
+            $addedAt = 0;
+            $dateStr = (string)($item['DateCreated'] ?? '');
+            if ($dateStr !== '') {
+                $ts = @strtotime($dateStr);
+                if ($ts !== false) $addedAt = $ts;
+            }
+
+            $result[] = [
+                'title'      => $title,
+                'media_type' => $mediaType,
+                'type_label' => $typeLabel,
+                'library'    => (string)($item['ParentId'] ?? ''),
+                'added_at'   => $addedAt,
+            ];
+        }
+
+        return $result;
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1211,6 +3033,128 @@ final class StreamViewerEndpoint
             ];
         }
         return $servers;
+    }
+
+    // ── Docker container resource stats ────────────────────────────────────
+
+    private function getDockerStats(array $servers): array
+    {
+        if (!file_exists(self::DOCKER_SOCKET)) return [];
+
+        // 1. List running containers
+        $ch = curl_init('http://localhost/containers/json');
+        curl_setopt_array($ch, [
+            CURLOPT_UNIX_SOCKET_PATH => self::DOCKER_SOCKET,
+            CURLOPT_RETURNTRANSFER   => true,
+            CURLOPT_TIMEOUT          => 2,
+            CURLOPT_CONNECTTIMEOUT   => 1,
+        ]);
+        $body = curl_exec($ch);
+        curl_close($ch);
+        $containers = @json_decode($body ?: '', true);
+        if (!is_array($containers)) return [];
+
+        // 2. Match containers to servers by port
+        // 2. Match containers to servers by port OR by name/image keywords
+        $matched = [];
+        $typeKeywords = [
+            'plex'     => ['plex'],
+            'jellyfin' => ['jellyfin'],
+            'emby'     => ['emby'],
+        ];
+
+        foreach ($servers as $srv) {
+            $srvType = strtolower($srv['type'] ?? '');
+            $port = (int)(parse_url($srv['url'] ?? '', PHP_URL_PORT) ?: 0);
+            $portMatched = false;
+
+            // Strategy 1: Match by port (works for bridge networking)
+            if ($port > 0) {
+                foreach ($containers as $c) {
+                    foreach ($c['Ports'] ?? [] as $p) {
+                        if ((int)($p['PrivatePort'] ?? 0) === $port || (int)($p['PublicPort'] ?? 0) === $port) {
+                            $cId   = substr($c['Id'] ?? '', 0, 12);
+                            $cName = ltrim(($c['Names'][0] ?? ''), '/');
+                            if ($cId !== '' && !isset($matched[$cId])) {
+                                $matched[$cId] = [
+                                    'name'        => $cName,
+                                    'server_name' => $srv['name'],
+                                    'server_type' => $srvType,
+                                ];
+                            }
+                            $portMatched = true;
+                            break 2;
+                        }
+                    }
+                }
+            }
+
+            // Strategy 2: Match by container name or image (fallback for host/macvlan networking)
+            if (!$portMatched && isset($typeKeywords[$srvType])) {
+                foreach ($containers as $c) {
+                    $cId = substr($c['Id'] ?? '', 0, 12);
+                    if ($cId === '' || isset($matched[$cId])) continue;
+                    $cName  = strtolower(ltrim(($c['Names'][0] ?? ''), '/'));
+                    $cImage = strtolower($c['Image'] ?? '');
+                    foreach ($typeKeywords[$srvType] as $kw) {
+                        if (strpos($cName, $kw) !== false || strpos($cImage, $kw) !== false) {
+                            $matched[$cId] = [
+                                'name'        => ltrim(($c['Names'][0] ?? ''), '/'),
+                                'server_name' => $srv['name'],
+                                'server_type' => $srvType,
+                            ];
+                            break 2;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (empty($matched)) return [];
+
+        // 3. Get stats for each matched container (one-shot, no stream)
+        $results = [];
+        foreach ($matched as $cId => $info) {
+            if (!preg_match('/^[a-f0-9]+$/i', $cId)) continue;
+            $ch = curl_init('http://localhost/containers/' . $cId . '/stats?stream=false');
+            curl_setopt_array($ch, [
+                CURLOPT_UNIX_SOCKET_PATH => self::DOCKER_SOCKET,
+                CURLOPT_RETURNTRANSFER   => true,
+                CURLOPT_TIMEOUT          => 3,
+                CURLOPT_CONNECTTIMEOUT   => 1,
+            ]);
+            $sBody = curl_exec($ch);
+            curl_close($ch);
+            $st = @json_decode($sBody ?: '', true);
+            if (!is_array($st)) continue;
+
+            // CPU %
+            $cpuDelta = ((int)($st['cpu_stats']['cpu_usage']['total_usage'] ?? 0))
+                      - ((int)($st['precpu_stats']['cpu_usage']['total_usage'] ?? 0));
+            $sysDelta = ((int)($st['cpu_stats']['system_cpu_usage'] ?? 0))
+                      - ((int)($st['precpu_stats']['system_cpu_usage'] ?? 0));
+            $numCpus  = count($st['cpu_stats']['cpu_usage']['percpu_usage'] ?? []);
+            if ($numCpus === 0) $numCpus = (int)($st['cpu_stats']['online_cpus'] ?? 1);
+            $cpuPct   = ($sysDelta > 0)
+                ? round(($cpuDelta / $sysDelta) * 100, 1)
+                : 0.0;
+
+            // RAM
+            $memUsage = (int)($st['memory_stats']['usage'] ?? 0);
+            $memCache = (int)($st['memory_stats']['stats']['cache'] ?? $st['memory_stats']['stats']['inactive_file'] ?? 0);
+            $memUsed  = max(0, $memUsage - $memCache);
+            $memLimit = (int)($st['memory_stats']['limit'] ?? 0);
+
+            $results[] = [
+                'container'   => $info['name'],
+                'server_name' => $info['server_name'],
+                'server_type' => $info['server_type'],
+                'cpu_pct'     => $cpuPct,
+                'mem_used'    => $memUsed,
+                'mem_limit'   => $memLimit,
+            ];
+        }
+        return $results;
     }
 
     // ── Docker socket discovery (Jellyfin/Emby local containers) ────────

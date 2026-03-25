@@ -137,19 +137,20 @@ WIDGET_SHOW_IP="1"
 WIDGET_SHOW_PROGRESS="1"
 WIDGET_SHOW_QUALITY="1"
 WIDGET_SHOW_TRANSCODE="1"
-TOOL_REFRESH_ENABLED="1"
-TOOL_REFRESH_INTERVAL="30"
-TOOL_MAX_STREAMS="0"
-TOOL_SHOW_DEVICE="1"
-TOOL_SHOW_IP="1"
-TOOL_SHOW_PROGRESS="1"
-TOOL_SHOW_QUALITY="1"
-TOOL_SHOW_TRANSCODE="1"
+WIDGET_SHOW_DETAILS="1"
+WIDGET_DETAILS_OPEN="0"
+WIDGET_SHOW_DOCKER="1"
 TOOL_ALLOW_KILL="0"
+VERIFY_SSL="0"
+STATS_ENABLED="0"
+STATS_DB_PATH="/mnt/user/appdata/Stream-Viewer"
+STATS_RETENTION_DAYS="90"
+STATS_ANONYMIZE_IP="0"
+LIB_SECTIONS_OPEN="0"
 CFGEOF
 
 # ── Shared PLG sections ───────────────────────────────────────────────────────
-PLG_DESCRIPTION="StreamViewer is a lightweight Unraid dashboard widget that gives you a real-time overview of active media streams across your Plex, Jellyfin, and Emby servers — all in one place."
+PLG_DESCRIPTION="A real-time media stream monitor and statistics tracker for Plex, Jellyfin and Emby servers on Unraid."
 
 PLG_INSTALL_SCRIPT='# Fix ownership and permissions
 chown -R root:root /usr/local/emhttp/plugins/&name;

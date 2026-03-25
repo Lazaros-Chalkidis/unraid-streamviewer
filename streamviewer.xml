@@ -6,15 +6,15 @@
   <Beta>false</Beta>
   <Category>Tools:Utilities MediaApp:Other</Category>
   <Name>Stream Viewer</Name>
-  <Description><![CDATA[A modern and lightweight, real-time media stream monitor for Unraid. View active streams from your Plex, Jellyfin, and Emby servers directly from the dashboard.]]></Description>
+  <Description><![CDATA[A real-time media stream monitor and statistics tracker. View active streams from your Plex, Jellyfin and Emby servers directly from the dashboard, and track watch history through a dedicated statistics page.]]></Description>
   <Project>https://github.com/Lazaros-Chalkidis/unraid-streamviewer</Project>
   <Support>https://forums.unraid.net/topic/197757-plugin-stream-viewer/</Support>
   <Icon>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/source/streamviewer.png</Icon>
   <License>GPL v3</License>
-  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/widget1.png</Screenshot>
-  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/widget2.png</Screenshot>
-  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/widget3.png</Screenshot>
-  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/widget4.png</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/widget3.png</Screenshot> 
+  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/statistics-dashboard.png</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/statistics-users.png</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/statistics-graphs.png</Screenshot>  
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/settings1.png</Screenshot>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/settings2.png</Screenshot>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/settings3.png</Screenshot>

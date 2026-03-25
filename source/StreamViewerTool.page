@@ -1,0 +1,580 @@
+Menu="SystemInformation"
+Name="Stream Viewer Statistics"
+Icon="streamviewer.png"
+Type="xmenu"
+Tabs="false"
+Title="Stream Viewer Statistics (Beta)"
+---
+<?php
+require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
+require_once '/usr/local/emhttp/plugins/streamviewer/streamviewer_api.php';
+
+$cfg = @parse_plugin_cfg('streamviewer', true) ?: [];
+
+$statsEnabled = (($cfg['STATS_ENABLED'] ?? '0') === '1');
+
+// Theme detection (same as Settings page)
+$dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
+$unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
+$svt_light    = in_array($unraid_theme, ['white', 'azure'], true);
+$lightClass   = $svt_light ? ' svt-light' : '';
+
+$tile_config = [
+    'svToken'         => StreamViewerEndpoint::generateNonce(),
+    'statsEnabled'    => $statsEnabled,
+    'lightTheme'      => $svt_light,
+    'libSectionsOpen' => (($cfg['LIB_SECTIONS_OPEN'] ?? '0') === '1'),
+];
+$tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
+?>
+
+<link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/tool.css">
+<script>window.svToolConfig = <?= $tile_config_json ?>;</script>
+
+<div class="svt-wrapper<?= $lightClass ?>">
+
+  <!-- Tabs -->
+  <div class="svt-tabs">
+    <div class="svt-tab active" id="svtTabDashboard" role="button" tabindex="0">
+      <span class="svt-tabicon"><i class="fa fa-bar-chart" aria-hidden="true"></i></span> Dashboard
+    </div>
+    <div class="svt-tab" id="svtTabLibraries" role="button" tabindex="0">
+      <span class="svt-tabicon"><i class="fa fa-film" aria-hidden="true"></i></span> Libraries
+    </div>
+    <div class="svt-tab" id="svtTabUsers" role="button" tabindex="0">
+      <span class="svt-tabicon"><i class="fa fa-users" aria-hidden="true"></i></span> Users
+    </div>
+    <div class="svt-tab" id="svtTabHistory" role="button" tabindex="0">
+      <span class="svt-tabicon"><i class="fa fa-history" aria-hidden="true"></i></span> History
+    </div>
+    <div class="svt-tab" id="svtTabGraphs" role="button" tabindex="0">
+      <span class="svt-tabicon"><i class="fa fa-line-chart" aria-hidden="true"></i></span> Graphs
+    </div>
+    <div class="svt-tab" id="svtTabAlerts" role="button" tabindex="0">
+      <span class="svt-tabicon"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i></span> Alerts
+    </div>
+  </div>
+
+  <!-- Panel -->
+  <div class="svt-panel">
+
+<?php if (!$statsEnabled): ?>
+    <div class="svt-disabled">
+      <div class="svt-disabled-icon"><i class="fa fa-bar-chart" aria-hidden="true"></i></div>
+      <h2>Statistics are not enabled</h2>
+      <p>To use this page, enable watch history in
+         <a href="/Settings/StreamViewerSettings">Stream Viewer Settings</a>
+         under the Statistics section.</p>
+    </div>
+<?php else: ?>
+
+    <!-- ═══ DASHBOARD TAB ═══ -->
+    <div class="svt-tab-panel" id="svtPanelDashboard">
+
+    <!-- Header -->
+    <div class="svt-header">
+      <div class="svt-header__left">
+        <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+        <div>
+          <h2 class="svt-header__title">Stream Viewer Statistics</h2>
+          <span class="svt-header__sub" id="svt-subtitle">Loading...</span>
+        </div>
+      </div>
+      <div class="svt-header__right">
+        <div class="svt-header__icons">
+          <a href="#" id="svt-refresh-btn" title="Refresh statistics" aria-label="Refresh statistics">
+            <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
+          </a>
+          <a href="/Settings/StreamViewerSettings" title="Stream Viewer Settings" aria-label="Stream Viewer Settings">
+            <i class="fa fa-fw fa-cog control" aria-hidden="true"></i>
+          </a>
+        </div>
+        <select id="svt-period" class="svt-select svt-select--sm" aria-label="Time period">
+          <option value="7d">Last 7 days</option>
+          <option value="30d" selected>Last 30 days</option>
+          <option value="90d">Last 90 days</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Metric cards -->
+    <div class="svt-cards" id="svt-cards">
+      <div class="svt-card">
+        <div class="svt-card__label">Total plays</div>
+        <div class="svt-card__value" id="svt-total-plays">&mdash;</div>
+      </div>
+      <div class="svt-card">
+        <div class="svt-card__label">Hours watched</div>
+        <div class="svt-card__value" id="svt-hours">&mdash;</div>
+      </div>
+      <div class="svt-card">
+        <div class="svt-card__label">Unique users</div>
+        <div class="svt-card__value" id="svt-users">&mdash;</div>
+      </div>
+      <div class="svt-card">
+        <div class="svt-card__label">Peak concurrent</div>
+        <div class="svt-card__value" id="svt-peak">&mdash;</div>
+      </div>
+    </div>
+
+    <!-- Play type ratio -->
+    <div class="svt-play-types" id="svt-play-types">
+      <div class="svt-pt" id="svt-pt-dp">
+        <span class="svt-pt__label">Direct play</span>
+        <div class="svt-pt__bar"><div class="svt-pt__fill svt-pt__fill--dp" id="svt-pt-dp-fill"></div></div>
+        <span class="svt-pt__pct" id="svt-pt-dp-pct">0%</span>
+      </div>
+      <div class="svt-pt" id="svt-pt-ds">
+        <span class="svt-pt__label">Direct stream</span>
+        <div class="svt-pt__bar"><div class="svt-pt__fill svt-pt__fill--ds" id="svt-pt-ds-fill"></div></div>
+        <span class="svt-pt__pct" id="svt-pt-ds-pct">0%</span>
+      </div>
+      <div class="svt-pt" id="svt-pt-tc">
+        <span class="svt-pt__label">Transcode</span>
+        <div class="svt-pt__bar"><div class="svt-pt__fill svt-pt__fill--tc" id="svt-pt-tc-fill"></div></div>
+        <span class="svt-pt__pct" id="svt-pt-tc-pct">0%</span>
+      </div>
+      <div class="svt-pt" id="svt-pt-rm">
+        <span class="svt-pt__label">Remote</span>
+        <div class="svt-pt__bar"><div class="svt-pt__fill svt-pt__fill--rm" id="svt-pt-rm-fill"></div></div>
+        <span class="svt-pt__pct" id="svt-pt-rm-pct">0%</span>
+      </div>
+    </div>
+
+    <!-- Daily chart -->
+    <div class="svt-section">
+      <h3 class="svt-section__title">Daily streams <span class="svt-period-text" id="svt-chart-period">last 30 days</span></h3>
+      <div class="svt-chart-wrap">
+        <canvas id="svt-daily-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- Leaderboards (side by side) -->
+    <div class="svt-leaderboards">
+      <div class="svt-section svt-section--half">
+        <h3 class="svt-section__title">Most watched</h3>
+        <div class="svt-list" id="svt-top-media">
+          <div class="svt-list__empty">No data</div>
+        </div>
+      </div>
+      <div class="svt-section svt-section--half">
+        <h3 class="svt-section__title">Top users</h3>
+        <div class="svt-list" id="svt-top-users">
+          <div class="svt-list__empty">No data</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent history table -->
+    <div class="svt-section">
+      <div class="svt-section__header">
+        <h3 class="svt-section__title">Recent history</h3>
+        <div class="svt-filters">
+          <select id="svt-filter-server" class="svt-select svt-select--sm" aria-label="Filter by server">
+            <option value="">All servers</option>
+            <option value="plex">Plex</option>
+            <option value="jellyfin">Jellyfin</option>
+            <option value="emby">Emby</option>
+          </select>
+          <select id="svt-filter-play" class="svt-select svt-select--sm" aria-label="Filter by play type">
+            <option value="">All types</option>
+            <option value="direct_play">Direct Play</option>
+            <option value="direct_stream">Direct Stream</option>
+            <option value="transcode">Transcode</option>
+          </select>
+        </div>
+      </div>
+      <table class="svt-table" id="svt-history-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>User</th>
+              <th>Title</th>
+              <th>Server</th>
+              <th>Play type</th>
+              <th>IP</th>
+              <th>Duration</th>
+            </tr>
+          </thead>
+          <tbody id="svt-history-body">
+            <tr><td colspan="7" class="svt-table__empty">Loading...</td></tr>
+          </tbody>
+        </table>
+    </div>
+
+    </div><!-- /svtPanelDashboard -->
+
+    <!-- ═══ LIBRARIES TAB ═══ -->
+    <div class="svt-tab-panel" id="svtPanelLibraries" style="display:none;">
+
+      <div class="svt-header">
+        <div class="svt-header__left">
+          <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+          <div>
+            <h2 class="svt-header__title">Libraries overview</h2>
+            <span class="svt-header__sub">Content breakdown from your media servers</span>
+          </div>
+        </div>
+        <div class="svt-header__right">
+          <div class="svt-header__icons">
+            <a href="#" id="svt-lib-sync-btn" title="Sync libraries" aria-label="Sync libraries">
+              <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
+            </a>
+            <a href="/Settings/StreamViewerSettings" title="Settings" aria-label="Settings">
+              <i class="fa fa-fw fa-cog control" aria-hidden="true"></i>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="svt-cards" id="svt-lib-summary">
+        <div class="svt-card">
+          <div class="svt-card__label">Total items</div>
+          <div class="svt-card__value" id="svt-lib-total">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Libraries</div>
+          <div class="svt-card__value" id="svt-lib-count">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Servers</div>
+          <div class="svt-card__value" id="svt-lib-servers">&mdash;</div>
+        </div>
+      </div>
+
+      <!-- Server sections (dynamic) -->
+      <div id="svt-lib-servers-container"></div>
+
+      <!-- Recently added -->
+      <div class="svt-section">
+        <h3 class="svt-section__title">Recently added</h3>
+        <div class="svt-table-wrap">
+          <table class="svt-table" id="svt-lib-recent-table">
+            <thead>
+              <tr>
+                <th>Added</th>
+                <th>Title</th>
+                <th>Type</th>
+                <th>Server</th>
+                <th>Library</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="svt-lib-recent-body">
+              <tr><td colspan="6" class="svt-table__empty">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /svtPanelLibraries -->
+
+    <!-- ═══ PLACEHOLDER TABS ═══ -->
+    <div class="svt-tab-panel" id="svtPanelUsers" style="display:none;">
+
+      <div class="svt-header">
+        <div class="svt-header__left">
+          <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+          <div>
+            <h2 class="svt-header__title">Users overview</h2>
+            <span class="svt-header__sub">Activity breakdown per user</span>
+          </div>
+        </div>
+        <div class="svt-header__right">
+          <div class="svt-header__icons">
+            <a href="#" id="svt-users-refresh-btn" title="Refresh" aria-label="Refresh">
+              <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
+            </a>
+            <a href="/Settings/StreamViewerSettings" title="Settings" aria-label="Settings">
+              <i class="fa fa-fw fa-cog control" aria-hidden="true"></i>
+            </a>
+          </div>
+          <select id="svt-users-period" class="svt-select svt-select--sm" aria-label="Time period">
+            <option value="7d">Last 7 days</option>
+            <option value="30d" selected>Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="svt-cards">
+        <div class="svt-card">
+          <div class="svt-card__label">Total users</div>
+          <div class="svt-card__value" id="svt-u-total">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Most active</div>
+          <div class="svt-card__value svt-card__value--sm" id="svt-u-most-active">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Avg plays / user</div>
+          <div class="svt-card__value" id="svt-u-avg-plays">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Avg hours / user</div>
+          <div class="svt-card__value" id="svt-u-avg-hours">&mdash;</div>
+        </div>
+      </div>
+
+      <!-- User cards (dynamic) -->
+      <div id="svt-users-container">
+        <div class="svt-table__empty">Loading...</div>
+      </div>
+
+    </div>
+    <div class="svt-tab-panel" id="svtPanelHistory" style="display:none;">
+
+      <div class="svt-header">
+        <div class="svt-header__left">
+          <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+          <div>
+            <h2 class="svt-header__title">Watch history</h2>
+            <span class="svt-header__sub">Complete playback log across all servers</span>
+          </div>
+        </div>
+        <div class="svt-header__right">
+          <div class="svt-header__icons">
+            <a href="#" id="svt-hist-refresh-btn" title="Refresh" aria-label="Refresh">
+              <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
+            </a>
+            <a href="/Settings/StreamViewerSettings" title="Settings" aria-label="Settings">
+              <i class="fa fa-fw fa-cog control" aria-hidden="true"></i>
+            </a>
+          </div>
+          <div class="svt-hist-filters" id="svt-hist-filters">
+            <select id="svt-hist-period" class="svt-select svt-select--sm" aria-label="Period">
+              <option value="7d">Last 7 days</option>
+              <option value="30d" selected>Last 30 days</option>
+              <option value="90d">Last 90 days</option>
+            </select>
+            <select id="svt-hist-server" class="svt-select svt-select--sm" aria-label="Server">
+              <option value="">All servers</option>
+              <option value="plex">Plex</option>
+              <option value="jellyfin">Jellyfin</option>
+              <option value="emby">Emby</option>
+            </select>
+            <select id="svt-hist-user" class="svt-select svt-select--sm" aria-label="User">
+              <option value="">All users</option>
+            </select>
+            <select id="svt-hist-play" class="svt-select svt-select--sm" aria-label="Play type">
+              <option value="">All types</option>
+              <option value="direct_play">Direct Play</option>
+              <option value="direct_stream">Direct Stream</option>
+              <option value="transcode">Transcode</option>
+            </select>
+            <select id="svt-hist-media" class="svt-select svt-select--sm" aria-label="Media type">
+              <option value="">All media</option>
+              <option value="movie">Movies</option>
+              <option value="episode">Episodes</option>
+              <option value="track">Music</option>
+            </select>
+          </div>
+          <div class="svt-hist-search-row">
+            <input type="text" id="svt-hist-search" class="svt-hist-search" placeholder="Search..." aria-label="Search title">
+            <button id="svt-hist-export" class="svt-hist-export-btn" title="Export CSV">Export CSV</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="svt-cards">
+        <div class="svt-card">
+          <div class="svt-card__label">Total entries</div>
+          <div class="svt-card__value" id="svt-h-total">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Total watch time</div>
+          <div class="svt-card__value" id="svt-h-time">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Avg duration</div>
+          <div class="svt-card__value" id="svt-h-avg">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Remote %</div>
+          <div class="svt-card__value" id="svt-h-remote">&mdash;</div>
+        </div>
+      </div>
+
+      <!-- History table -->
+      <div class="svt-section" style="padding: 0;">
+          <table class="svt-table" id="svt-hist-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>User</th>
+                <th>Title</th>
+                <th>Server</th>
+                <th>Play type</th>
+                <th>IP</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody id="svt-hist-body">
+              <tr><td colspan="7" class="svt-table__empty">Loading...</td></tr>
+            </tbody>
+          </table>
+        <div class="svt-hist-footer" id="svt-hist-footer"></div>
+      </div>
+
+    </div>
+    <div class="svt-tab-panel" id="svtPanelGraphs" style="display:none;">
+
+      <div class="svt-header">
+        <div class="svt-header__left">
+          <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+          <div>
+            <h2 class="svt-header__title">Graphs</h2>
+            <span class="svt-header__sub">Visual analytics for your media servers</span>
+          </div>
+        </div>
+        <div class="svt-header__right">
+          <div class="svt-header__icons">
+            <a href="#" id="svt-graph-refresh-btn" title="Refresh" aria-label="Refresh">
+              <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
+            </a>
+            <a href="/Settings/StreamViewerSettings" title="Settings" aria-label="Settings">
+              <i class="fa fa-fw fa-cog control" aria-hidden="true"></i>
+            </a>
+          </div>
+          <select id="svt-graph-period" class="svt-select svt-select--sm" aria-label="Time period">
+            <option value="7d">Last 7 days</option>
+            <option value="30d" selected>Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Row 1: Watch time + Peak hours -->
+      <div class="svt-graph-row">
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Watch time over days</span>
+            <span class="svt-graph-card__sub">Hours watched per day</span>
+          </div>
+          <div class="svt-graph-legend" id="svt-gr-legend-wt"></div>
+          <div class="svt-graph-canvas-wrap"><canvas id="svt-gr-watchtime"></canvas></div>
+        </div>
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Peak viewing hours</span>
+            <span class="svt-graph-card__sub">When your users watch the most</span>
+          </div>
+          <div class="svt-graph-canvas-wrap"><canvas id="svt-gr-peak"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Row 2: Play type + Media type -->
+      <div class="svt-graph-row">
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Play type distribution</span>
+            <span class="svt-graph-card__sub">How content is delivered</span>
+          </div>
+          <div class="svt-graph-legend" id="svt-gr-legend-pt"></div>
+          <div class="svt-graph-canvas-wrap"><canvas id="svt-gr-playtype"></canvas></div>
+        </div>
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Media type breakdown</span>
+            <span class="svt-graph-card__sub">Movies vs TV shows vs music</span>
+          </div>
+          <div class="svt-graph-legend" id="svt-gr-legend-mt"></div>
+          <div class="svt-graph-canvas-wrap"><canvas id="svt-gr-mediatype"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Row 3: User activity + Local/Remote -->
+      <div class="svt-graph-row">
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">User activity</span>
+            <span class="svt-graph-card__sub">Hours watched per user</span>
+          </div>
+          <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--tall"><canvas id="svt-gr-users"></canvas></div>
+        </div>
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Local vs remote</span>
+            <span class="svt-graph-card__sub">Connection origin over time</span>
+          </div>
+          <div class="svt-graph-legend" id="svt-gr-legend-lr"></div>
+          <div class="svt-graph-canvas-wrap"><canvas id="svt-gr-localremote"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Full width: Bandwidth -->
+      <div class="svt-graph-card">
+        <div class="svt-graph-card__hd">
+          <span class="svt-graph-card__title">Bandwidth usage</span>
+          <span class="svt-graph-card__sub">Estimated average bandwidth per day (Mbps)</span>
+        </div>
+        <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--short"><canvas id="svt-gr-bandwidth"></canvas></div>
+      </div>
+
+    </div>
+
+    <!-- ── Alerts tab ───────────────────────────────────────────────── -->
+    <div class="svt-tab-panel" id="svtPanelAlerts" style="display:none;">
+
+      <div class="svt-header">
+        <div class="svt-header__left">
+          <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+          <div>
+            <h2 class="svt-header__title">Alerts</h2>
+            <span class="svt-header__sub">Insights and warnings from your streaming data</span>
+          </div>
+        </div>
+        <div class="svt-header__right">
+          <div class="svt-header__icons">
+            <a href="#" id="svt-alerts-refresh-btn" title="Refresh" aria-label="Refresh">
+              <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
+            </a>
+            <a href="/Settings/StreamViewerSettings" title="Settings" aria-label="Settings">
+              <i class="fa fa-fw fa-cog control" aria-hidden="true"></i>
+            </a>
+          </div>
+          <select id="svt-alerts-period" class="svt-select svt-select--sm" aria-label="Period">
+            <option value="7d">Last 7 days</option>
+            <option value="30d" selected>Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="svt-cards" id="svt-alerts-cards">
+        <div class="svt-card">
+          <div class="svt-card__label">Active alerts</div>
+          <div class="svt-card__value" id="svt-al-total">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Buffering warnings</div>
+          <div class="svt-card__value" id="svt-al-buffering">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Inactive users</div>
+          <div class="svt-card__value" id="svt-al-inactive">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Transcode ratio</div>
+          <div class="svt-card__value" id="svt-al-transcode">&mdash;</div>
+        </div>
+      </div>
+
+      <!-- Alert sections -->
+      <div id="svt-alerts-content">
+        <div class="svt-table__empty">Loading...</div>
+      </div>
+
+    </div><!-- /svtPanelAlerts -->
+
+<?php endif; ?>
+
+  </div><!-- /svt-panel -->
+</div><!-- /svt-wrapper -->
+
+<script src="/plugins/streamviewer/js/chart.min.js"></script>
+<script defer src="/plugins/streamviewer/js/streamviewer-tool.js"></script>

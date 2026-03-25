@@ -1,4 +1,26 @@
 
+## Version 2026.03.25
+
+### Bug Fixes
+- Fixed stream duration being cut off in widget, seconds now fully visible
+- Fixed widget freeze after ~1 hour (automatic CSRF token renewal with sliding expiration)
+- Fixed Jellyfin and Emby API session endpoint corrections
+
+### New Features
+- Statistics Tool page (Beta) with Dashboard, Libraries, Users, History, Graphs and Alerts tabs
+- Transcode speed badge on active transcodes
+- Docker CPU and RAM stats in widget footer with color thresholds (orange 50%, red 70%)
+
+### Improvements
+- Widget badges uniform height and styling across all types
+- All transcode badges now uppercase (DIRECT STREAM, DIRECT PLAY, TRANSCODE)
+- STOP button text-only, matching other badge sizes
+- Settings page restructured into Widget Settings
+- Statistics Settings sections
+- Incremental database migration system for seamless future upgrades
+
+---
+
 ## Version 2026.03.19a
 
 ### Bug Fixes
@@ -8,8 +30,8 @@
 ### New Features
 - Credits modal: Widget and Settings adaptive to Dynamix color theme: Black - Light - Gray - Azure
 - Smart rediscover: Retries 3 times before triggering URL rediscovery
-- Smart rediscover: Respects URL type — local stays local, remote stays remote
-- Jellyfin/Emby: Local container IP auto-discovery via Docker Engine API (no shell exec)
+- Smart rediscover: Respects URL type, local stays local, remote stays remote
+- Jellyfin/Emby: Local container IP auto discovery via Docker Engine API
 
 ---
 

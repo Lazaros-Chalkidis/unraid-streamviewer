@@ -1,119 +1,155 @@
 # Stream Viewer for Unraid
 
-A modern and lightweight, real-time media stream monitor for Unraid. View active streams from your Plex, Jellyfin, and Emby servers directly from the dashboard.
+A real time media stream monitor and statistics tracker for Unraid. View active streams from your Plex, Jellyfin and Emby servers directly from the dashboard, and track watch history, library content and user activity through a dedicated statistics page.
 
----
+## Features
 
-## ✨ Features
+**Dashboard Widget**
+- Monitor active streams in real-time from the Unraid dashboard
+- Multi-server support for up to 10 Plex, Jellyfin and Emby servers simultaneously
+- Stream details including user, device, IP address, playback progress, quality and codec info
+- Collapsible technical details row per stream (codec, audio channels, container, subtitles, HW acceleration, transcode reasons)
+- Transcode monitoring with visual indicators for Direct Play, Direct Stream and Transcode sessions
+- Transcode speed badge on active transcodes
+- Docker CPU and RAM usage per media server container
+- Kill Session button to terminate active streams directly from the widget
+- Server type filter (Plex, Jellyfin, Emby)
+- Configurable auto-refresh with adjustable polling interval
+- Mobile responsive layout
 
-- **Dashboard Widget**: Monitor active streams in real-time from the Unraid dashboard
-- **Multi-Server Support**: Monitor up to 10 Plex, Jellyfin, and Emby servers simultaneously
-- **Stream Details**: User, device, IP address, playback progress, quality and codec info per stream
-- **Transcode Monitoring**: Visual indicators for Direct Play, Direct Stream, and Transcode sessions
-- **Kill Session**: Terminate active streams directly from the UI (configurable)
-- **Plex OAuth**: Secure Plex server setup via OAuth — no password ever stored
-- **Auto-Rediscover**: Automatically recovers Plex server URLs after IP changes
-- **Server Filter**: Filter streams by server type (Plex / Jellyfin / Emby)
-- **Auto Refresh**: Configurable polling interval for live updates
-- **Mobile Responsive**: Works on all screen sizes
-- **Performance Friendly**: Micro-cache, backoff on errors, lightweight polling
+**Statistics Tool Page (Beta)**
+- Dashboard tab with active streams overview, most watched titles, top users and recent history
+- Libraries tab with server overview, collapsible sections and recently added items
+- Users tab with per-user play counts, watch time, content breakdown and play type distribution
+- History tab with full watch history, filters, search, pagination and CSV export
+- Graphs tab with daily streams, watch time distribution and play type breakdown charts
+- Alerts tab (placeholder for future alert rules)
+- SQLite database with automatic schema migration system
+- Configurable data retention and IP anonymization
 
----
+**Server Integration**
+- Plex OAuth for secure server setup without storing passwords
+- Auto-rediscover for Plex servers after IP changes
+- Test Connection per server in Settings
 
-## 📦 Installation
+## Installation
 
-### Via Community Applications (recommended)
-1. Open **Community Applications** in Unraid
-2. Search for **Stream Viewer**
-3. Click **Install**
+**Via Community Applications (recommended)**
+1. Open Community Applications in Unraid
+2. Search for Stream Viewer
+3. Click Install
 
-### Manual Installation
-
-1. Go to **Plugins** in Unraid
-2. Click **Install Plugin**
+**Manual Installation**
+1. Go to Plugins in Unraid
+2. Click Install Plugin
 3. Paste the following URL:
+
 ```
 https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/streamviewer.plg
 ```
 
-4. Click **Install**
+## Configuration
 
----
+After installation, go to Settings > Stream Viewer to configure the plugin. The settings page is organized into three sections.
 
-## ⚙️ Configuration
-
-After installation, go to **Settings → Stream Viewer** to configure:
-
-The Dashboard Widget and the Tool Page have independent settings and can be configured separately to suit different use cases.
+**Widget Settings**
 
 | Setting | Description |
 | --- | --- |
-| Servers | Add and configure Plex, Jellyfin, or Emby servers |
-| Auto Refresh | Enable/disable automatic stream refresh |
-| Refresh Interval | How often to poll for new stream data (in seconds) |
-| Max Streams | Limit the number of streams shown |
+| Max Streams | Limit the number of streams shown on the dashboard |
 | Show Device | Show or hide the client device name |
 | Show IP | Show or hide the viewer IP address |
 | Show Progress | Show or hide the playback progress bar |
 | Show Quality | Show or hide the stream quality badge |
-| Show Transcode | Show or hide the transcode/direct-play badge |
+| Show Transcode | Show or hide the transcode/direct play badge |
+| Show Technical Details | Show or hide the collapsible details row |
+| Technical Details Default | Start expanded or collapsed |
+| Show Docker Stats | Show or hide CPU/RAM usage per container |
+| Auto Refresh | Enable or disable automatic stream refresh |
+| Refresh Interval | How often to poll for new stream data (seconds) |
 | Allow Kill Session | Enable the ability to terminate active streams |
 
----
+**Connections Servers**
 
-## 🖥️ Supported Servers
+| Setting | Description |
+| --- | --- |
+| Server URL | Address of your Plex, Jellyfin or Emby server |
+| Server Token | API token for authentication |
+| Server Name | Display name shown in the widget |
+| Plex OAuth | Secure token retrieval for Plex servers |
+| TLS Verification | Enable or disable SSL certificate checking |
+
+**Statistics Settings**
+
+| Setting | Description |
+| --- | --- |
+| Statistics | Enable or disable the statistics tool page |
+| Database Path | Directory where the SQLite database is stored (must be under /mnt/user/) |
+| Data Retention | How many days of watch history to keep (7 to 365 days) |
+| Anonymize IP | Mask the last octet of IP addresses before storing |
+| Library Sections | Default state (expanded or collapsed) for library server sections |
+
+## Supported Servers
 
 | Server | Sessions | Kill Session | OAuth Setup |
 | --- | --- | --- | --- |
-| Plex | ✅ | ✅ | ✅ |
-| Jellyfin | ✅ | ✅ | — |
-| Emby | ✅ | ✅ | — |
+| Plex | Yes | Yes | Yes |
+| Jellyfin | Yes | Yes | No |
+| Emby | Yes | Yes | No |
 
----
+## Security
 
-## 🔒 Security
-
-- CSRF token (nonce) protection on all API requests
-- Rate limiting (120 requests/minute per IP)
-- Origin validation — blocks cross-origin requests
+- CSRF token (nonce) protection on all API requests with sliding expiration
+- Rate limiting (120 requests per minute per IP)
+- Origin validation blocks cross-origin requests
 - Input validation and sanitization on all parameters
-- Security headers on all API responses (`X-Frame-Options`, `X-Content-Type-Options`, `CSP`, `X-XSS-Protection`)
-- Image proxy with URL allowlist — only proxies thumbnails from configured servers
-- Plex account token never stored — only per-server access tokens are saved
-- Cache directory created with restricted permissions (`0700`)
-- Referrer-Policy: same-origin header
+- Prepared statements for all SQLite queries (no string concatenation)
+- LIKE wildcard escaping with explicit ESCAPE clause
+- Docker container ID hex-only validation before API use
+- Security headers on all API responses (X-Frame-Options, X-Content-Type-Options, CSP, X-XSS-Protection, Referrer-Policy)
+- Image proxy with URL allowlist, only proxies thumbnails from configured servers
+- MIME type validation on proxied images with 5 MB size cap
+- Plex account token never stored, only per-server access tokens are saved
+- Database file permissions restricted to owner only (0600)
+- Cache directory created with restricted permissions (0700)
 - Cache-Control: no-cache, must-revalidate header
 - AJAX-only enforcement (X-Requested-With check)
 - HTTP method restriction (GET/POST only)
-- URL validation on outbound HTTP requests (FILTER_VALIDATE_URL)
-- MIME type validation on proxied images
+- URL validation on outbound HTTP requests
+- PHP 7 compatible (no PHP 8 only functions)
 
----
+## Screenshots
 
-## 📸 Screenshots
+**Dashboard Widget**
 
-### Dashboard Widget PC Screen
 ![Dashboard](screenshots/pc/widget1.png)
 ![Dashboard](screenshots/pc/widget2.png)
-![Dashboard with Dropdown](screenshots/pc/widget3.png)
+![Dashboard](screenshots/pc/widget3.png)
 ![Dashboard](screenshots/pc/widget4.png)
 
-### Settings Page PC Screen
-![Settings Page](screenshots/pc/settings1.png)
-![Settings Page](screenshots/pc/settings2.png)
-![Settings Page](screenshots/pc/settings3.png)
-![Settings Page](screenshots/pc/settings4.png)
+**Statistics Tool**
 
----
+![Statistics](screenshots/pc/statistics-dashboard.png)
+![Statistics](screenshots/pc/statistics-libraries.png)
+![Statistics](screenshots/pc/statistics-users.png)
+![Statistics](screenshots/pc/statistics-history.png)
+![Statistics](screenshots/pc/statistics-graphs.png)
+![Statistics](screenshots/pc/statistics-alerts.png)
 
-## 🛠️ Development
+**Settings Page**
 
-### Requirements
+![Settings](screenshots/pc/settings1.png)
+![Settings](screenshots/pc/settings2.png)
+![Settings](screenshots/pc/settings3.png)
+![Settings](screenshots/pc/settings4.png)
 
-* Unraid 7.2.0 or later
-* Bash (for build script)
+## Development
 
-### Build
+**Requirements**
+- Unraid 7.2.0 or later
+- Bash (for build script)
+
+**Build**
 
 ```bash
 # Release build
@@ -129,58 +165,51 @@ The Dashboard Widget and the Tool Page have independent settings and can be conf
 ./build.sh a
 ```
 
-### Project Structure
+**Project Structure**
 
 ```
 unraid-streamviewer/
 ├── source/
 │   ├── css/
-│   │   ├── widget.css              # Dashboard widget & tool page styles
-│   │   └── settings.css            # Settings page styles
+│   │   ├── widget.css
+│   │   ├── settings.css
+│   │   └── tool.css
 │   ├── js/
-│   │   └── streamviewer.js         # Frontend polling, rendering, UI logic
-│   ├── StreamViewer.page           # Dashboard widget + tool page
-│   ├── StreamViewerSettings.page   # Settings page
-│   ├── streamviewer_api.php        # Backend API (sessions, kill, OAuth, discovery)
-│   ├── streamviewer.png            # Plugin icon
-│   ├── avatar.png                  # Widget avatar
-│   └── README.md                   # In-plugin description
+│   │   ├── streamviewer.js
+│   │   ├── streamviewer-tool.js
+│   │   └── chart.min.js
+│   ├── StreamViewer.page
+│   ├── StreamViewerSettings.page
+│   ├── StreamViewerTool.page
+│   ├── streamviewer_api.php
+│   ├── streamviewer.png
+│   ├── avatar.png
+│   └── README.md
 ├── screenshots/
-│   |── pc/                         # PC screenshots
-├── build.sh                        # Build script
-├── CHANGELOG.md                    # Version history
-├── streamviewer.plg                # Plugin definition (generated by build.sh)
-├── streamviewer.xml                # CA metadata
+│   └── pc/
+├── build.sh
+├── CHANGELOG.md
+├── streamviewer.plg
+├── streamviewer.xml
 └── LICENSE
 ```
 
----
-
-## 📋 Changelog
+## Changelog
 
 See [CHANGELOG.md](https://github.com/Lazaros-Chalkidis/unraid-streamviewer/blob/main/CHANGELOG.md) for version history.
 
----
+## Issues and Support
 
-## 🐛 Issues & Support
+To suggest features, report bugs or share feedback, open an issue on [GitHub](https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues) or post on the [Unraid Forum](https://forums.unraid.net/topic/197757-plugin-stream-viewer/).
 
-If you'd like to suggest new features, report a bug, or have any feedback, feel free to open an issue on
-[GitHub](https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues)
-or post on the
-[Unraid Forum](https://forums.unraid.net/topic/197757-plugin-stream-viewer/).
+## Author
 
----
+Lazaros Chalkidis
+[GitHub](https://github.com/Lazaros-Chalkidis)
 
-## 👤 Author
+## License
 
-**Lazaros Chalkidis**
-- GitHub: [@Lazaros-Chalkidis](https://github.com/Lazaros-Chalkidis)
-
----
-
-## 📄 License
-
-Copyright (C) 2026 Stream Viewer Unraid Plugin — Lazaros Chalkidis
+Copyright (C) 2026 Stream Viewer Unraid Plugin, Lazaros Chalkidis
 
 Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
-See the `LICENSE` file for the full license text.
+See the LICENSE file for the full license text.

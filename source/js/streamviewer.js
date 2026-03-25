@@ -27,6 +27,7 @@ var _inFlight     = false;
 var _backoffUntil = 0;        // timestamp ms — skip fetch until this time
 var _errorCount   = 0;        // consecutive fetch errors (for self-healing backoff)
 var _initialized  = false;    // true after first successful fetch
+var _reloadScheduled = false; // true when 403 auto-reload is pending
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -43,6 +44,7 @@ var DOM = {
     errBadge:   function() { return document.getElementById('sv-err-badge');         },
     errCount:   function() { return document.getElementById('sv-err-count');         },
     manualBtn:  function() { return document.getElementById('sv-manual-refresh');    },
+    dockerStats:function() { return document.getElementById('sv-docker-stats');      },
 };
 
 
@@ -149,8 +151,7 @@ function renderRow(s) {
         + '</div>';
 
     // Badges row — LEFT: quality + live bitrate  |  RIGHT: server type + name + transcode + stop
-    var serverBadge = '<span class="sv-stream__server-badge sv-stream__server-badge--'
-        + esc(s.server_type) + '" title="' + esc(s.server_name) + '">'
+    var serverBadge = '<span class="sv-stream__server-badge" title="' + esc(s.server_name) + '">'
         + esc(s.server_name || s.server_type) + '</span>';
 
     var transHtml = '';
@@ -174,7 +175,7 @@ function renderRow(s) {
             + ' data-server-name="'      + esc(s.server_name        || '') + '"'
             + ' data-plex-session-uuid="'+ esc(s.plex_session_uuid  || '') + '"'
             + ' title="Stop this stream">'
-            + '<i class="fa fa-stop" aria-hidden="true"></i> Stop'
+            + 'STOP'
             + '</button>';
     }
 
@@ -208,10 +209,15 @@ function renderRow(s) {
         ? '<p class="sv-stream__desc">' + esc(s.summary) + '</p>'
         : '';
     var thumbColHtml = '<div class="sv-stream__thumb-col">' + thumbHtml + '</div>';
-    var badgesHtml = '<div class="sv-stream__row3 sv-stream__row3--collapsed">'
-        + '<div class="sv-stream__row3-hd"><span class="sv-stream__row3-arrow">&#9650;</span></div>'
-        + '<div class="sv-stream__row3-bd">' + thumbColHtml + descHtml + '</div>'
-        + '</div>';
+    var badgesHtml = '';
+    if (cfg.showSummary) {
+        var sumCls = cfg.summaryOpen ? 'sv-stream__row3' : 'sv-stream__row3 sv-stream__row3--collapsed';
+        var sumArrow = cfg.summaryOpen ? '&#9660;' : '&#9650;';
+        badgesHtml = '<div class="' + sumCls + '">'
+            + '<div class="sv-stream__row3-hd"><span style="font-size:.7em;opacity:.55;">Info</span> <span class="sv-stream__row3-arrow">' + sumArrow + '</span></div>'
+            + '<div class="sv-stream__row3-bd">' + thumbColHtml + descHtml + '</div>'
+            + '</div>';
+    }
 
     // Row 2: user · device · IP  +  progress
     var userHtml = '<span class="sv-stream__user">' + esc(s.user || 'Unknown') + '</span>';
@@ -279,8 +285,10 @@ function renderRow(s) {
         if (s.transcode_buffer_pct > 0) tags.push('<span class="sv-dtag">Buffer: ' + esc(s.transcode_buffer_pct.toFixed(0)) + '%</span>');
 
         if (tags.length > 0) {
-            detailsHtml = '<div class="sv-stream__details sv-stream__details--collapsed">'
-                + '<div class="sv-stream__details-hd"><span class="sv-stream__details-arrow">&#9654;</span> Details</div>'
+            var detCls = cfg.detailsOpen ? 'sv-stream__details' : 'sv-stream__details sv-stream__details--collapsed';
+            var detArrow = cfg.detailsOpen ? '&#9660;' : '&#9654;';
+            detailsHtml = '<div class="' + detCls + '">'
+                + '<div class="sv-stream__details-hd"><span class="sv-stream__details-arrow">' + detArrow + '</span> Details</div>'
                 + '<div class="sv-stream__details-bd">' + tags.join('') + '</div>'
                 + '</div>';
         }
@@ -618,13 +626,13 @@ function doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSession
                 }, 3500);
             } else {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fa fa-stop" aria-hidden="true"></i> Stop';
+                btn.innerHTML = 'STOP';
                 alert('Failed to stop stream: ' + ((data && data.error) ? data.error : 'Unknown error'));
             }
         },
         error: function(xhr) {
             btn.disabled = false;
-            btn.innerHTML = '<i class="fa fa-stop" aria-hidden="true"></i> Stop';
+            btn.innerHTML = 'STOP';
             var msg = (xhr.responseJSON && xhr.responseJSON.error)
                 ? xhr.responseJSON.error : (xhr.statusText || 'Request failed');
             alert('Error stopping stream: ' + msg);
@@ -681,6 +689,59 @@ function updateErrorIndicator(stats) {
     }
 }
 
+var _lastDockerHtml = '';  // persist across Unraid tile re-renders
+
+function updateDockerStats(stats, activeStreams) {
+    if (!_cfg.showDocker || activeStreams === 0 || !Array.isArray(stats) || stats.length === 0) {
+        _lastDockerHtml = '';
+        var el = DOM.dockerStats();
+        if (el) el.innerHTML = '';
+        return;
+    }
+
+    var totalCpu = 0;
+    var totalMem = 0;
+    for (var i = 0; i < stats.length; i++) {
+        totalCpu += (stats[i].cpu_pct || 0);
+        totalMem += (stats[i].mem_used || 0);
+    }
+
+    var memStr;
+    if (totalMem >= 1073741824) {
+        memStr = (totalMem / 1073741824).toFixed(1) + ' GB';
+    } else {
+        memStr = Math.round(totalMem / 1048576) + ' MB';
+    }
+
+    var cpuColor = totalCpu >= 70 ? '#e74c3c' : totalCpu >= 50 ? '#f39c12' : '';
+    var cpuStyle = cpuColor ? ' style="color:' + cpuColor + ';"' : '';
+
+    _lastDockerHtml = '<span class="sv-docker-stat">'
+        + '<i class="fa fa-tachometer sv-docker-stat__icon"' + cpuStyle + ' aria-hidden="true"></i> '
+        + '<span class="sv-docker-stat__val"' + cpuStyle + '>' + totalCpu.toFixed(1) + '%</span>'
+        + '</span>'
+        + '<span class="sv-docker-stat">'
+        + '<i class="fa fa-server sv-docker-stat__icon" aria-hidden="true"></i> '
+        + '<span class="sv-docker-stat__val">' + memStr + '</span>'
+        + '</span>';
+
+    applyDockerHtml();
+}
+
+function applyDockerHtml() {
+    var el = DOM.dockerStats();
+    if (el && _lastDockerHtml) el.innerHTML = _lastDockerHtml;
+}
+
+// Unraid dashboard re-renders the tile every few seconds, wiping our innerHTML.
+// This interval re-applies cached docker stats HTML if the element was emptied.
+setInterval(function() {
+    if (_lastDockerHtml) {
+        var el = DOM.dockerStats();
+        if (el && el.innerHTML === '') applyDockerHtml();
+    }
+}, 2000);
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 9. API FETCH
@@ -728,6 +789,7 @@ function fetchSessions(onDone) {
             updateTimestamp();
             flashPulse();
             updateErrorIndicator(_serverStats);
+            updateDockerStats(data.docker_stats || [], data.total_sessions || 0);
 
             _initialized = true;
             if (typeof onDone === 'function') onDone(null, data);
@@ -736,15 +798,22 @@ function fetchSessions(onDone) {
         error: function(xhr, status) {
             var msg = (xhr.responseJSON && xhr.responseJSON.error)
                 ? xhr.responseJSON.error : (status || 'Request failed');
+
+            // Token expired/invalid: page reload is the only way to get a fresh nonce
+            if (xhr.status === 403 && !_reloadScheduled) {
+                _reloadScheduled = true;
+                setTimeout(function() { location.reload(); }, 2000);
+                return;
+            }
+
             _errorCount = (_errorCount || 0) + 1;
-            // Backoff: 15s → 45s, then reset after 4 failures (self-healing)
+            // Backoff: 15s -> 45s, then reset after 4 failures (self-healing)
             if (_errorCount >= 4) {
                 _errorCount   = 0;
-                _backoffUntil = Date.now() + 15000; // reset to short backoff
+                _backoffUntil = Date.now() + 15000;
             } else {
                 _backoffUntil = Date.now() + (_errorCount === 1 ? 15000 : 45000);
             }
-            // Show error badge only after 3+ consecutive errors (avoids flashing on transient failures)
             if (_errorCount >= 3) {
                 updateErrorIndicator([{ status: 'error' }]);
             }
@@ -904,7 +973,11 @@ function resolveConfig() {
         showQuality:         raw.showQuality  !== false,
         showTranscode:       raw.showTranscode !== false,
         showDetails:         raw.showDetails  !== false,
+        detailsOpen:         raw.detailsOpen  === true,
+        showSummary:         raw.showSummary  !== false,
+        summaryOpen:         raw.summaryOpen  === true,
         allowKill:           raw.allowKill    === true,
+        showDocker:          raw.showDocker   !== false,
         servers:             Array.isArray(raw.servers) ? raw.servers : [],
         noServersConfigured: raw.noServersConfigured === true,
         isResponsive:        raw.isResponsive !== false,

@@ -43,6 +43,10 @@ $tile_config = [
     'showQuality'       => ($cfg['WIDGET_SHOW_QUALITY']   ?? '1') === '1',
     'showTranscode'     => ($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1') === '1',
     'showDetails'       => ($cfg['WIDGET_SHOW_DETAILS']   ?? '1') === '1',
+    'detailsOpen'       => ($cfg['WIDGET_DETAILS_OPEN']  ?? '0') === '1',
+    'showSummary'       => ($cfg['WIDGET_SHOW_SUMMARY']  ?? '1') === '1',
+    'summaryOpen'       => ($cfg['WIDGET_SUMMARY_OPEN']  ?? '0') === '1',
+    'showDocker'        => ($cfg['WIDGET_SHOW_DOCKER']   ?? '1') === '1',
     'servers'           => $enabled_servers,
     'isResponsive'      => $isResponsiveWebgui,
     'noServersConfigured' => empty($enabled_servers),
@@ -67,6 +71,9 @@ $render_controls = static function(bool $responsive): string {
 <a id="sv-manual-refresh" href="#" title="Refresh streams" aria-label="Refresh streams">
     <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
 </a>
+<a id="sv-stats-icon" href="/Tools/StreamViewerTool" title="Stream Viewer Statistics" aria-label="Stream Viewer Statistics">
+    <i class="fa fa-fw fa-bar-chart control" aria-hidden="true"></i>
+</a>
 <a id="sv-settings-icon" href="/Settings/StreamViewerSettings" title="Stream Viewer Settings" aria-label="Stream Viewer Settings">
     <i class="fa fa-fw fa-cog control" aria-hidden="true"></i>
 </a>
@@ -80,7 +87,7 @@ $render_badge_row = static function(): string {
     <span class="sv-badge-streams" id="sv-badge-streams" title="Active streams">
         <span class="sv-badge-dot sv-badge-dot--idle" id="sv-badge-dot" aria-hidden="true"></span>
         <span id="sv-badge-count">0</span>
-        <span class="sv-badge-label">Streams</span>
+        <span class="sv-badge-label">Stream/s</span>
     </span>
 </div>
 HTML;
@@ -99,6 +106,7 @@ $render_streams_panel = static function(): string {
 
     <div class="sv-footer">
         <div class="sv-footer-left">
+            <span class="sv-docker-stats" id="sv-docker-stats"></span>
             <span class="sv-err-badge" id="sv-err-badge" style="display:none;" title="One or more servers unreachable">
                 <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
                 <span id="sv-err-count">0</span>

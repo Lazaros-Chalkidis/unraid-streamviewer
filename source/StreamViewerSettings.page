@@ -81,6 +81,11 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['WIDGET_SHOW_TRANSCODE']= $yn($_POST['WIDGET_SHOW_TRANSCODE'] ?? '1', '1');
     $new_cfg['WIDGET_SHOW_DETAILS'] = $yn($_POST['WIDGET_SHOW_DETAILS']  ?? '1', '1');
     $new_cfg['WIDGET_SHOW_DEVICE']   = $yn($_POST['WIDGET_SHOW_DEVICE']   ?? '1', '1');
+    $new_cfg['WIDGET_DETAILS_OPEN']  = $yn($_POST['WIDGET_DETAILS_OPEN']  ?? '0', '0');
+    $new_cfg['WIDGET_SHOW_SUMMARY']  = $yn($_POST['WIDGET_SHOW_SUMMARY']  ?? '1', '1');
+    $new_cfg['WIDGET_SHOW_DOCKER']   = $yn($_POST['WIDGET_SHOW_DOCKER']   ?? '1', '1');
+    $new_cfg['WIDGET_SUMMARY_OPEN']  = $yn($_POST['WIDGET_SUMMARY_OPEN']  ?? '0', '0');
+    $new_cfg['LIB_SECTIONS_OPEN']    = $yn($_POST['LIB_SECTIONS_OPEN']    ?? '0', '0');
 
     $new_cfg['TOOL_REFRESH_ENABLED']  = $yn($_POST['TOOL_REFRESH_ENABLED']  ?? '1', '1');
     $new_cfg['TOOL_REFRESH_INTERVAL'] = $clamp_interval($_POST['TOOL_REFRESH_INTERVAL'] ?? 30);
@@ -92,6 +97,21 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['TOOL_SHOW_DEVICE']      = $yn($_POST['TOOL_SHOW_DEVICE']      ?? '1', '1');
     $new_cfg['TOOL_ALLOW_KILL']       = $yn($_POST['TOOL_ALLOW_KILL']       ?? '0', '0');
     $new_cfg['VERIFY_SSL']            = $yn($_POST['VERIFY_SSL']            ?? '0', '0');
+
+    // ── Stats settings ──
+    $new_cfg['STATS_ENABLED']        = $yn($_POST['STATS_ENABLED'] ?? '0', '0');
+    $new_cfg['STATS_ANONYMIZE_IP']   = $yn($_POST['STATS_ANONYMIZE_IP'] ?? '0', '0');
+
+    $statsPath = trim((string)($_POST['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer'));
+    if ($statsPath === '') $statsPath = '/mnt/user/appdata/Stream-Viewer';
+    // Security: only allow paths under /mnt/user/
+    if (strncmp($statsPath, '/mnt/user/', 10) !== 0) $statsPath = '/mnt/user/appdata/Stream-Viewer';
+    $new_cfg['STATS_DB_PATH'] = rtrim($statsPath, '/');
+
+    $retDays = (int)($_POST['STATS_RETENTION_DAYS'] ?? 90);
+    if ($retDays < 7)   $retDays = 7;
+    if ($retDays > 365) $retDays = 365;
+    $new_cfg['STATS_RETENTION_DAYS'] = (string)$retDays;
 
     $tab = $_POST['sv_active_tab'] ?? 'widget';
     if (!in_array($tab, ['widget', 'plex', 'jellyfin', 'emby'], true)) $tab = 'widget';
@@ -181,7 +201,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
   <!-- ── Top tabs: Dashboard Widget · Plex · Jellyfin · Emby ──────── -->
   <div class="sv-tabs" id="svTopTabs">
     <div class="sv-tab<?= $active_tab === 'widget'   ? ' active' : '' ?>" id="svTabWidget"   role="button" tabindex="0">
-      <span class="sv-tabicon">▦</span> Dashboard Widget
+      <span class="sv-tabicon">▦</span> Settings
     </div>
     <div class="sv-tab<?= $active_tab === 'plex'     ? ' active' : '' ?>" id="svTabPlex"     role="button" tabindex="0">
       <span class="sv-tabicon" style="color:#e5a00d;">▶</span> Plex
@@ -202,8 +222,8 @@ $lightClass   = $sv_light ? ' sv-light' : '';
     <div id="svWidgetPanel" style="<?= $active_tab !== 'widget' ? 'display:none;' : '' ?>">
 
       <div class="sv-card">
-        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetAutoRefreshBd"><span>Auto-Refresh</span><span class="sv-pill">Polling</span></div>
-        <div class="sv-card-bd-collapsible" id="svWidgetAutoRefreshBd">
+        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetDisplayBd"><span>Widget Settings</span><span class="sv-pill">Widget layout</span></div>
+        <div class="sv-card-bd-collapsible" id="svWidgetDisplayBd">
           <div class="sv-row">
             <div>
               <div class="sv-label">Automatic Refresh</div>
@@ -219,20 +239,14 @@ $lightClass   = $sv_light ? ' sv-light' : '';
           <div class="sv-row">
             <div>
               <div class="sv-label">Refresh Interval (seconds)</div>
-              <div class="sv-desc">How often to poll. Recommended: 15–60 seconds.</div>
+              <div class="sv-desc">How often to poll. Recommended: 15-60 seconds.</div>
             </div>
             <div class="sv-field">
               <input type="number" name="REFRESH_INTERVAL" class="form-control"
                 value="<?= htmlspecialchars($cfg['REFRESH_INTERVAL'] ?? '30') ?>">
-              <div class="sv-hint">Range: 5–300 s. Default: 30.</div>
+              <div class="sv-hint">Range: 5-300 s. Default: 30.</div>
             </div>
           </div>
-        </div>
-      </div>
-
-      <div class="sv-card sv-card--collapsed">
-        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetDisplayBd"><span>Display</span><span class="sv-pill">Widget layout</span></div>
-        <div class="sv-card-bd-collapsible" id="svWidgetDisplayBd" style="display:none;">
           <div class="sv-row">
             <div><div class="sv-label">Max streams shown</div><div class="sv-desc">Limit streams in the widget (0 = all).</div></div>
             <div class="sv-field">
@@ -269,12 +283,22 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <div><div class="sv-label">Show technical details</div><div class="sv-desc">Collapsible row with codec, audio channels, container, subtitles, HW acceleration and transcode reasons.</div></div>
             <div class="sv-field"><select name="WIDGET_SHOW_DETAILS" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_DETAILS'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_DETAILS'] ?? '1', '0', _('Hide')) ?></select></div>
           </div>
-        </div>
-      </div>
-
-      <div class="sv-card sv-card--collapsed">
-        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetSessionBd"><span>Session Control</span><span class="sv-pill">Advanced</span></div>
-        <div class="sv-card-bd-collapsible" id="svWidgetSessionBd" style="display:none;">
+          <div class="sv-row">
+            <div><div class="sv-label">Technical details default state</div><div class="sv-desc">Whether the technical details row is expanded or collapsed by default when streams load.</div></div>
+            <div class="sv-field"><select name="WIDGET_DETAILS_OPEN" class="form-control"><?= mk_option($cfg['WIDGET_DETAILS_OPEN'] ?? '0', '0', _('Collapsed (Default)')) ?><?= mk_option($cfg['WIDGET_DETAILS_OPEN'] ?? '0', '1', _('Expanded')) ?></select></div>
+          </div>
+          <div class="sv-row">
+            <div><div class="sv-label">Show media summary</div><div class="sv-desc">Collapsible row with thumbnail and description of the currently playing media.</div></div>
+            <div class="sv-field"><select name="WIDGET_SHOW_SUMMARY" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_SUMMARY'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_SUMMARY'] ?? '1', '0', _('Hide')) ?></select></div>
+          </div>
+          <div class="sv-row">
+            <div><div class="sv-label">Media summary default state</div><div class="sv-desc">Whether the media summary row is expanded or collapsed by default when streams load.</div></div>
+            <div class="sv-field"><select name="WIDGET_SUMMARY_OPEN" class="form-control"><?= mk_option($cfg['WIDGET_SUMMARY_OPEN'] ?? '0', '0', _('Collapsed (Default)')) ?><?= mk_option($cfg['WIDGET_SUMMARY_OPEN'] ?? '0', '1', _('Expanded')) ?></select></div>
+          </div>
+          <div class="sv-row">
+            <div><div class="sv-label">Show Docker stats</div><div class="sv-desc">Display CPU and RAM usage of media server containers in the widget footer.</div></div>
+            <div class="sv-field"><select name="WIDGET_SHOW_DOCKER" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_DOCKER'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_DOCKER'] ?? '1', '0', _('Hide')) ?></select></div>
+          </div>
           <div class="sv-row">
             <div>
               <div class="sv-label">Allow killing sessions</div>
@@ -282,7 +306,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
             <div class="sv-field">
               <select name="TOOL_ALLOW_KILL" class="form-control">
-                <?= mk_option($cfg['TOOL_ALLOW_KILL'] ?? '0', '0', _('Disabled (Default — safe)')) ?>
+                <?= mk_option($cfg['TOOL_ALLOW_KILL'] ?? '0', '0', _('Disabled (Default)')) ?>
                 <?= mk_option($cfg['TOOL_ALLOW_KILL'] ?? '0', '1', _('Enabled')) ?>
               </select>
               <div class="sv-hint" style="color:#f47d42;">⚠ Forcibly disconnects users.</div>
@@ -292,7 +316,83 @@ $lightClass   = $sv_light ? ' sv-light' : '';
       </div>
 
       <div class="sv-card sv-card--collapsed">
-        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetConnectionBd"><span>Connection</span><span class="sv-pill">Network</span></div>
+        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetStatsBd"><span>Statistics Settings</span><span class="sv-pill">History</span></div>
+        <div class="sv-card-bd-collapsible" id="svWidgetStatsBd" style="display:none;">
+
+          <div class="sv-row">
+            <div>
+              <div class="sv-label">Enable watch history</div>
+              <div class="sv-desc">Record session data to a local SQLite database for statistics. Data is stored in your appdata directory (never on the USB flash). The Tool page (Statistics tab) uses this data.</div>
+            </div>
+            <div class="sv-field">
+              <select name="STATS_ENABLED" class="form-control">
+                <?= mk_option($cfg['STATS_ENABLED'] ?? '0', '0', _('Disabled (Default)')) ?>
+                <?= mk_option($cfg['STATS_ENABLED'] ?? '0', '1', _('Enabled')) ?>
+              </select>
+            </div>
+          </div>
+
+          <div class="sv-row">
+            <div>
+              <div class="sv-label">Database path</div>
+              <div class="sv-desc">Directory where the SQLite database is stored. Must be under <code>/mnt/user/</code>. The array must be started for this path to be available.</div>
+            </div>
+            <div class="sv-field">
+              <input type="text" name="STATS_DB_PATH" class="form-control"
+                     value="<?= htmlspecialchars($cfg['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer', ENT_QUOTES, 'UTF-8') ?>"
+                     placeholder="/mnt/user/appdata/Stream-Viewer"
+                     data-has-db="<?= is_file(rtrim((string)($cfg['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer'), '/') . '/streamviewer.db') ? '1' : '0' ?>">
+              <div id="svDbPathWarn" style="display:none;color:#e74c3c;font-size:.85rem;font-weight:600;margin-top:.35rem;">Changing the database path will start with a fresh database. Existing data will remain in the previous location.</div>
+            </div>
+          </div>
+
+          <div class="sv-row">
+            <div>
+              <div class="sv-label">Data retention</div>
+              <div class="sv-desc">How many days of watch history to keep. Older records are automatically pruned. Min 7 days, max 365 days.</div>
+            </div>
+            <div class="sv-field">
+              <select name="STATS_RETENTION_DAYS" class="form-control">
+                <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '7', _('7 days')) ?>
+                <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '30', _('30 days')) ?>
+                <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '90', _('90 days (Default)')) ?>
+                <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '180', _('180 days')) ?>
+                <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '365', _('365 days')) ?>
+              </select>
+            </div>
+          </div>
+
+          <div class="sv-row">
+            <div>
+              <div class="sv-label">Anonymize IP addresses</div>
+              <div class="sv-desc">Zero out the last octet of IPv4 addresses (e.g. 192.168.1.100 -> 192.168.1.0) before storing. Protects user privacy at the cost of less precise location data.</div>
+            </div>
+            <div class="sv-field">
+              <select name="STATS_ANONYMIZE_IP" class="form-control">
+                <?= mk_option($cfg['STATS_ANONYMIZE_IP'] ?? '0', '0', _('Disabled (Default)')) ?>
+                <?= mk_option($cfg['STATS_ANONYMIZE_IP'] ?? '0', '1', _('Enabled (anonymized)')) ?>
+              </select>
+            </div>
+          </div>
+
+          <div class="sv-row">
+            <div>
+              <div class="sv-label">Library sections</div>
+              <div class="sv-desc">Default state of server sections on the Libraries tab.</div>
+            </div>
+            <div class="sv-field">
+              <select name="LIB_SECTIONS_OPEN" class="form-control">
+                <?= mk_option($cfg['LIB_SECTIONS_OPEN'] ?? '0', '0', _('Collapsed (Default)')) ?>
+                <?= mk_option($cfg['LIB_SECTIONS_OPEN'] ?? '0', '1', _('Expanded')) ?>
+              </select>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="sv-card sv-card--collapsed">
+        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetConnectionBd"><span>Connections Servers</span><span class="sv-pill">Network</span></div>
         <div class="sv-card-bd-collapsible" id="svWidgetConnectionBd" style="display:none;">
           <div class="sv-row">
             <div>
@@ -301,7 +401,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
             <div class="sv-field">
               <select name="VERIFY_SSL" class="form-control">
-                <?= mk_option($cfg['VERIFY_SSL'] ?? '0', '0', _('Disabled (Default — self-signed OK)')) ?>
+                <?= mk_option($cfg['VERIFY_SSL'] ?? '0', '0', _('Disabled (Default)')) ?>
                 <?= mk_option($cfg['VERIFY_SSL'] ?? '0', '1', _('Enabled (strict)')) ?>
               </select>
             </div>
@@ -1271,8 +1371,16 @@ function resetDefaults() {
             REFRESH_ENABLED:'1', REFRESH_INTERVAL:'30', WIDGET_MAX_STREAMS:'10',
             WIDGET_SHOW_DEVICE:'1', WIDGET_SHOW_IP:'1', WIDGET_SHOW_PROGRESS:'1',
             WIDGET_SHOW_QUALITY:'1', WIDGET_SHOW_TRANSCODE:'1', WIDGET_SHOW_DETAILS:'1',
+            WIDGET_DETAILS_OPEN:'0',
+            WIDGET_SHOW_SUMMARY:'1', WIDGET_SUMMARY_OPEN:'0',
+            WIDGET_SHOW_DOCKER:'1',
+            LIB_SECTIONS_OPEN:'0',
             TOOL_ALLOW_KILL:'0',
-            VERIFY_SSL:'0'
+            VERIFY_SSL:'0',
+            STATS_ENABLED:'0',
+            STATS_DB_PATH:'/mnt/user/appdata/Stream-Viewer',
+            STATS_RETENTION_DAYS:'90',
+            STATS_ANONYMIZE_IP:'0'
         };
         Object.keys(defaults).forEach(function(k) {
             var el = form.querySelector('[name="' + k + '"]');
@@ -1397,9 +1505,41 @@ function resetDefaults() {
     var form     = document.querySelector('form[name="streamviewer_settings"]');
     var applyBtn = document.getElementById('svApplyBtn') || (form && form.querySelector('input[name="#apply_btn"]'));
 
+    // Store original DB path to detect changes
+    var _origDbPath = (document.querySelector('input[name="STATS_DB_PATH"]') || {}).value || '';
+    var _hasExistingDb = (document.querySelector('input[name="STATS_DB_PATH"]') || {}).dataset.hasDb === '1';
+
+    // Show red warning when DB path is changed (only if a database already exists)
+    var dbPathEl = document.querySelector('input[name="STATS_DB_PATH"]');
+    var dbPathWarn = document.getElementById('svDbPathWarn');
+    if (dbPathEl && dbPathWarn) {
+        dbPathEl.addEventListener('input', function() {
+            var cur = dbPathEl.value.replace(/\/+$/, '');
+            var orig = _origDbPath.replace(/\/+$/, '');
+            dbPathWarn.style.display = (_hasExistingDb && cur !== orig) ? 'block' : 'none';
+        });
+    }
+
     function ajaxSubmitForm(e) {
         if (e) e.preventDefault();
         syncAllToHidden();
+
+        // Warn if DB path changed (existing data won't be migrated to new location)
+        var dbPathInput = document.querySelector('input[name="STATS_DB_PATH"]');
+        var newDbPath = dbPathInput ? dbPathInput.value.replace(/\/+$/, '') : '';
+        var origPath = _origDbPath.replace(/\/+$/, '');
+        if (_hasExistingDb && newDbPath !== origPath) {
+            var ok = confirm(
+                'WARNING: Changing the database path will start with a fresh database.\n\n'
+                + 'Existing watch history and library data will remain in the previous location:\n'
+                + origPath + '\n\n'
+                + 'Are you sure you want to continue?'
+            );
+            if (!ok) {
+                if (applyBtn) { applyBtn.disabled = false; applyBtn.value = 'Apply'; }
+                return false;
+            }
+        }
 
         // Disable apply button while saving
         if (applyBtn) { applyBtn.disabled = true; applyBtn.value = 'Saving…'; }
