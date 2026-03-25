@@ -10,8 +10,6 @@ A real time media stream monitor and statistics tracker for Unraid. View active 
   <img src="https://img.shields.io/github/license/Lazaros-Chalkidis/unraid-streamviewer?label=License" style="margin: 4px;" />
 </p>
 
-# unraid-streamviewer
-
 ## Features
 
 **Dashboard Widget**
