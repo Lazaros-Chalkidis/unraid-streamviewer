@@ -39,8 +39,8 @@ $sanitize_name = static function($v): string {
 $sanitize_type = static fn($v) => in_array((string)$v, SV_VALID_TYPES, true) ? (string)$v : '';
 
 $clamp_interval = static function($v): string {
-    $n = (int)$v;
-    return ($n >= 5 && $n <= 300) ? (string)$n : '30';
+    $allowed = ['5', '10', '20', '30', '50', '80', '100', '150', '200', '250', '300'];
+    return in_array((string)$v, $allowed, true) ? (string)$v : '30';
 };
 
 $clamp_max_streams = static function($v): string {
@@ -97,6 +97,11 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['TOOL_SHOW_DEVICE']      = $yn($_POST['TOOL_SHOW_DEVICE']      ?? '1', '1');
     $new_cfg['TOOL_ALLOW_KILL']       = $yn($_POST['TOOL_ALLOW_KILL']       ?? '0', '0');
     $new_cfg['VERIFY_SSL']            = $yn($_POST['VERIFY_SSL']            ?? '0', '0');
+
+    // ── Badge theme ──
+    $validThemes = ['default', 'blue', 'lime', 'green', 'purple', 'unraid', 'red', 'cyan', 'pink', 'gold', 'teal', 'mono'];
+    $bt = (string)($_POST['BADGE_THEME'] ?? 'default');
+    $new_cfg['BADGE_THEME'] = in_array($bt, $validThemes, true) ? $bt : 'default';
 
     // ── Stats settings ──
     $new_cfg['STATS_ENABLED']        = $yn($_POST['STATS_ENABLED'] ?? '0', '0');
@@ -221,189 +226,264 @@ $lightClass   = $sv_light ? ' sv-light' : '';
          ════════════════════════════════════════════════════════════════ -->
     <div id="svWidgetPanel" style="<?= $active_tab !== 'widget' ? 'display:none;' : '' ?>">
 
-      <div class="sv-card">
-        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetDisplayBd"><span>Widget Settings</span><span class="sv-pill">Widget layout</span></div>
-        <div class="sv-card-bd-collapsible" id="svWidgetDisplayBd">
-          <div class="sv-row">
-            <div>
-              <div class="sv-label">Automatic Refresh</div>
-              <div class="sv-desc">Automatically poll your servers for new stream data.</div>
+      <?php
+      // Helper: render a toggle switch for a boolean config key
+      // $name = form field name, $val = current value, $default = default value, $onLabel/$offLabel
+      $toggle = function($name, $val, $default = '1', $onLabel = 'Enabled', $offLabel = 'Disabled') {
+          $isOn = ((string)($val ?? $default)) === '1';
+          $checked = $isOn ? ' checked' : '';
+          $txtClass = $isOn ? 'on' : 'off';
+          $txtLabel = $isOn ? $onLabel : $offLabel;
+          return '<input type="hidden" name="' . $name . '" value="' . ($isOn ? '1' : '0') . '">'
+              . '<label class="sv-toggle"><input type="checkbox" data-sv-toggle="' . $name . '"' . $checked . '>'
+              . '<span class="sv-toggle-track"></span></label>'
+              . '<span class="sv-toggle-txt ' . $txtClass . '">' . $txtLabel . '</span>';
+      };
+
+      // Helper for show/hide toggles
+      $toggleShow = function($name, $val, $default = '1') use ($toggle) {
+          return $toggle($name, $val, $default, 'Show', 'Hide');
+      };
+      ?>
+
+      <!-- ── Section 1: Widget Settings ── -->
+      <div class="sv-sec" id="svSecWidget">
+        <div class="sv-sec-hd">
+          <span>Widget settings</span>
+          <span class="sv-pill">Widget layout</span>
+          <span class="sv-sec-arrow">&#9650;</span>
+        </div>
+        <div class="sv-sec-bd">
+          <div class="sv-r">
+            <div class="sv-r-label">Automatic refresh</div>
+            <div class="sv-r-field">
+              <?= $toggle('REFRESH_ENABLED', $cfg['REFRESH_ENABLED'] ?? '1', '1') ?>
+              <span class="sv-r-desc">Poll servers for new stream data</span>
             </div>
-            <div class="sv-field">
-              <select name="REFRESH_ENABLED" class="form-control">
-                <?= mk_option($cfg['REFRESH_ENABLED'] ?? '1', '1', _('Enabled')) ?>
-                <?= mk_option($cfg['REFRESH_ENABLED'] ?? '1', '0', _('Disabled')) ?>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Refresh interval</div>
+            <div class="sv-r-field">
+              <select name="REFRESH_INTERVAL" class="sv-select">
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '5',   _('5s')) ?>
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '10',  _('10s')) ?>
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '20',  _('20s')) ?>
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '30',  _('30s - Default')) ?>
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '50',  _('50s')) ?>
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '80',  _('80s')) ?>
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '100', _('100s')) ?>
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '150', _('150s')) ?>
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '200', _('200s')) ?>
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '250', _('250s')) ?>
+                <?= mk_option($cfg['REFRESH_INTERVAL'] ?? '30', '300', _('300s')) ?>
               </select>
+              <span class="sv-r-desc">How often to poll</span>
             </div>
           </div>
-          <div class="sv-row">
-            <div>
-              <div class="sv-label">Refresh Interval (seconds)</div>
-              <div class="sv-desc">How often to poll. Recommended: 15-60 seconds.</div>
-            </div>
-            <div class="sv-field">
-              <input type="number" name="REFRESH_INTERVAL" class="form-control"
-                value="<?= htmlspecialchars($cfg['REFRESH_INTERVAL'] ?? '30') ?>">
-              <div class="sv-hint">Range: 5-300 s. Default: 30.</div>
-            </div>
-          </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Max streams shown</div><div class="sv-desc">Limit streams in the widget (0 = all).</div></div>
-            <div class="sv-field">
-              <select name="WIDGET_MAX_STREAMS" class="form-control">
-                <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '0',  _('0 — All')) ?>
+          <div class="sv-r">
+            <div class="sv-r-label">Max streams shown</div>
+            <div class="sv-r-field">
+              <select name="WIDGET_MAX_STREAMS" class="sv-select">
+                <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '0',  _('All')) ?>
                 <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '5',  _('5')) ?>
-                <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '10', _('10 (Default)')) ?>
+                <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '10', _('10 - Default')) ?>
                 <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '20', _('20')) ?>
                 <?= mk_option($cfg['WIDGET_MAX_STREAMS'] ?? '10', '50', _('50')) ?>
               </select>
+              <span class="sv-r-desc">All = Unlimited</span>
             </div>
           </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Show device</div></div>
-            <div class="sv-field"><select name="WIDGET_SHOW_DEVICE" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_DEVICE'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_DEVICE'] ?? '1', '0', _('Hide')) ?></select></div>
-          </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Show IP address</div><div class="sv-desc">Disable for privacy on shared screens.</div></div>
-            <div class="sv-field"><select name="WIDGET_SHOW_IP" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_IP'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_IP'] ?? '1', '0', _('Hide')) ?></select></div>
-          </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Show progress bar</div></div>
-            <div class="sv-field"><select name="WIDGET_SHOW_PROGRESS" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_PROGRESS'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_PROGRESS'] ?? '1', '0', _('Hide')) ?></select></div>
-          </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Show quality / bitrate</div></div>
-            <div class="sv-field"><select name="WIDGET_SHOW_QUALITY" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_QUALITY'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_QUALITY'] ?? '1', '0', _('Hide')) ?></select></div>
-          </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Show transcode info</div></div>
-            <div class="sv-field"><select name="WIDGET_SHOW_TRANSCODE" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1', '0', _('Hide')) ?></select></div>
-          </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Show technical details</div><div class="sv-desc">Collapsible row with codec, audio channels, container, subtitles, HW acceleration and transcode reasons.</div></div>
-            <div class="sv-field"><select name="WIDGET_SHOW_DETAILS" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_DETAILS'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_DETAILS'] ?? '1', '0', _('Hide')) ?></select></div>
-          </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Technical details default state</div><div class="sv-desc">Whether the technical details row is expanded or collapsed by default when streams load.</div></div>
-            <div class="sv-field"><select name="WIDGET_DETAILS_OPEN" class="form-control"><?= mk_option($cfg['WIDGET_DETAILS_OPEN'] ?? '0', '0', _('Collapsed (Default)')) ?><?= mk_option($cfg['WIDGET_DETAILS_OPEN'] ?? '0', '1', _('Expanded')) ?></select></div>
-          </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Show media summary</div><div class="sv-desc">Collapsible row with thumbnail and description of the currently playing media.</div></div>
-            <div class="sv-field"><select name="WIDGET_SHOW_SUMMARY" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_SUMMARY'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_SUMMARY'] ?? '1', '0', _('Hide')) ?></select></div>
-          </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Media summary default state</div><div class="sv-desc">Whether the media summary row is expanded or collapsed by default when streams load.</div></div>
-            <div class="sv-field"><select name="WIDGET_SUMMARY_OPEN" class="form-control"><?= mk_option($cfg['WIDGET_SUMMARY_OPEN'] ?? '0', '0', _('Collapsed (Default)')) ?><?= mk_option($cfg['WIDGET_SUMMARY_OPEN'] ?? '0', '1', _('Expanded')) ?></select></div>
-          </div>
-          <div class="sv-row">
-            <div><div class="sv-label">Show Docker stats</div><div class="sv-desc">Display CPU and RAM usage of media server containers in the widget footer.</div></div>
-            <div class="sv-field"><select name="WIDGET_SHOW_DOCKER" class="form-control"><?= mk_option($cfg['WIDGET_SHOW_DOCKER'] ?? '1', '1', _('Show (Default)')) ?><?= mk_option($cfg['WIDGET_SHOW_DOCKER'] ?? '1', '0', _('Hide')) ?></select></div>
-          </div>
-          <div class="sv-row">
-            <div>
-              <div class="sv-label">Allow killing sessions</div>
-              <div class="sv-desc">Shows a Stop button per stream. Immediately disconnects the user.</div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show device</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('WIDGET_SHOW_DEVICE', $cfg['WIDGET_SHOW_DEVICE'] ?? '1') ?>
+              <span class="sv-r-desc">Client device name</span>
             </div>
-            <div class="sv-field">
-              <select name="TOOL_ALLOW_KILL" class="form-control">
-                <?= mk_option($cfg['TOOL_ALLOW_KILL'] ?? '0', '0', _('Disabled (Default)')) ?>
-                <?= mk_option($cfg['TOOL_ALLOW_KILL'] ?? '0', '1', _('Enabled')) ?>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show IP address</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('WIDGET_SHOW_IP', $cfg['WIDGET_SHOW_IP'] ?? '1') ?>
+              <span class="sv-r-desc">Disable for privacy on shared screens</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Badge color theme<span class="sv-r-label-desc">Server name badge colors</span></div>
+            <div class="sv-r-field" style="padding:6px 16px;">
+              <?php
+              $badgeTheme = (string)($cfg['BADGE_THEME'] ?? 'default');
+              $themes = [
+                  'default' => ['label' => 'Default', 'bg' => '#1a1a1a',                     'c' => 'rgba(255,255,255,.85)', 'br' => '1px solid rgba(255,255,255,.15)'],
+                  'blue'    => ['label' => 'Blue',    'bg' => 'rgba(21,101,192,.18)',          'c' => '#1976d2',               'br' => '1px solid rgba(21,101,192,.40)'],
+                  'lime'    => ['label' => 'Lime',    'bg' => 'rgba(175,180,43,.15)',          'c' => '#c0ca33',               'br' => '1px solid rgba(175,180,43,.35)'],
+                  'green'   => ['label' => 'Green',   'bg' => 'rgba(46,204,113,.12)',          'c' => '#2ecc71',               'br' => '1px solid rgba(46,204,113,.30)'],
+                  'purple'  => ['label' => 'Purple',  'bg' => '#1a1a2d',                      'c' => '#9b8ce8',               'br' => '1px solid #2a2644'],
+                  'unraid'  => ['label' => 'Unraid',  'bg' => 'rgba(244,125,66,.15)',          'c' => '#f47d42',               'br' => '1px solid rgba(244,125,66,.35)'],
+                  'red'     => ['label' => 'Red',     'bg' => 'rgba(231,76,60,.15)',           'c' => '#e74c3c',               'br' => '1px solid rgba(231,76,60,.35)'],
+                  'cyan'    => ['label' => 'Cyan',    'bg' => 'rgba(0,188,212,.12)',           'c' => '#00bcd4',               'br' => '1px solid rgba(0,188,212,.30)'],
+                  'pink'    => ['label' => 'Pink',    'bg' => 'rgba(233,30,99,.15)',           'c' => '#e91e63',               'br' => '1px solid rgba(233,30,99,.35)'],
+                  'gold'    => ['label' => 'Gold',    'bg' => 'rgba(255,235,59,.10)',          'c' => '#fdd835',               'br' => '1px solid rgba(255,235,59,.25)'],
+                  'teal'    => ['label' => 'Teal',    'bg' => 'rgba(0,150,136,.15)',           'c' => '#26a69a',               'br' => '1px solid rgba(0,150,136,.35)'],
+                  'mono'    => ['label' => 'Mono',    'bg' => 'rgba(255,255,255,.06)',         'c' => 'rgba(255,255,255,.45)', 'br' => '1px solid rgba(255,255,255,.12)'],
+              ];
+              ?>
+              <input type="hidden" name="BADGE_THEME" value="<?= htmlspecialchars($badgeTheme) ?>">
+              <div class="sv-badge-themes">
+                <?php foreach ($themes as $key => $t): $sel = ($key === $badgeTheme); ?>
+                <label class="sv-badge-theme-opt<?= $sel ? ' sv-badge-theme-opt--sel' : '' ?>" data-theme="<?= $key ?>">
+                  <input type="radio" name="_sv_badge_theme" value="<?= $key ?>"<?= $sel ? ' checked' : '' ?>>
+                  <span class="sv-badge-theme-radio"></span>
+                  <span class="sv-badge-theme-b" style="background:<?= $t['bg'] ?>;color:<?= $t['c'] ?>;border:<?= $t['br'] ?>;">NAME</span>
+                  <span class="sv-badge-theme-name"><?= $t['label'] ?></span>
+                </label>
+                <?php endforeach; ?>
+              </div>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show progress bar</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('WIDGET_SHOW_PROGRESS', $cfg['WIDGET_SHOW_PROGRESS'] ?? '1') ?>
+              <span class="sv-r-desc">Playback position bar</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show quality / bitrate</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('WIDGET_SHOW_QUALITY', $cfg['WIDGET_SHOW_QUALITY'] ?? '1') ?>
+              <span class="sv-r-desc">Resolution and live bitrate</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show transcode info</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('WIDGET_SHOW_TRANSCODE', $cfg['WIDGET_SHOW_TRANSCODE'] ?? '1') ?>
+              <span class="sv-r-desc">Transcode speed and type</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show technical details</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('WIDGET_SHOW_DETAILS', $cfg['WIDGET_SHOW_DETAILS'] ?? '1') ?>
+              <span class="sv-r-desc">Codec, audio, container, subs, HW</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Technical details default state</div>
+            <div class="sv-r-field">
+              <select name="WIDGET_DETAILS_OPEN" class="sv-select">
+                <?= mk_option($cfg['WIDGET_DETAILS_OPEN'] ?? '0', '0', _('Collapsed - Default')) ?>
+                <?= mk_option($cfg['WIDGET_DETAILS_OPEN'] ?? '0', '1', _('Expanded')) ?>
               </select>
-              <div class="sv-hint" style="color:#f47d42;">⚠ Forcibly disconnects users.</div>
+              <span class="sv-r-desc">When streams load</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show media summary</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('WIDGET_SHOW_SUMMARY', $cfg['WIDGET_SHOW_SUMMARY'] ?? '1') ?>
+              <span class="sv-r-desc">Thumbnail and description</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Media summary default state</div>
+            <div class="sv-r-field">
+              <select name="WIDGET_SUMMARY_OPEN" class="sv-select">
+                <?= mk_option($cfg['WIDGET_SUMMARY_OPEN'] ?? '0', '0', _('Collapsed - Default')) ?>
+                <?= mk_option($cfg['WIDGET_SUMMARY_OPEN'] ?? '0', '1', _('Expanded')) ?>
+              </select>
+              <span class="sv-r-desc">When streams load</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show Docker stats</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('WIDGET_SHOW_DOCKER', $cfg['WIDGET_SHOW_DOCKER'] ?? '1') ?>
+              <span class="sv-r-desc">CPU/RAM in footer</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Allow killing sessions</div>
+            <div class="sv-r-field">
+              <?= $toggle('TOOL_ALLOW_KILL', $cfg['TOOL_ALLOW_KILL'] ?? '0', '0') ?>
+              <span class="sv-r-warn">Forcibly disconnects users</span>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="sv-card sv-card--collapsed">
-        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetStatsBd"><span>Statistics Settings</span><span class="sv-pill">History</span></div>
-        <div class="sv-card-bd-collapsible" id="svWidgetStatsBd" style="display:none;">
-
-          <div class="sv-row">
-            <div>
-              <div class="sv-label">Enable watch history</div>
-              <div class="sv-desc">Record session data to a local SQLite database for statistics. Data is stored in your appdata directory (never on the USB flash). The Tool page (Statistics tab) uses this data.</div>
-            </div>
-            <div class="sv-field">
-              <select name="STATS_ENABLED" class="form-control">
-                <?= mk_option($cfg['STATS_ENABLED'] ?? '0', '0', _('Disabled (Default)')) ?>
-                <?= mk_option($cfg['STATS_ENABLED'] ?? '0', '1', _('Enabled')) ?>
-              </select>
+      <!-- ── Section 2: Statistics Settings ── -->
+      <div class="sv-sec closed" id="svSecStats">
+        <div class="sv-sec-hd">
+          <span>Statistics settings</span>
+          <span class="sv-pill">History and more..</span>
+          <span class="sv-sec-arrow">&#9650;</span>
+        </div>
+        <div class="sv-sec-bd">
+          <div class="sv-r">
+            <div class="sv-r-label">Enable watch history</div>
+            <div class="sv-r-field">
+              <?= $toggle('STATS_ENABLED', $cfg['STATS_ENABLED'] ?? '0', '0') ?>
+              <span class="sv-r-desc">Record to local SQLite</span>
             </div>
           </div>
-
-          <div class="sv-row">
-            <div>
-              <div class="sv-label">Database path</div>
-              <div class="sv-desc">Directory where the SQLite database is stored. Must be under <code>/mnt/user/</code>. The array must be started for this path to be available.</div>
-            </div>
-            <div class="sv-field">
-              <input type="text" name="STATS_DB_PATH" class="form-control"
+          <div class="sv-r">
+            <div class="sv-r-label">Database path</div>
+            <div class="sv-r-field" style="flex-direction:column;align-items:stretch;gap:4px;">
+              <input type="text" name="STATS_DB_PATH" class="sv-input" style="max-width:260px;"
                      value="<?= htmlspecialchars($cfg['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer', ENT_QUOTES, 'UTF-8') ?>"
                      placeholder="/mnt/user/appdata/Stream-Viewer"
                      data-has-db="<?= is_file(rtrim((string)($cfg['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer'), '/') . '/streamviewer.db') ? '1' : '0' ?>">
-              <div id="svDbPathWarn" style="display:none;color:#e74c3c;font-size:.85rem;font-weight:600;margin-top:.35rem;">Changing the database path will start with a fresh database. Existing data will remain in the previous location.</div>
+              <span class="sv-r-desc">Must be under /mnt/user/</span>
+              <div id="svDbPathWarn" style="display:none;">Changing the database path will start with a fresh database. Existing data will remain in the previous location.</div>
             </div>
           </div>
-
-          <div class="sv-row">
-            <div>
-              <div class="sv-label">Data retention</div>
-              <div class="sv-desc">How many days of watch history to keep. Older records are automatically pruned. Min 7 days, max 365 days.</div>
-            </div>
-            <div class="sv-field">
-              <select name="STATS_RETENTION_DAYS" class="form-control">
+          <div class="sv-r">
+            <div class="sv-r-label">Data retention</div>
+            <div class="sv-r-field">
+              <select name="STATS_RETENTION_DAYS" class="sv-select">
                 <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '7', _('7 days')) ?>
                 <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '30', _('30 days')) ?>
-                <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '90', _('90 days (Default)')) ?>
+                <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '90', _('90 days - Default')) ?>
                 <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '180', _('180 days')) ?>
                 <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '365', _('365 days')) ?>
               </select>
+              <span class="sv-r-desc">Auto-prune older records</span>
             </div>
           </div>
-
-          <div class="sv-row">
-            <div>
-              <div class="sv-label">Anonymize IP addresses</div>
-              <div class="sv-desc">Zero out the last octet of IPv4 addresses (e.g. 192.168.1.100 -> 192.168.1.0) before storing. Protects user privacy at the cost of less precise location data.</div>
-            </div>
-            <div class="sv-field">
-              <select name="STATS_ANONYMIZE_IP" class="form-control">
-                <?= mk_option($cfg['STATS_ANONYMIZE_IP'] ?? '0', '0', _('Disabled (Default)')) ?>
-                <?= mk_option($cfg['STATS_ANONYMIZE_IP'] ?? '0', '1', _('Enabled (anonymized)')) ?>
-              </select>
+          <div class="sv-r">
+            <div class="sv-r-label">Anonymize IPs</div>
+            <div class="sv-r-field">
+              <?= $toggle('STATS_ANONYMIZE_IP', $cfg['STATS_ANONYMIZE_IP'] ?? '0', '0') ?>
+              <span class="sv-r-desc">Zero last IPv4 octet</span>
             </div>
           </div>
-
-          <div class="sv-row">
-            <div>
-              <div class="sv-label">Library sections</div>
-              <div class="sv-desc">Default state of server sections on the Libraries tab.</div>
-            </div>
-            <div class="sv-field">
-              <select name="LIB_SECTIONS_OPEN" class="form-control">
-                <?= mk_option($cfg['LIB_SECTIONS_OPEN'] ?? '0', '0', _('Collapsed (Default)')) ?>
+          <div class="sv-r">
+            <div class="sv-r-label">Library sections</div>
+            <div class="sv-r-field">
+              <select name="LIB_SECTIONS_OPEN" class="sv-select">
+                <?= mk_option($cfg['LIB_SECTIONS_OPEN'] ?? '0', '0', _('Collapsed - Default')) ?>
                 <?= mk_option($cfg['LIB_SECTIONS_OPEN'] ?? '0', '1', _('Expanded')) ?>
               </select>
+              <span class="sv-r-desc">Libraries tab default</span>
             </div>
           </div>
-
         </div>
       </div>
 
-      <div class="sv-card sv-card--collapsed">
-        <div class="sv-card-hd sv-card-hd--toggle" data-target="svWidgetConnectionBd"><span>Connections Servers</span><span class="sv-pill">Network</span></div>
-        <div class="sv-card-bd-collapsible" id="svWidgetConnectionBd" style="display:none;">
-          <div class="sv-row">
-            <div>
-              <div class="sv-label">Verify SSL certificates</div>
-              <div class="sv-desc">Validate TLS certificates when connecting to your media servers. Disable if you use self-signed certs (common on LAN). Connections to plex.tv always verify regardless of this setting.</div>
-            </div>
-            <div class="sv-field">
-              <select name="VERIFY_SSL" class="form-control">
-                <?= mk_option($cfg['VERIFY_SSL'] ?? '0', '0', _('Disabled (Default)')) ?>
-                <?= mk_option($cfg['VERIFY_SSL'] ?? '0', '1', _('Enabled (strict)')) ?>
-              </select>
+      <!-- ── Section 3: Connection Settings ── -->
+      <div class="sv-sec closed" id="svSecConn">
+        <div class="sv-sec-hd">
+          <span>Connection settings</span>
+          <span class="sv-pill">Network</span>
+          <span class="sv-sec-arrow">&#9650;</span>
+        </div>
+        <div class="sv-sec-bd">
+          <div class="sv-r">
+            <div class="sv-r-label">Verify SSL certificates</div>
+            <div class="sv-r-field">
+              <?= $toggle('VERIFY_SSL', $cfg['VERIFY_SSL'] ?? '0', '0') ?>
+              <span class="sv-r-desc">For self-signed certs on LAN</span>
             </div>
           </div>
         </div>
@@ -499,8 +579,8 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
             <div class="sv-server-field sv-server-field--wide">
               <label class="sv-field-label">API Key</label>
-              <input type="password" id="svJfToken" class="form-control"
-                placeholder="Dashboard → API Keys → New key" autocomplete="new-password">
+              <input type="text" id="svJfToken" class="form-control sv-masked-input"
+                placeholder="Dashboard → API Keys → New key" autocomplete="off">
               <div class="sv-hint">Dashboard → Administration → API Keys → + New.</div>
             </div>
           </div>
@@ -552,8 +632,8 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
             <div class="sv-server-field sv-server-field--wide">
               <label class="sv-field-label">API Key</label>
-              <input type="password" id="svEmbyToken" class="form-control"
-                placeholder="Dashboard → API Keys → New key" autocomplete="new-password">
+              <input type="text" id="svEmbyToken" class="form-control sv-masked-input"
+                placeholder="Dashboard → API Keys → New key" autocomplete="off">
               <div class="sv-hint">Dashboard → Administration → API Keys → + New.</div>
             </div>
           </div>
@@ -590,7 +670,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
   <input type="hidden" name="SERVER<?= $i ?>_TYPE"    id="svHidType<?= $i ?>"    value="" autocomplete="off">
   <input type="hidden" name="SERVER<?= $i ?>_NAME"    id="svHidName<?= $i ?>"    value="" autocomplete="off">
   <input type="hidden" name="SERVER<?= $i ?>_URL"     id="svHidUrl<?= $i ?>"     value="" autocomplete="off">
-  <input type="hidden" name="SERVER<?= $i ?>_TOKEN"   id="svHidToken<?= $i ?>"   value="" autocomplete="new-password">
+  <input type="hidden" name="SERVER<?= $i ?>_TOKEN"   id="svHidToken<?= $i ?>"   value="" autocomplete="off">
   <?php endfor; ?>
 
   <!-- ── Footer ─────────────────────────────────────────────────────── -->
@@ -605,7 +685,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
 
   <div class="sv-footer-row">
     <a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" id="svSupportLink" class="sv-support-link">Support</a>
-    <div class="sv-version-text">Version: <?= htmlspecialchars($plugin_version) ?></div>
+    <span class="sv-version-badge">v<?= htmlspecialchars($plugin_version) ?></span>
   </div>
 
   <!-- ── Credits modal ──────────────────────────────────────────────── -->
@@ -625,7 +705,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         <div style="margin-bottom:1.1rem;"><a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" target="_blank" rel="noopener" style="color:#4a90e2;text-decoration:none;font-size:0.9em;">Plugin Support Thread</a></div>
       </div>
       <div class="sv-credits-footer">
-        <button id="svCreditsOkBtn" style="background:#f47d42;border:1px solid #f47d42;color:#fff;padding:0.5rem 2.5rem;font-size:0.9em;font-weight:500;border-radius:4px;cursor:pointer;">OK</button>
+        <button type="button" id="svCreditsOkBtn" style="background:#f47d42;border:1px solid #f47d42;color:#fff;padding:0.5rem 2.5rem;font-size:0.9em;font-weight:500;border-radius:4px;cursor:pointer;">OK</button>
       </div>
     </div>
   </div>
@@ -1106,10 +1186,10 @@ function buildServerCard(data, cardIndex) {
         +     '<div class="sv-server-field sv-server-field--wide">'
         +       '<label class="sv-field-label">Token / API Key'
         +         (hasToken ? ' <span class="sv-token-saved">✓ saved</span>' : '') + '</label>'
-        +       '<input type="password" class="form-control sv-srv-token"'
+        +       '<input type="text" class="form-control sv-srv-token sv-masked-input"'
         +         ' placeholder="' + escHtml(tokenPlaceholder) + '"'
         +         ' value="' + escHtml(tokenPh) + '"'
-        +         ' autocomplete="new-password"' + tokenReadonly + '>'
+        +         ' autocomplete="off"' + tokenReadonly + '>'
         +     '</div>'
         +   '</div>'
         + '</div>'
@@ -1380,11 +1460,29 @@ function resetDefaults() {
             STATS_ENABLED:'0',
             STATS_DB_PATH:'/mnt/user/appdata/Stream-Viewer',
             STATS_RETENTION_DAYS:'90',
-            STATS_ANONYMIZE_IP:'0'
+            STATS_ANONYMIZE_IP:'0',
+            BADGE_THEME:'default'
         };
         Object.keys(defaults).forEach(function(k) {
             var el = form.querySelector('[name="' + k + '"]');
             if (el) el.value = defaults[k];
+        });
+        // Sync toggle checkboxes to match reset values
+        document.querySelectorAll('.sv-toggle input[type="checkbox"]').forEach(function(cb) {
+            var name = cb.dataset.svToggle;
+            if (!name || !defaults.hasOwnProperty(name)) return;
+            cb.checked = defaults[name] === '1';
+            var txt = cb.closest('.sv-r-field').querySelector('.sv-toggle-txt');
+            if (txt) {
+                var isShow = txt.textContent === 'Show' || txt.textContent === 'Hide';
+                txt.textContent = cb.checked ? (isShow ? 'Show' : 'Enabled') : (isShow ? 'Hide' : 'Disabled');
+                txt.className = 'sv-toggle-txt ' + (cb.checked ? 'on' : 'off');
+            }
+        });
+        // Sync badge theme radio buttons
+        document.querySelectorAll('.sv-badge-theme-opt input[type="radio"]').forEach(function(r) {
+            r.checked = r.value === 'default';
+            r.closest('.sv-badge-theme-opt').classList.toggle('sv-badge-theme-opt--sel', r.checked);
         });
         markDirty();
         alert('Settings reset to defaults. Click "Apply" to save.');
@@ -1480,7 +1578,43 @@ function resetDefaults() {
         });
     });
 
-    // ── Card section toggles (Dashboard Widget panels) ────────────────────────
+    // ── Section header toggles (new sv-sec sections) ──────────────────────────
+    document.querySelectorAll('.sv-sec-hd').forEach(function(hd) {
+        hd.addEventListener('click', function() {
+            this.closest('.sv-sec').classList.toggle('closed');
+        });
+    });
+
+    // ── Toggle switch wiring ─────────────────────────────────────────────────
+    document.querySelectorAll('.sv-toggle input[type="checkbox"]').forEach(function(cb) {
+        cb.addEventListener('change', function() {
+            var name = this.dataset.svToggle;
+            if (!name) return;
+            var hidden = document.querySelector('input[type="hidden"][name="' + name + '"]');
+            if (hidden) hidden.value = this.checked ? '1' : '0';
+            var txt = this.closest('.sv-r-field').querySelector('.sv-toggle-txt');
+            if (txt) {
+                var isShow = txt.textContent === 'Show' || txt.textContent === 'Hide';
+                txt.textContent = this.checked ? (isShow ? 'Show' : 'Enabled') : (isShow ? 'Hide' : 'Disabled');
+                txt.className = 'sv-toggle-txt ' + (this.checked ? 'on' : 'off');
+            }
+            markDirty();
+        });
+    });
+
+    // ── Badge theme radio buttons ───────────────────────────────────────────
+    document.querySelectorAll('.sv-badge-theme-opt input[type="radio"]').forEach(function(radio) {
+        radio.addEventListener('change', function() {
+            var hidden = document.querySelector('input[type="hidden"][name="BADGE_THEME"]');
+            if (hidden) hidden.value = this.value;
+            document.querySelectorAll('.sv-badge-theme-opt').forEach(function(r) {
+                r.classList.toggle('sv-badge-theme-opt--sel', r.querySelector('input[type="radio"]').checked);
+            });
+            markDirty();
+        });
+    });
+
+    // ── Card section toggles (Dashboard Widget panels - legacy, kept for Plex/JF/Emby) ──
     document.querySelectorAll('.sv-card-hd--toggle').forEach(function(hd) {
         hd.addEventListener('click', function() {
             var card = this.closest('.sv-card');

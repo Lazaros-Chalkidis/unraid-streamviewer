@@ -140,7 +140,9 @@ final class StreamViewerEndpoint
 
     private function setSchemaVersion(\SQLite3 $db, int $ver): void
     {
-        $db->exec("INSERT OR REPLACE INTO sv_meta(key,val) VALUES('schema_version','" . $ver . "')");
+        $stmt = $db->prepare("INSERT OR REPLACE INTO sv_meta(key,val) VALUES('schema_version', :ver)");
+        $stmt->bindValue(':ver', (string)$ver, SQLITE3_TEXT);
+        $stmt->execute();
     }
 
     /**
@@ -560,6 +562,29 @@ final class StreamViewerEndpoint
         @file_put_contents(self::NONCE_FILE, json_encode($data), LOCK_EX);
     }
 
+    /**
+     * Read-only nonce verification (no sliding write).
+     * Used by high-frequency endpoints (docker stats mini-poll) to avoid
+     * race conditions with the main session fetch that does sliding writes.
+     */
+    private function verifyNonceReadOnly(): void
+    {
+        $provided = (string)(
+            $_GET['_svt']  ??
+            $_POST['_svt'] ??
+            $_SERVER['HTTP_X_SV_TOKEN'] ?? ''
+        );
+        if ($provided === '') $this->json(['error' => 'Missing token'], 403);
+        if (!is_file(self::NONCE_FILE)) $this->json(['error' => 'Invalid token'], 403);
+
+        $data = @json_decode((string)@file_get_contents(self::NONCE_FILE), true);
+        if (!is_array($data) || !isset($data['token'], $data['ts'])) {
+            $this->json(['error' => 'Invalid token'], 403);
+        }
+        if ((time() - (int)$data['ts']) > self::NONCE_TTL) $this->json(['error' => 'Token expired'], 403);
+        if (!hash_equals((string)$data['token'], $provided)) $this->json(['error' => 'Invalid token'], 403);
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // Security — rate limiting (file-based, per IP)
     // ══════════════════════════════════════════════════════════════════════
@@ -640,6 +665,15 @@ final class StreamViewerEndpoint
 
         if ($action === 'get_thumb') {
             $this->replyGetThumb();
+            return;
+        }
+
+        // Docker stats: lightweight path, verify nonce read-only (no sliding write)
+        // to avoid race conditions with concurrent session fetches
+        if ($action === 'get_docker_stats') {
+            $this->enforceAjaxGet();
+            $this->verifyNonceReadOnly();
+            $this->replyGetDockerStats();
             return;
         }
 
@@ -741,7 +775,7 @@ final class StreamViewerEndpoint
             // Only fetch Docker stats when there are active streams
             try {
                 $dockerStats = $this->getDockerStats($servers);
-                @file_put_contents($dockerCachePath, json_encode($dockerStats));
+                @file_put_contents($dockerCachePath, json_encode($dockerStats), LOCK_EX);
             } catch (\Throwable $e) {}
         }
 
@@ -932,7 +966,7 @@ final class StreamViewerEndpoint
             $playType  = $this->normalizePlexPlayType($item);
             $thumbPath = $item['grandparentThumb'] ?? $item['parentThumb'] ?? $item['thumb'] ?? null;
             $thumbUrl  = ($thumbPath !== null && $thumbPath !== '' && $srv['url'] !== '')
-                ? rtrim($srv['url'], '/') . '/photo/:/transcode?width=300&height=450&minSize=1&url='
+                ? rtrim($srv['url'], '/') . '/photo/:/transcode?width=600&height=900&minSize=1&url='
                   . urlencode($thumbPath) . '&X-Plex-Token=' . urlencode($srv['token'])
                 : '';
 
@@ -957,6 +991,8 @@ final class StreamViewerEndpoint
                 'bitrate'               => (int)($media['bitrate']                        ?? 0),
                 'container'             => (string)($media['container']                   ?? ''),
                 'video_codec'           => (string)($videoS['codec']                      ?? ''),
+                'bit_depth'             => (int)($videoS['bitDepth']                      ?? 0),
+                'video_range'           => $this->detectPlexVideoRange($videoS),
                 'audio_codec'           => (string)($audioS['codec']                      ?? ''),
                 'audio_channels'        => (int)($audioS['channels']                      ?? 0),
                 'audio_spatial'         => '',
@@ -987,7 +1023,21 @@ final class StreamViewerEndpoint
     private function formatPlexQuality(string $res): string
     {
         if ($res === '') return '';
-        return is_numeric($res) ? $res . 'p' : $res;
+        return $res;
+    }
+
+    private function detectPlexVideoRange(?array $videoStream): string
+    {
+        if ($videoStream === null) return '';
+        // Dolby Vision check
+        if (!empty($videoStream['DOVIPresent'])) return 'Dolby Vision';
+        $colorTrc = strtolower((string)($videoStream['colorTrc'] ?? ''));
+        if ($colorTrc === 'smpte2084')    return 'HDR10';
+        if ($colorTrc === 'arib-std-b67') return 'HLG';
+        // Fallback: check colorSpace for bt2020
+        $colorSpace = strtolower((string)($videoStream['colorSpace'] ?? ''));
+        if (strpos($colorSpace, 'bt2020') !== false) return 'HDR';
+        return 'SDR';
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1030,7 +1080,8 @@ final class StreamViewerEndpoint
 
             $videoCodec = $audioCodec = $container = $quality = '';
             $audioSpatial = $subLang = $subCodec = '';
-            $bitrate = $audioChannels = 0;
+            $bitrate = $audioChannels = $bitDepth = 0;
+            $videoRange = '';
 
             $mediaSources = $nowPlaying['MediaSources'] ?? [];
             $streams = [];
@@ -1049,7 +1100,15 @@ final class StreamViewerEndpoint
                 if ($sType === 'Video' && $videoCodec === '') {
                     $videoCodec = (string)($s['Codec'] ?? '');
                     $h = (int)($s['Height'] ?? 0);
-                    if ($h > 0) $quality = $h . 'p';
+                    if ($h > 0) $quality = (string)$h;
+                    $bitDepth   = (int)($s['BitDepth'] ?? 0);
+                    $vr = (string)($s['VideoRange'] ?? '');
+                    $vrt = (string)($s['VideoRangeType'] ?? '');
+                    if ($vrt !== '') {
+                        $videoRange = $vrt;
+                    } elseif ($vr !== '') {
+                        $videoRange = $vr;
+                    }
                 }
                 if ($sType === 'Audio' && $audioCodec === '') {
                     $audioCodec    = (string)($s['Codec']    ?? '');
@@ -1065,7 +1124,7 @@ final class StreamViewerEndpoint
 
             if ($quality === '') {
                 $h = (int)($nowPlaying['Height'] ?? 0);
-                if ($h > 0) $quality = $h . 'p';
+                if ($h > 0) $quality = (string)$h;
             }
 
             $hwAccel = '';
@@ -1077,7 +1136,7 @@ final class StreamViewerEndpoint
                 if ($bitrate    === 0)  $bitrate    = (int)(($transInfo['Bitrate']      ?? 0) / 1000);
                 if ($quality    === '') {
                     $h = (int)($transInfo['Height'] ?? 0);
-                    if ($h > 0) $quality = $h . 'p';
+                    if ($h > 0) $quality = (string)$h;
                 }
                 $hwAccel         = (string)($transInfo['HardwareAccelerationType'] ?? '');
                 $transcodeBufPct = (float)($transInfo['CompletionPercentage']      ?? 0);
@@ -1091,7 +1150,7 @@ final class StreamViewerEndpoint
 
             $imageId  = $nowPlaying['SeriesId'] ?? $nowPlaying['SeasonId'] ?? $nowPlaying['Id'] ?? null;
             $thumbUrl = ($imageId && $srv['url'] !== '')
-                ? rtrim($srv['url'], '/') . '/Items/' . urlencode($imageId) . '/Images/Primary?maxHeight=300&maxWidth=200&quality=90&api_key=' . urlencode($srv['token'])
+                ? rtrim($srv['url'], '/') . '/Items/' . urlencode($imageId) . '/Images/Primary?maxHeight=600&maxWidth=400&quality=96&api_key=' . urlencode($srv['token'])
                 : '';
 
             $sessions[] = $this->normalizeSession([
@@ -1114,6 +1173,8 @@ final class StreamViewerEndpoint
                 'bitrate'               => $bitrate,
                 'container'             => $container,
                 'video_codec'           => $videoCodec,
+                'bit_depth'             => $bitDepth,
+                'video_range'           => $videoRange,
                 'audio_codec'           => $audioCodec,
                 'audio_channels'        => $audioChannels,
                 'audio_spatial'         => $audioSpatial,
@@ -1244,6 +1305,8 @@ final class StreamViewerEndpoint
             'bandwidth_kbps'        => (int)($raw['bandwidth_kbps']                     ?? 0),
             'container'             => $this->sanitizeStr($raw['container']             ?? ''),
             'video_codec'           => $this->sanitizeStr($raw['video_codec']           ?? ''),
+            'bit_depth'             => (int)($raw['bit_depth']                          ?? 0),
+            'video_range'           => $this->sanitizeStr($raw['video_range']           ?? ''),
             'audio_codec'           => $this->sanitizeStr($raw['audio_codec']           ?? ''),
             'audio_channels'        => (int)($raw['audio_channels']                     ?? 0),
             'audio_spatial'         => $this->sanitizeStr($raw['audio_spatial']         ?? ''),
@@ -3035,6 +3098,18 @@ final class StreamViewerEndpoint
         return $servers;
     }
 
+    // ── Docker stats (lightweight independent endpoint) ────────────────────
+
+    private function replyGetDockerStats(): void
+    {
+        if (function_exists('session_write_close')) @session_write_close();
+        $this->securityHeaders();
+        $cfg     = $this->loadCfg();
+        $servers = $this->getEnabledServers($cfg);
+        $stats   = $this->getDockerStats($servers);
+        $this->json(['docker_stats' => $stats]);
+    }
+
     // ── Docker container resource stats ────────────────────────────────────
 
     private function getDockerStats(array $servers): array
@@ -3112,19 +3187,39 @@ final class StreamViewerEndpoint
 
         if (empty($matched)) return [];
 
-        // 3. Get stats for each matched container (one-shot, no stream)
-        $results = [];
+        // 3. Get stats for each matched container in PARALLEL (one-shot, no stream)
+        $mh      = curl_multi_init();
+        $handles = [];
+
         foreach ($matched as $cId => $info) {
             if (!preg_match('/^[a-f0-9]+$/i', $cId)) continue;
             $ch = curl_init('http://localhost/containers/' . $cId . '/stats?stream=false');
             curl_setopt_array($ch, [
                 CURLOPT_UNIX_SOCKET_PATH => self::DOCKER_SOCKET,
                 CURLOPT_RETURNTRANSFER   => true,
-                CURLOPT_TIMEOUT          => 3,
+                CURLOPT_TIMEOUT          => 4,
                 CURLOPT_CONNECTTIMEOUT   => 1,
             ]);
-            $sBody = curl_exec($ch);
-            curl_close($ch);
+            curl_multi_add_handle($mh, $ch);
+            $handles[] = ['ch' => $ch, 'id' => $cId, 'info' => $info];
+        }
+
+        if (empty($handles)) {
+            curl_multi_close($mh);
+            return [];
+        }
+
+        // Execute all docker stats in parallel
+        do {
+            $status = curl_multi_exec($mh, $active);
+            if ($active) curl_multi_select($mh, 0.1);
+        } while ($active && $status === CURLM_OK);
+
+        $results = [];
+        foreach ($handles as $h) {
+            $sBody = curl_multi_getcontent($h['ch']);
+            curl_multi_remove_handle($mh, $h['ch']);
+            curl_close($h['ch']);
             $st = @json_decode($sBody ?: '', true);
             if (!is_array($st)) continue;
 
@@ -3146,14 +3241,15 @@ final class StreamViewerEndpoint
             $memLimit = (int)($st['memory_stats']['limit'] ?? 0);
 
             $results[] = [
-                'container'   => $info['name'],
-                'server_name' => $info['server_name'],
-                'server_type' => $info['server_type'],
+                'container'   => $h['info']['name'],
+                'server_name' => $h['info']['server_name'],
+                'server_type' => $h['info']['server_type'],
                 'cpu_pct'     => $cpuPct,
                 'mem_used'    => $memUsed,
                 'mem_limit'   => $memLimit,
             ];
         }
+        curl_multi_close($mh);
         return $results;
     }
 

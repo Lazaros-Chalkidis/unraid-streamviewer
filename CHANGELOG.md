@@ -1,4 +1,37 @@
 
+# Stream Viewer
+
+## Version 2026.03.30
+
+### Bug Fixes
+- Fixed browser password save prompt on Apply and Credits modal (masked text inputs, type="button" on Credits OK)
+- Fixed play icon losing green color after media icon update
+- Fixed play and pause icons inheriting wrong size from media type icons
+
+### New Features 
+- Badge Color Theme picker with 12 color options (Default, Blue, Lime, Green, Purple, Unraid, Red, Cyan, Pink, Gold, Teal, Mono) for server name badges
+- Custom SVG media type icons (film strip, TV screen, music note, picture frame) replacing Font Awesome icons for consistent cross-browser rendering
+- Refresh Interval changed from free input to select dropdown with fixed options, 5s to 300s
+- Dominant color extraction from cover art applied as tinted background to Synopsis section, with matching colored vertical dividers at 20% opacity
+
+### Improvements
+- Settings page redesigned with table-cell layout, fixed label column, zebra striping, and collapsible sections with pill tags
+- All on/off select dropdowns replaced with compact toggle switches
+- Styled select dropdowns with custom arrow and auto-width sizing
+- Color palette harmonized with Statistics page using neutral greys
+- Short descriptions added to all settings fields
+- Version number displayed as styled badge below Support link
+- Footer buttons use native Unraid styling with centered layout
+- Credits modal updated with harmonized colors
+- Dropdown labels now use dash format, 30s - Default, instead of parentheses
+- Synopsis section tinted border opacity increased from 12% to 20% for better visibility
+- Statistics settings pill label changed to "History and more.."
+- Full responsive support for tablets and mobile devices
+- Footer Docker stats redesigned with CPU/RAM text labels and animated micro-bars replacing Font Awesome icons
+- CPU micro-bar changes color at usage thresholds (orange at 50%, red at 70%)
+- RAM micro-bar fills based on container memory limit from Docker
+- Footer timestamp changed from "Last Refresh:" text to compact clock SVG icon
+
 ## Version 2026.03.25
 
 ### Bug Fixes
@@ -19,8 +52,6 @@
 - Statistics Settings sections
 - Incremental database migration system for seamless future upgrades
 
----
-
 ## Version 2026.03.19a
 
 ### Bug Fixes
@@ -32,8 +63,6 @@
 - Smart rediscover: Retries 3 times before triggering URL rediscovery
 - Smart rediscover: Respects URL type, local stays local, remote stays remote
 - Jellyfin/Emby: Local container IP auto discovery via Docker Engine API
-
----
 
 ## Version 2026.03.18
 
@@ -55,8 +84,6 @@
 ### Cleanup
 - Removed all orphan Tool page code (JS, CSS) — feature was never implemented
 - Renumbered JS sections (1–15) and CSS sections (1–14)
-
----
 
 ## Version 2026.03.17
 
@@ -91,8 +118,6 @@
 ### UX
 - Network hint: Connection errors now show a helpful message about enabling "Host access to custom networks" for ipvlan/macvlan Docker setups
 
----
-
 ## Version 2026.03.15
 
 ### Bug Fixes
@@ -104,8 +129,6 @@
 - Auto Refresh: Fixed rare issue where the widget could send two overlapping refresh requests at the same time
 - Auto Refresh: Widget now recovers automatically if the browser has slowed down background timers
 - Credits popup: OK button is now correctly centered
-
----
 
 ## Version 2026.03.14
 

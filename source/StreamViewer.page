@@ -51,6 +51,7 @@ $tile_config = [
     'isResponsive'      => $isResponsiveWebgui,
     'noServersConfigured' => empty($enabled_servers),
     'allowKill'         => ($cfg['TOOL_ALLOW_KILL'] ?? '0') === '1',
+    'badgeTheme'        => (string)($cfg['BADGE_THEME'] ?? 'default'),
 ];
 
 $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
@@ -114,7 +115,7 @@ $render_streams_panel = static function(): string {
         </div>
         <div class="sv-footer-right">
             <span class="sv-pulse" id="sv-pulse" aria-hidden="true"></span>
-            <span class="sv-ts-label">Last Refresh:</span>
+            <svg class="sv-ts-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             <span class="sv-ts-value" id="sv-timestamp"></span>
         </div>
     </div>

@@ -2,17 +2,28 @@
 
 A real time media stream monitor and statistics tracker for Unraid. View active streams from your Plex, Jellyfin and Emby servers directly from the dashboard, and track watch history, library content and user activity through a dedicated statistics page.
 
+<p align="center">
+  <img src="https://img.shields.io/github/v/release/Lazaros-Chalkidis/unraid-streamviewer?label=Latest%20Version&color=blue" style="margin: 4px;" />&nbsp;
+  <img src="https://img.shields.io/github/last-commit/Lazaros-Chalkidis/unraid-streamviewer?label=Last%20Update" style="margin: 4px;" />&nbsp;
+  <img src="https://img.shields.io/github/downloads/Lazaros-Chalkidis/unraid-streamviewer/total?label=Downloads&color=brightgreen" style="margin: 4px;" />&nbsp;
+  <img src="https://img.shields.io/github/issues/Lazaros-Chalkidis/unraid-streamviewer?label=Issues" style="margin: 4px;" />&nbsp;
+  <img src="https://img.shields.io/github/license/Lazaros-Chalkidis/unraid-streamviewer?label=License" style="margin: 4px;" />
+</p>
+
 ## Features
 
 **Dashboard Widget**
 - Monitor active streams in real-time from the Unraid dashboard
 - Multi-server support for up to 10 Plex, Jellyfin and Emby servers simultaneously
 - Stream details including user, device, IP address, playback progress, quality and codec info
+- Custom SVG media type icons for movies, series, music and photos
+- Collapsible Synopsis section with thumbnail, description and dominant color tinting from cover art
 - Collapsible technical details row per stream (codec, audio channels, container, subtitles, HW acceleration, transcode reasons)
 - Transcode monitoring with visual indicators for Direct Play, Direct Stream and Transcode sessions
 - Transcode speed badge on active transcodes
-- Docker CPU and RAM usage per media server container
+- Docker CPU and RAM micro-bars per media server container with color thresholds
 - Kill Session button to terminate active streams directly from the widget
+- Badge Color Theme picker with 12 color options for server name badges
 - Server type filter (Plex, Jellyfin, Emby)
 - Configurable auto-refresh with adjustable polling interval
 - Mobile responsive layout

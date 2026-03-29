@@ -28,6 +28,8 @@ var _backoffUntil = 0;        // timestamp ms — skip fetch until this time
 var _errorCount   = 0;        // consecutive fetch errors (for self-healing backoff)
 var _initialized  = false;    // true after first successful fetch
 var _reloadScheduled = false; // true when 403 auto-reload is pending
+var _lastActiveStreams = 0;   // track active streams for docker stats mini-poll
+var _dockerPollTimer  = null; // independent docker stats polling timer
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -60,7 +62,7 @@ function fmtMs(ms) {
     var h   = Math.floor(s / 3600);
     var m   = Math.floor((s % 3600) / 60);
     var sec = s % 60;
-    return h > 0 ? (h + ':' + pad2(m) + ':' + pad2(sec)) : (m + ':' + pad2(sec));
+    return h + ':' + pad2(m) + ':' + pad2(sec);
 }
 
 function fmtNow() {
@@ -90,17 +92,93 @@ function playTypeMeta(pt) {
 function mediaIcon(t) {
     switch ((t || '').toLowerCase()) {
         case 'episode':
-        case 'series':  return 'fa-television';
+        case 'series':  return '<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></svg>';
         case 'audio':
-        case 'track':   return 'fa-music';
-        case 'photo':   return 'fa-picture-o';
-        default:        return 'fa-film';
+        case 'track':   return '<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>';
+        case 'photo':   return '<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M21 3H3C2 3 1 4 1 5v14c0 1 1 2 2 2h18c1 0 2-1 2-2V5c0-1-1-2-2-2zM5 17l3.5-4.5 2.5 3 3.5-4.5L19 17H5z"/></svg>';
+        default:        return '<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M4 2v20h16V2H4zm2 2h3v3H6V4zm0 5h3v3H6V9zm0 5h3v3H6v-3zm5-10h7v7h-7V4zm0 9h7v7h-7v-7zM6 19v-1h3v1H6z"/></svg>';
     }
 }
+
+var BADGE_THEMES = {
+    'default': { bg:'#1a1a1a',                    c:'rgba(255,255,255,.85)', br:'1px solid rgba(255,255,255,.15)' },
+    'blue':    { bg:'rgba(21,101,192,.18)',         c:'#1976d2',              br:'1px solid rgba(21,101,192,.40)' },
+    'lime':    { bg:'rgba(175,180,43,.15)',         c:'#c0ca33',              br:'1px solid rgba(175,180,43,.35)' },
+    'green':   { bg:'rgba(46,204,113,.12)',         c:'#2ecc71',              br:'1px solid rgba(46,204,113,.30)' },
+    'purple':  { bg:'#1a1a2d',                     c:'#9b8ce8',              br:'1px solid #2a2644' },
+    'unraid':  { bg:'rgba(244,125,66,.15)',         c:'#f47d42',              br:'1px solid rgba(244,125,66,.35)' },
+    'red':     { bg:'rgba(231,76,60,.15)',          c:'#e74c3c',              br:'1px solid rgba(231,76,60,.35)' },
+    'cyan':    { bg:'rgba(0,188,212,.12)',          c:'#00bcd4',              br:'1px solid rgba(0,188,212,.30)' },
+    'pink':    { bg:'rgba(233,30,99,.15)',          c:'#e91e63',              br:'1px solid rgba(233,30,99,.35)' },
+    'gold':    { bg:'rgba(255,235,59,.10)',         c:'#fdd835',              br:'1px solid rgba(255,235,59,.25)' },
+    'teal':    { bg:'rgba(0,150,136,.15)',          c:'#26a69a',              br:'1px solid rgba(0,150,136,.35)' },
+    'mono':    { bg:'rgba(255,255,255,.06)',        c:'rgba(255,255,255,.45)',br:'1px solid rgba(255,255,255,.12)' },
+};
 
 function fmtBitrate(kbps) {
     if (!kbps || kbps <= 0) return '';
     return kbps >= 1000 ? (kbps / 1000).toFixed(1) + ' Mbps' : kbps + ' kbps';
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 3b. DOMINANT COLOR EXTRACTION (canvas-based, for synopsis tinting)
+// ══════════════════════════════════════════════════════════════════════════════
+
+var _colorCache = {};
+var _colorCanvas = null;
+
+function getDominantColor(img) {
+    if (!_colorCanvas) {
+        _colorCanvas = document.createElement('canvas');
+        _colorCanvas.width = 16;
+        _colorCanvas.height = 16;
+    }
+    var ctx = _colorCanvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, 16, 16);
+    var data;
+    try { data = ctx.getImageData(0, 0, 16, 16).data; }
+    catch(e) { return null; }
+
+    var rSum = 0, gSum = 0, bSum = 0, count = 0;
+    for (var i = 0; i < data.length; i += 4) {
+        var r = data[i], g = data[i+1], b = data[i+2];
+        var brightness = r * 0.299 + g * 0.587 + b * 0.114;
+        if (brightness < 20 || brightness > 235) continue;
+        rSum += r; gSum += g; bSum += b; count++;
+    }
+    if (count === 0) return null;
+    return [Math.round(rSum/count), Math.round(gSum/count), Math.round(bSum/count)];
+}
+
+function applyDominantColors(container) {
+    if (!container) return;
+    container.querySelectorAll('.sv-stream__thumb-img').forEach(function(img) {
+        var row3bd = img.closest('.sv-stream__row3-bd');
+        if (!row3bd) return;
+
+        var apply = function() {
+            var src = img.src || '';
+            var rgb = _colorCache[src];
+            if (!rgb) {
+                rgb = getDominantColor(img);
+                if (rgb) _colorCache[src] = rgb;
+            }
+            if (!rgb) return;
+            var desc = row3bd.querySelector('.sv-stream__desc');
+            var thumbCol = row3bd.querySelector('.sv-stream__thumb-col');
+            if (desc) {
+                desc.style.background = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',.12)';
+                desc.style.borderRightColor = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',.20)';
+            }
+            if (thumbCol) {
+                thumbCol.style.borderRightColor = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',.20)';
+            }
+        };
+
+        if (img.complete && img.naturalWidth > 0) { apply(); }
+        else { img.addEventListener('load', apply, { once: true }); }
+    });
 }
 
 
@@ -140,18 +218,34 @@ function renderRow(s) {
     // Left indicator bar
     var barHtml = '<div class="sv-stream__bar sv-stream__bar--' + esc(barMod) + '" aria-hidden="true"></div>';
 
-    // Row 1 left: media icon + state icon (play/pause) + title
+    // Row 1 left: media icon + state icon (play/pause) + kill button + title
     var stateIcon = isPaused
-        ? '<i class="fa fa-pause sv-stream__type-icon" title="Paused" aria-hidden="true"></i>'
-        : '<i class="fa fa-play sv-stream__type-icon" title="Playing" aria-hidden="true"></i>';
+        ? '<i class="fa fa-pause sv-stream__state-icon sv-stream__state-icon--paused" title="Paused" aria-hidden="true"></i>'
+        : '<i class="fa fa-play sv-stream__state-icon sv-stream__state-icon--playing" title="Playing" aria-hidden="true"></i>';
+
+    var killHtml = '';
+    if (cfg.allowKill) {
+        killHtml = '<button class="sv-kill-btn"'
+            + ' data-session-id="'       + esc(s.session_id         || '') + '"'
+            + ' data-session-key="'      + esc(s.session_key        || '') + '"'
+            + ' data-server-name="'      + esc(s.server_name        || '') + '"'
+            + ' data-plex-session-uuid="'+ esc(s.plex_session_uuid  || '') + '"'
+            + ' title="Stop stream">'
+            + '<i class="fa fa-stop" aria-hidden="true"></i>'
+            + '</button>';
+    }
+
     var titleHtml = '<div class="sv-stream__main">'
-        + '<i class="fa ' + mediaIcon(s.media_type) + ' sv-stream__type-icon" aria-hidden="true"></i>'
+        + '<span class="sv-stream__type-icon">' + mediaIcon(s.media_type) + '</span>'
         + stateIcon
+        + killHtml
         + '<span class="sv-stream__title" title="' + esc(s.title) + '">' + esc(s.title) + '</span>'
         + '</div>';
 
-    // Badges row — LEFT: quality + live bitrate  |  RIGHT: server type + name + transcode + stop
-    var serverBadge = '<span class="sv-stream__server-badge" title="' + esc(s.server_name) + '">'
+    // Badges row -- LEFT: quality + live bitrate  |  RIGHT: server type + name + transcode
+    var bt = BADGE_THEMES[cfg.badgeTheme] || BADGE_THEMES['default'];
+    var serverBadge = '<span class="sv-stream__server-badge" title="' + esc(s.server_name) + '"'
+        + ' style="background:' + bt.bg + ';color:' + bt.c + ';border:' + bt.br + ';">'
         + esc(s.server_name || s.server_type) + '</span>';
 
     var transHtml = '';
@@ -165,18 +259,6 @@ function renderRow(s) {
         }
         transHtml = '<span class="sv-stream__transcode sv-stream__transcode--' + esc(tMod) + '">'
             + esc(tLabel) + speedSuffix + '</span>';
-    }
-
-    var killHtml = '';
-    if (cfg.allowKill) {
-        killHtml = '<button class="sv-kill-btn"'
-            + ' data-session-id="'       + esc(s.session_id         || '') + '"'
-            + ' data-session-key="'      + esc(s.session_key        || '') + '"'
-            + ' data-server-name="'      + esc(s.server_name        || '') + '"'
-            + ' data-plex-session-uuid="'+ esc(s.plex_session_uuid  || '') + '"'
-            + ' title="Stop this stream">'
-            + 'STOP'
-            + '</button>';
     }
 
     // Left group: quality + live bitrate
@@ -193,7 +275,7 @@ function renderRow(s) {
 
     var badgesRowHtml = '<div class="sv-stream__badges-row">'
         + '<div class="sv-stream__badges-left">' + badgesLeftHtml + '</div>'
-        + '<div class="sv-stream__badges-right">' + serverTypeBadge + serverBadge + transHtml + killHtml + '</div>'
+        + '<div class="sv-stream__badges-right">' + serverTypeBadge + serverBadge + transHtml + '</div>'
         + '</div>';
 
     // Row 3: collapsible thumbnail preview
@@ -204,7 +286,7 @@ function renderRow(s) {
         : '';
     var thumbHtml = thumbSrc
         ? '<img class="sv-stream__thumb-img" src="' + thumbSrc + '" alt="Cover" loading="lazy">'
-        : '<div class="sv-stream__thumb-placeholder"><i class="fa ' + mediaIcon(s.media_type) + '"></i></div>';
+        : '<div class="sv-stream__thumb-placeholder">' + mediaIcon(s.media_type) + '</div>';
     var descHtml = s.summary
         ? '<p class="sv-stream__desc">' + esc(s.summary) + '</p>'
         : '';
@@ -212,9 +294,9 @@ function renderRow(s) {
     var badgesHtml = '';
     if (cfg.showSummary) {
         var sumCls = cfg.summaryOpen ? 'sv-stream__row3' : 'sv-stream__row3 sv-stream__row3--collapsed';
-        var sumArrow = cfg.summaryOpen ? '&#9660;' : '&#9650;';
+        var sumArrow = '&#9660;';
         badgesHtml = '<div class="' + sumCls + '">'
-            + '<div class="sv-stream__row3-hd"><span style="font-size:.7em;opacity:.55;">Info</span> <span class="sv-stream__row3-arrow">' + sumArrow + '</span></div>'
+            + '<div class="sv-stream__row3-hd"><span style="font-size:.7em;opacity:.55;">Synopsis</span> <span class="sv-stream__row3-arrow">' + sumArrow + '</span></div>'
             + '<div class="sv-stream__row3-bd">' + thumbColHtml + descHtml + '</div>'
             + '</div>';
     }
@@ -225,8 +307,10 @@ function renderRow(s) {
     var deviceHtml = '';
     if (cfg.showDevice && s.device) {
         var devLabel = (s.client && s.client !== s.device) ? s.client + ' · ' + s.device : s.device;
-        deviceHtml = '<span class="sv-stream__sep">·</span>'
-            + '<span class="sv-stream__device" title="' + esc(devLabel) + '">' + esc(s.device) + '</span>';
+        deviceHtml = '<span class="sv-stream__device-wrap">'
+            + '<span class="sv-stream__sep">·</span>'
+            + '<span class="sv-stream__device" title="' + esc(devLabel) + '">' + esc(s.device) + '</span>'
+            + '</span>';
     }
 
     var ipHtml = '';
@@ -260,7 +344,19 @@ function renderRow(s) {
     if (cfg.showDetails) {
         var tags = [];
 
-        if (s.video_codec)   tags.push('<span class="sv-dtag">' + esc(s.video_codec.toUpperCase()) + '</span>');
+        if (s.video_codec) {
+            var vcLabel = s.video_codec.toUpperCase();
+            if (s.transcode_video_codec && s.transcode_video_codec.toUpperCase() !== vcLabel) {
+                vcLabel += ' → ' + s.transcode_video_codec.toUpperCase();
+            }
+            tags.push('<span class="sv-dtag">' + esc(vcLabel) + '</span>');
+        }
+        if (s.bit_depth > 0)  tags.push('<span class="sv-dtag">' + esc(s.bit_depth + '-bit') + '</span>');
+        if (s.video_range && s.video_range !== 'SDR') {
+            tags.push('<span class="sv-dtag sv-dtag--accent">' + esc(s.video_range) + '</span>');
+        } else if (s.video_range === 'SDR') {
+            tags.push('<span class="sv-dtag">' + esc(s.video_range) + '</span>');
+        }
         if (s.audio_codec) {
             var audioLabel = s.audio_codec.toUpperCase();
             if (s.audio_channels > 0) {
@@ -286,9 +382,8 @@ function renderRow(s) {
 
         if (tags.length > 0) {
             var detCls = cfg.detailsOpen ? 'sv-stream__details' : 'sv-stream__details sv-stream__details--collapsed';
-            var detArrow = cfg.detailsOpen ? '&#9660;' : '&#9654;';
             detailsHtml = '<div class="' + detCls + '">'
-                + '<div class="sv-stream__details-hd"><span class="sv-stream__details-arrow">' + detArrow + '</span> Details</div>'
+                + '<div class="sv-stream__details-hd"><span class="sv-stream__details-arrow">&#9660;</span> Codecs</div>'
                 + '<div class="sv-stream__details-bd">' + tags.join('') + '</div>'
                 + '</div>';
         }
@@ -309,7 +404,16 @@ function renderRow(s) {
 }
 
 function buildSkeletons() {
-    return '<div class="sv-skeleton"></div><div class="sv-skeleton"></div><div class="sv-skeleton"></div>';
+    return '<div class="sv-loading">'
+        + '<div class="sv-loading__bars">'
+        + '<div class="sv-loading__bar"></div>'
+        + '<div class="sv-loading__bar"></div>'
+        + '<div class="sv-loading__bar"></div>'
+        + '<div class="sv-loading__bar"></div>'
+        + '<div class="sv-loading__bar"></div>'
+        + '</div>'
+        + '<span class="sv-loading__text">Fetching streams...</span>'
+        + '</div>';
 }
 
 
@@ -384,7 +488,7 @@ function patchRow(el, s) {
 
     // State icon (play/pause) in title row
     var mainDiv   = el.querySelector('.sv-stream__main');
-    var stateIcon = el.querySelector('.sv-stream__main .fa-pause, .sv-stream__main .fa-play');
+    var stateIcon = el.querySelector('.sv-stream__main .sv-stream__state-icon');
     if (mainDiv) {
         var hasPause = stateIcon && stateIcon.classList.contains('fa-pause');
         var hasPlay  = stateIcon && stateIcon.classList.contains('fa-play');
@@ -392,14 +496,14 @@ function patchRow(el, s) {
         if (isPaused && !hasPause) {
             if (stateIcon) stateIcon.parentNode.removeChild(stateIcon);
             var pi = document.createElement('i');
-            pi.className = 'fa fa-pause sv-stream__type-icon';
+            pi.className = 'fa fa-pause sv-stream__state-icon sv-stream__state-icon--paused';
             pi.title = 'Paused';
             pi.setAttribute('aria-hidden', 'true');
             if (titleSpan) mainDiv.insertBefore(pi, titleSpan);
         } else if (!isPaused && !hasPlay) {
             if (stateIcon) stateIcon.parentNode.removeChild(stateIcon);
             var pl = document.createElement('i');
-            pl.className = 'fa fa-play sv-stream__type-icon';
+            pl.className = 'fa fa-play sv-stream__state-icon sv-stream__state-icon--playing';
             pl.title = 'Playing';
             pl.setAttribute('aria-hidden', 'true');
             if (titleSpan) mainDiv.insertBefore(pl, titleSpan);
@@ -529,6 +633,7 @@ function renderStreams(sessions) {
 
     if (needRebindKill) bindKillButtons(container);
     bindRow3Toggles(container);
+    applyDominantColors(container);
 }
 
 
@@ -714,14 +819,24 @@ function updateDockerStats(stats, activeStreams) {
     }
 
     var cpuColor = totalCpu >= 70 ? '#e74c3c' : totalCpu >= 50 ? '#f39c12' : '';
-    var cpuStyle = cpuColor ? ' style="color:' + cpuColor + ';"' : '';
+    var cpuFillColor = cpuColor || '#a3a3a3';
+    var cpuValStyle = cpuColor ? ' style="color:' + cpuColor + ';"' : '';
+    var cpuPct = Math.min(100, totalCpu);
+
+    var memTotalBytes = 0;
+    for (var j = 0; j < stats.length; j++) {
+        memTotalBytes += (stats[j].mem_limit || 0);
+    }
+    var memPct = (memTotalBytes > 0) ? Math.min(100, (totalMem / memTotalBytes) * 100) : 30;
 
     _lastDockerHtml = '<span class="sv-docker-stat">'
-        + '<i class="fa fa-tachometer sv-docker-stat__icon"' + cpuStyle + ' aria-hidden="true"></i> '
-        + '<span class="sv-docker-stat__val"' + cpuStyle + '>' + totalCpu.toFixed(1) + '%</span>'
+        + '<span class="sv-docker-stat__label">CPU</span>'
+        + '<span class="sv-docker-stat__bar"><span class="sv-docker-stat__fill sv-docker-stat__fill--cpu" style="width:' + cpuPct.toFixed(1) + '%;background:' + cpuFillColor + ';"></span></span>'
+        + '<span class="sv-docker-stat__val"' + cpuValStyle + '>' + totalCpu.toFixed(1) + '%</span>'
         + '</span>'
         + '<span class="sv-docker-stat">'
-        + '<i class="fa fa-server sv-docker-stat__icon" aria-hidden="true"></i> '
+        + '<span class="sv-docker-stat__label">RAM</span>'
+        + '<span class="sv-docker-stat__bar"><span class="sv-docker-stat__fill sv-docker-stat__fill--ram" style="width:' + memPct.toFixed(1) + '%;"></span></span>'
         + '<span class="sv-docker-stat__val">' + memStr + '</span>'
         + '</span>';
 
@@ -741,6 +856,40 @@ setInterval(function() {
         if (el && el.innerHTML === '') applyDockerHtml();
     }
 }, 2000);
+
+// Independent docker stats polling (every 5s, lightweight endpoint)
+var _dockerFetching = false;
+
+function fetchDockerStats() {
+    if (!_cfg.showDocker || _lastActiveStreams === 0 || _dockerFetching) return;
+    _dockerFetching = true;
+    $.ajax({
+        url:      '/plugins/streamviewer/streamviewer_api.php',
+        method:   'GET',
+        timeout:  12000,
+        headers:  { 'X-Requested-With': 'XMLHttpRequest' },
+        data: {
+            action: 'get_docker_stats',
+            _svt:   _cfg.svToken || '',
+        },
+        dataType: 'json',
+        success: function(data) {
+            updateDockerStats(data.docker_stats || [], _lastActiveStreams);
+        },
+        error: function() {},
+        complete: function() { _dockerFetching = false; }
+    });
+}
+
+function startDockerPoll() {
+    if (_dockerPollTimer) return;
+    fetchDockerStats();
+    _dockerPollTimer = setInterval(fetchDockerStats, 5000);
+}
+
+function stopDockerPoll() {
+    if (_dockerPollTimer) { clearInterval(_dockerPollTimer); _dockerPollTimer = null; }
+}
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -786,10 +935,12 @@ function fetchSessions(onDone) {
 
             renderStreams(_sessions);
             updateBadge(data.total_sessions || 0);
+            _lastActiveStreams = data.total_sessions || 0;
             updateTimestamp();
             flashPulse();
             updateErrorIndicator(_serverStats);
             updateDockerStats(data.docker_stats || [], data.total_sessions || 0);
+            if (_lastActiveStreams > 0) startDockerPoll(); else stopDockerPoll();
 
             _initialized = true;
             if (typeof onDone === 'function') onDone(null, data);
@@ -866,11 +1017,13 @@ function initVisibilityHandling() {
     document.addEventListener('visibilitychange', function() {
         if (document.hidden) {
             stopPolling();
+            stopDockerPoll();
         } else {
             _backoffUntil = 0;
             _inFlight     = false;
             fetchSessions();
             startPolling();
+            if (_lastActiveStreams > 0) startDockerPoll();
         }
     });
 
@@ -981,6 +1134,7 @@ function resolveConfig() {
         servers:             Array.isArray(raw.servers) ? raw.servers : [],
         noServersConfigured: raw.noServersConfigured === true,
         isResponsive:        raw.isResponsive !== false,
+        badgeTheme:          String(raw.badgeTheme || 'default'),
     };
 }
 
