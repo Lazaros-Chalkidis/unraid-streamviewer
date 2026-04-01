@@ -351,7 +351,7 @@
 
 
 /* ══════════════════════════════════════════════════════════════════════════
-   TOGGLE SWITCH (32x17px, matching mockup)
+   TOGGLE SWITCH (23x13px)
    ══════════════════════════════════════════════════════════════════════════ */
 
 .sv-toggle {
@@ -371,12 +371,12 @@
 }
 
 .sv-toggle-track {
-  width: 32px;
-  height: 17px;
-  border-radius: 9px;
+  width: 23px;
+  height: 13px;
+  border-radius: 7px;
   background: var(--sv-tog-off-track);
   position: relative;
-  transition: background .25s;
+  transition: background-color .25s;
   flex-shrink: 0;
 }
 
@@ -387,9 +387,9 @@
   height: 11px;
   border-radius: 50%;
   background: var(--sv-tog-off-thumb);
-  top: 3px;
-  left: 3px;
-  transition: transform .25s, background .25s;
+  top: 1px;
+  left: 1px;
+  transition: transform .25s, background-color .25s;
 }
 
 .sv-toggle input:checked + .sv-toggle-track {
@@ -397,11 +397,11 @@
 }
 .sv-toggle input:checked + .sv-toggle-track::after {
   background: #fff;
-  transform: translateX(15px);
+  transform: translateX(11px);
 }
 
 .sv-toggle-txt {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   transition: color .2s;
 }

@@ -369,16 +369,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
           </div>
           <div class="sv-r">
-            <div class="sv-r-label">Technical details default state</div>
-            <div class="sv-r-field">
-              <select name="WIDGET_DETAILS_OPEN" class="sv-select">
-                <?= mk_option($cfg['WIDGET_DETAILS_OPEN'] ?? '0', '0', _('Collapsed - Default')) ?>
-                <?= mk_option($cfg['WIDGET_DETAILS_OPEN'] ?? '0', '1', _('Expanded')) ?>
-              </select>
-              <span class="sv-r-desc">When streams load</span>
-            </div>
-          </div>
-          <div class="sv-r">
             <div class="sv-r-label">Show media summary</div>
             <div class="sv-r-field">
               <?= $toggleShow('WIDGET_SHOW_SUMMARY', $cfg['WIDGET_SHOW_SUMMARY'] ?? '1') ?>

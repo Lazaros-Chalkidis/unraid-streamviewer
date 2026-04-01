@@ -43,7 +43,6 @@ $tile_config = [
     'showQuality'       => ($cfg['WIDGET_SHOW_QUALITY']   ?? '1') === '1',
     'showTranscode'     => ($cfg['WIDGET_SHOW_TRANSCODE'] ?? '1') === '1',
     'showDetails'       => ($cfg['WIDGET_SHOW_DETAILS']   ?? '1') === '1',
-    'detailsOpen'       => ($cfg['WIDGET_DETAILS_OPEN']  ?? '0') === '1',
     'showSummary'       => ($cfg['WIDGET_SHOW_SUMMARY']  ?? '1') === '1',
     'summaryOpen'       => ($cfg['WIDGET_SUMMARY_OPEN']  ?? '0') === '1',
     'showDocker'        => ($cfg['WIDGET_SHOW_DOCKER']   ?? '1') === '1',

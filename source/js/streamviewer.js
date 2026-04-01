@@ -339,7 +339,7 @@ function renderRow(s) {
         + progressHtml
         + '</div>';
 
-    // Row 4: collapsible technical details
+    // Row 4: technical details (codecs)
     var detailsHtml = '';
     if (cfg.showDetails) {
         var tags = [];
@@ -381,9 +381,7 @@ function renderRow(s) {
         if (s.transcode_buffer_pct > 0) tags.push('<span class="sv-dtag">Buffer: ' + esc(s.transcode_buffer_pct.toFixed(0)) + '%</span>');
 
         if (tags.length > 0) {
-            var detCls = cfg.detailsOpen ? 'sv-stream__details' : 'sv-stream__details sv-stream__details--collapsed';
-            detailsHtml = '<div class="' + detCls + '">'
-                + '<div class="sv-stream__details-hd"><span class="sv-stream__details-arrow">&#9660;</span> Codecs</div>'
+            detailsHtml = '<div class="sv-stream__details">'
                 + '<div class="sv-stream__details-bd">' + tags.join('') + '</div>'
                 + '</div>';
         }
@@ -435,10 +433,6 @@ function patchRow(el, s) {
     if (el.dataset.state    !== (s.state     || '')) needRebuild = true;
     if (el.dataset.playType !== (s.play_type || '')) needRebuild = true;
     if (needRebuild) {
-        var detailsWasOpen = false;
-        var det = el.querySelector('.sv-stream__details');
-        if (det && !det.classList.contains('sv-stream__details--collapsed')) detailsWasOpen = true;
-        el.dataset._detailsOpen = detailsWasOpen ? '1' : '0';
         return true;
     }
 
@@ -574,16 +568,6 @@ function renderStreams(sessions) {
         if (row && row.dataset.sessionId) openSessions[row.dataset.sessionId] = true;
     });
 
-    // Preserve open details panels
-    var openDetails = {};
-    container.querySelectorAll('.sv-stream').forEach(function(row) {
-        var sid = row.dataset.sessionId;
-        if (!sid) return;
-        var det = row.querySelector('.sv-stream__details');
-        if (det && !det.classList.contains('sv-stream__details--collapsed')) openDetails[sid] = true;
-        if (row.dataset._detailsOpen === '1') openDetails[sid] = true;
-    });
-
     var newIds = {};
     var fragment = document.createDocumentFragment();
     var needRebindKill = false;
@@ -619,15 +603,6 @@ function renderStreams(sessions) {
         if (row) {
             var r3 = row.querySelector('.sv-stream__row3');
             if (r3) r3.classList.remove('sv-stream__row3--collapsed');
-        }
-    });
-
-    // Restore open details panels
-    Object.keys(openDetails).forEach(function(sid) {
-        var row = container.querySelector('.sv-stream[data-session-id="' + sid + '"]');
-        if (row) {
-            var det = row.querySelector('.sv-stream__details');
-            if (det) det.classList.remove('sv-stream__details--collapsed');
         }
     });
 
@@ -1075,13 +1050,6 @@ function bindRow3Toggles(container) {
         var row3 = hd.closest('.sv-stream__row3');
         if (row3) row3.classList.toggle('sv-stream__row3--collapsed');
     });
-
-    container.addEventListener('click', function(e) {
-        var hd = e.target.closest('.sv-stream__details-hd');
-        if (!hd) return;
-        var det = hd.closest('.sv-stream__details');
-        if (det) det.classList.toggle('sv-stream__details--collapsed');
-    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1126,7 +1094,6 @@ function resolveConfig() {
         showQuality:         raw.showQuality  !== false,
         showTranscode:       raw.showTranscode !== false,
         showDetails:         raw.showDetails  !== false,
-        detailsOpen:         raw.detailsOpen  === true,
         showSummary:         raw.showSummary  !== false,
         summaryOpen:         raw.summaryOpen  === true,
         allowKill:           raw.allowKill    === true,
@@ -1155,11 +1122,57 @@ function detectTheme() {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 15. INIT
+// 15. OVERFLOW CONTAINMENT
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Walk up the DOM from widget root and apply overflow constraints
+// to all ancestor containers so the widget never causes horizontal scroll.
+function containOverflow() {
+    var root = document.querySelector('.sv-widget-wrap')
+            || document.getElementById('db-streamviewer');
+    if (!root) return;
+
+    var el = root.parentElement;
+    var depth = 0;
+    while (el && el !== document.body && el !== document.documentElement && depth < 12) {
+        var tag = el.tagName;
+
+        // Table cells: force fixed width behavior
+        if (tag === 'TD' || tag === 'TH') {
+            el.style.overflow = 'hidden';
+            el.style.maxWidth = '100vw';
+            el.style.boxSizing = 'border-box';
+        }
+
+        // Tables: fixed layout prevents cells from expanding
+        if (tag === 'TABLE') {
+            el.style.tableLayout = 'fixed';
+            el.style.width = '100%';
+            el.style.maxWidth = '100vw';
+        }
+
+        // Generic block containers (divs, sections, etc)
+        if (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE') {
+            if (!el.style.overflow) {
+                el.style.overflowX = 'hidden';
+                el.style.maxWidth = '100%';
+                el.style.boxSizing = 'border-box';
+            }
+        }
+
+        el = el.parentElement;
+        depth++;
+    }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 16. INIT
 // ══════════════════════════════════════════════════════════════════════════════
 
 function init() {
     detectTheme();
+    containOverflow();
     _cfg = resolveConfig();
 
     if (_cfg.noServersConfigured) {
@@ -1192,7 +1205,7 @@ boot();
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 16. PUBLIC API
+// 17. PUBLIC API
 // ══════════════════════════════════════════════════════════════════════════════
 
 window.StreamViewer = {

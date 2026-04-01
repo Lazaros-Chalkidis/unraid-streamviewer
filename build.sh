@@ -211,7 +211,7 @@ if [[ "$LOCAL_INSTALL" == "local" ]]; then
 
 <PLUGIN name="&name;" Title="Stream Viewer" author="&author;" version="&version;"
         pluginURL="&selfURL;" launch="&launch;"
-        icon="streamviewer.png"
+        icon="streamviewerplugin.png"
         min="7.2.0"
         support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
 
@@ -288,7 +288,7 @@ else
 
 <PLUGIN name="&name;" Title="Stream Viewer" author="&author;" version="&version;"
         pluginURL="&selfURL;" launch="&launch;"
-        icon="streamviewer.png"
+        icon="streamviewerplugin.png"
         min="7.2.0"
         support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
 
