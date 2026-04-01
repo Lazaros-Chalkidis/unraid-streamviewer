@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "streamviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.04.01">
+ <!ENTITY version   "2026.04.01a">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "11cc7ca6ac33df8d2d57887b2cdc9c12">
+ <!ENTITY md5       "cbb44bd3ab1f9f213cd7a2448abbf463">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
