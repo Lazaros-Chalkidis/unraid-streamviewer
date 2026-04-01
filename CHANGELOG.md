@@ -1,6 +1,29 @@
 
 # Stream Viewer
 
+## v2026.04.01a
+
+### Fixed
+- Removed containOverflow() that was modifying Unraid parent DOM elements and breaking the dashboard layout for some users
+
+## v2026.04.01
+
+### Widget
+- Codecs displayed as a standalone row below User/Device/IP instead of a collapsible section
+- Synopsis moved below codecs, arrow direction corrected (down when collapsed, up when open)
+- Simplified synopsis toggle header, removed background bar
+- Fixed horizontal scrolling on mobile devices with JS overflow containment
+- Progress bar, server badge and transcode badge now shrink properly on small screens
+- CPU and RAM labels visible again in the footer on mobile
+
+### Settings
+- Removed "Technical details default state" option
+- Toggle switches resized to match LogsViewer (23x13px)
+
+### Statistics
+- Removed Beta label from page title
+- Alerts tab renamed to Insights with new icon
+
 ## Version 2026.03.30
 
 ### Bug Fixes

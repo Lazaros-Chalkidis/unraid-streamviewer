@@ -1122,57 +1122,11 @@ function detectTheme() {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 15. OVERFLOW CONTAINMENT
-// ══════════════════════════════════════════════════════════════════════════════
-
-// Walk up the DOM from widget root and apply overflow constraints
-// to all ancestor containers so the widget never causes horizontal scroll.
-function containOverflow() {
-    var root = document.querySelector('.sv-widget-wrap')
-            || document.getElementById('db-streamviewer');
-    if (!root) return;
-
-    var el = root.parentElement;
-    var depth = 0;
-    while (el && el !== document.body && el !== document.documentElement && depth < 12) {
-        var tag = el.tagName;
-
-        // Table cells: force fixed width behavior
-        if (tag === 'TD' || tag === 'TH') {
-            el.style.overflow = 'hidden';
-            el.style.maxWidth = '100vw';
-            el.style.boxSizing = 'border-box';
-        }
-
-        // Tables: fixed layout prevents cells from expanding
-        if (tag === 'TABLE') {
-            el.style.tableLayout = 'fixed';
-            el.style.width = '100%';
-            el.style.maxWidth = '100vw';
-        }
-
-        // Generic block containers (divs, sections, etc)
-        if (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE') {
-            if (!el.style.overflow) {
-                el.style.overflowX = 'hidden';
-                el.style.maxWidth = '100%';
-                el.style.boxSizing = 'border-box';
-            }
-        }
-
-        el = el.parentElement;
-        depth++;
-    }
-}
-
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 16. INIT
+// 15. INIT
 // ══════════════════════════════════════════════════════════════════════════════
 
 function init() {
     detectTheme();
-    containOverflow();
     _cfg = resolveConfig();
 
     if (_cfg.noServersConfigured) {
@@ -1205,7 +1159,7 @@ boot();
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 17. PUBLIC API
+// 16. PUBLIC API
 // ══════════════════════════════════════════════════════════════════════════════
 
 window.StreamViewer = {
