@@ -11,6 +11,40 @@ const SV_CFG_FILE    = '/boot/config/plugins/streamviewer/streamviewer.cfg';
 const SV_MAX_SERVERS = 10;
 const SV_VALID_TYPES = ['plex', 'jellyfin', 'emby'];
 
+// ── Poll daemon management ────────────────────────────────────────────────
+
+function sv_manage_poll(bool $statsEnabled): void
+{
+    $pidFile  = '/var/run/streamviewer_poll.pid';
+    $script   = '/usr/local/emhttp/plugins/streamviewer/streamviewer_poll.sh';
+    $running  = false;
+
+    if (file_exists($pidFile)) {
+        $pid = (int)trim((string)@file_get_contents($pidFile));
+        if ($pid > 0 && @file_exists("/proc/{$pid}")) {
+            $running = true;
+        }
+    }
+
+    // Clean up any leftover cron entry from previous versions
+    $cronFile = '/var/spool/cron/crontabs/root';
+    if (file_exists($cronFile)) {
+        $cron = (string)@file_get_contents($cronFile);
+        if (strpos($cron, 'streamviewer_cron') !== false) {
+            exec("sed -i '/streamviewer_cron/d' " . escapeshellarg($cronFile));
+        }
+    }
+
+    if ($statsEnabled && !$running) {
+        @chmod($script, 0755);
+        exec("nohup {$script} >/dev/null 2>&1 &");
+    } elseif (!$statsEnabled && $running) {
+        $pid = (int)trim((string)@file_get_contents($pidFile));
+        if ($pid > 0) @exec("kill {$pid}");
+        @unlink($pidFile);
+    }
+}
+
 // ── Sanitizers ─────────────────────────────────────────────────────────────
 
 $yn = static fn($v, $d = '0') => ((string)($v ?? $d) === '1') ? '1' : '0';
@@ -84,6 +118,7 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['WIDGET_DETAILS_OPEN']  = $yn($_POST['WIDGET_DETAILS_OPEN']  ?? '0', '0');
     $new_cfg['WIDGET_SHOW_SUMMARY']  = $yn($_POST['WIDGET_SHOW_SUMMARY']  ?? '1', '1');
     $new_cfg['WIDGET_SHOW_DOCKER']   = $yn($_POST['WIDGET_SHOW_DOCKER']   ?? '1', '1');
+    $new_cfg['HEADER_SHOW_BADGE']    = $yn($_POST['HEADER_SHOW_BADGE']    ?? '1', '1');
     $new_cfg['WIDGET_SUMMARY_OPEN']  = $yn($_POST['WIDGET_SUMMARY_OPEN']  ?? '0', '0');
     $new_cfg['LIB_SECTIONS_OPEN']    = $yn($_POST['LIB_SECTIONS_OPEN']    ?? '0', '0');
 
@@ -129,6 +164,11 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     }
     @mkdir(dirname(SV_CFG_FILE), 0755, true);
     $written = file_put_contents(SV_CFG_FILE, $ini);
+
+    // Sync cron entry with stats toggle
+    if ($written !== false) {
+        sv_manage_poll($new_cfg['STATS_ENABLED'] === '1');
+    }
 
     // If this is an AJAX request, return JSON and exit
     if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) || !empty($_POST['_svAjax'])) {
@@ -294,6 +334,23 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
           </div>
           <div class="sv-r">
+            <div class="sv-r-label">Media summary default state</div>
+            <div class="sv-r-field">
+              <select name="WIDGET_SUMMARY_OPEN" class="sv-select">
+                <?= mk_option($cfg['WIDGET_SUMMARY_OPEN'] ?? '0', '0', _('Collapsed - Default')) ?>
+                <?= mk_option($cfg['WIDGET_SUMMARY_OPEN'] ?? '0', '1', _('Expanded')) ?>
+              </select>
+              <span class="sv-r-desc">When streams load</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Allow killing sessions</div>
+            <div class="sv-r-field">
+              <?= $toggle('TOOL_ALLOW_KILL', $cfg['TOOL_ALLOW_KILL'] ?? '0', '0') ?>
+              <span class="sv-r-warn">Forcibly disconnects users</span>
+            </div>
+          </div>
+          <div class="sv-r">
             <div class="sv-r-label">Show device</div>
             <div class="sv-r-field">
               <?= $toggleShow('WIDGET_SHOW_DEVICE', $cfg['WIDGET_SHOW_DEVICE'] ?? '1') ?>
@@ -305,39 +362,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <div class="sv-r-field">
               <?= $toggleShow('WIDGET_SHOW_IP', $cfg['WIDGET_SHOW_IP'] ?? '1') ?>
               <span class="sv-r-desc">Disable for privacy on shared screens</span>
-            </div>
-          </div>
-          <div class="sv-r">
-            <div class="sv-r-label">Badge color theme<span class="sv-r-label-desc">Server name badge colors</span></div>
-            <div class="sv-r-field" style="padding:6px 16px;">
-              <?php
-              $badgeTheme = (string)($cfg['BADGE_THEME'] ?? 'default');
-              $themes = [
-                  'default' => ['label' => 'Default', 'bg' => '#1a1a1a',                     'c' => 'rgba(255,255,255,.85)', 'br' => '1px solid rgba(255,255,255,.15)'],
-                  'blue'    => ['label' => 'Blue',    'bg' => 'rgba(21,101,192,.18)',          'c' => '#1976d2',               'br' => '1px solid rgba(21,101,192,.40)'],
-                  'lime'    => ['label' => 'Lime',    'bg' => 'rgba(175,180,43,.15)',          'c' => '#c0ca33',               'br' => '1px solid rgba(175,180,43,.35)'],
-                  'green'   => ['label' => 'Green',   'bg' => 'rgba(46,204,113,.12)',          'c' => '#2ecc71',               'br' => '1px solid rgba(46,204,113,.30)'],
-                  'purple'  => ['label' => 'Purple',  'bg' => '#1a1a2d',                      'c' => '#9b8ce8',               'br' => '1px solid #2a2644'],
-                  'unraid'  => ['label' => 'Unraid',  'bg' => 'rgba(244,125,66,.15)',          'c' => '#f47d42',               'br' => '1px solid rgba(244,125,66,.35)'],
-                  'red'     => ['label' => 'Red',     'bg' => 'rgba(231,76,60,.15)',           'c' => '#e74c3c',               'br' => '1px solid rgba(231,76,60,.35)'],
-                  'cyan'    => ['label' => 'Cyan',    'bg' => 'rgba(0,188,212,.12)',           'c' => '#00bcd4',               'br' => '1px solid rgba(0,188,212,.30)'],
-                  'pink'    => ['label' => 'Pink',    'bg' => 'rgba(233,30,99,.15)',           'c' => '#e91e63',               'br' => '1px solid rgba(233,30,99,.35)'],
-                  'gold'    => ['label' => 'Gold',    'bg' => 'rgba(255,235,59,.10)',          'c' => '#fdd835',               'br' => '1px solid rgba(255,235,59,.25)'],
-                  'teal'    => ['label' => 'Teal',    'bg' => 'rgba(0,150,136,.15)',           'c' => '#26a69a',               'br' => '1px solid rgba(0,150,136,.35)'],
-                  'mono'    => ['label' => 'Mono',    'bg' => 'rgba(255,255,255,.06)',         'c' => 'rgba(255,255,255,.45)', 'br' => '1px solid rgba(255,255,255,.12)'],
-              ];
-              ?>
-              <input type="hidden" name="BADGE_THEME" value="<?= htmlspecialchars($badgeTheme) ?>">
-              <div class="sv-badge-themes">
-                <?php foreach ($themes as $key => $t): $sel = ($key === $badgeTheme); ?>
-                <label class="sv-badge-theme-opt<?= $sel ? ' sv-badge-theme-opt--sel' : '' ?>" data-theme="<?= $key ?>">
-                  <input type="radio" name="_sv_badge_theme" value="<?= $key ?>"<?= $sel ? ' checked' : '' ?>>
-                  <span class="sv-badge-theme-radio"></span>
-                  <span class="sv-badge-theme-b" style="background:<?= $t['bg'] ?>;color:<?= $t['c'] ?>;border:<?= $t['br'] ?>;">NAME</span>
-                  <span class="sv-badge-theme-name"><?= $t['label'] ?></span>
-                </label>
-                <?php endforeach; ?>
-              </div>
             </div>
           </div>
           <div class="sv-r">
@@ -376,16 +400,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
           </div>
           <div class="sv-r">
-            <div class="sv-r-label">Media summary default state</div>
-            <div class="sv-r-field">
-              <select name="WIDGET_SUMMARY_OPEN" class="sv-select">
-                <?= mk_option($cfg['WIDGET_SUMMARY_OPEN'] ?? '0', '0', _('Collapsed - Default')) ?>
-                <?= mk_option($cfg['WIDGET_SUMMARY_OPEN'] ?? '0', '1', _('Expanded')) ?>
-              </select>
-              <span class="sv-r-desc">When streams load</span>
-            </div>
-          </div>
-          <div class="sv-r">
             <div class="sv-r-label">Show Docker stats</div>
             <div class="sv-r-field">
               <?= $toggleShow('WIDGET_SHOW_DOCKER', $cfg['WIDGET_SHOW_DOCKER'] ?? '1') ?>
@@ -393,10 +407,43 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
           </div>
           <div class="sv-r">
-            <div class="sv-r-label">Allow killing sessions</div>
+            <div class="sv-r-label">Header stream badge</div>
             <div class="sv-r-field">
-              <?= $toggle('TOOL_ALLOW_KILL', $cfg['TOOL_ALLOW_KILL'] ?? '0', '0') ?>
-              <span class="sv-r-warn">Forcibly disconnects users</span>
+              <?= $toggleShow('HEADER_SHOW_BADGE', $cfg['HEADER_SHOW_BADGE'] ?? '1') ?>
+              <span class="sv-r-desc">Stream count icon in Unraid header bar</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Badge color theme<span class="sv-r-label-desc">Server name badge colors</span></div>
+            <div class="sv-r-field" style="padding:6px 16px;">
+              <?php
+              $badgeTheme = (string)($cfg['BADGE_THEME'] ?? 'default');
+              $themes = [
+                  'default' => ['label' => 'Default', 'bg' => '#1a1a1a',                     'c' => 'rgba(255,255,255,.85)', 'br' => '1px solid rgba(255,255,255,.15)'],
+                  'blue'    => ['label' => 'Blue',    'bg' => 'rgba(21,101,192,.18)',          'c' => '#1976d2',               'br' => '1px solid rgba(21,101,192,.40)'],
+                  'lime'    => ['label' => 'Lime',    'bg' => 'rgba(175,180,43,.15)',          'c' => '#c0ca33',               'br' => '1px solid rgba(175,180,43,.35)'],
+                  'green'   => ['label' => 'Green',   'bg' => 'rgba(46,204,113,.12)',          'c' => '#2ecc71',               'br' => '1px solid rgba(46,204,113,.30)'],
+                  'purple'  => ['label' => 'Purple',  'bg' => '#1a1a2d',                      'c' => '#9b8ce8',               'br' => '1px solid #2a2644'],
+                  'unraid'  => ['label' => 'Unraid',  'bg' => 'rgba(244,125,66,.15)',          'c' => '#f47d42',               'br' => '1px solid rgba(244,125,66,.35)'],
+                  'red'     => ['label' => 'Red',     'bg' => 'rgba(231,76,60,.15)',           'c' => '#e74c3c',               'br' => '1px solid rgba(231,76,60,.35)'],
+                  'cyan'    => ['label' => 'Cyan',    'bg' => 'rgba(0,188,212,.12)',           'c' => '#00bcd4',               'br' => '1px solid rgba(0,188,212,.30)'],
+                  'pink'    => ['label' => 'Pink',    'bg' => 'rgba(233,30,99,.15)',           'c' => '#e91e63',               'br' => '1px solid rgba(233,30,99,.35)'],
+                  'gold'    => ['label' => 'Gold',    'bg' => 'rgba(255,235,59,.10)',          'c' => '#fdd835',               'br' => '1px solid rgba(255,235,59,.25)'],
+                  'teal'    => ['label' => 'Teal',    'bg' => 'rgba(0,150,136,.15)',           'c' => '#26a69a',               'br' => '1px solid rgba(0,150,136,.35)'],
+                  'mono'    => ['label' => 'Mono',    'bg' => 'rgba(255,255,255,.06)',         'c' => 'rgba(255,255,255,.45)', 'br' => '1px solid rgba(255,255,255,.12)'],
+              ];
+              ?>
+              <input type="hidden" name="BADGE_THEME" value="<?= htmlspecialchars($badgeTheme) ?>">
+              <div class="sv-badge-themes">
+                <?php foreach ($themes as $key => $t): $sel = ($key === $badgeTheme); ?>
+                <label class="sv-badge-theme-opt<?= $sel ? ' sv-badge-theme-opt--sel' : '' ?>" data-theme="<?= $key ?>">
+                  <input type="radio" name="_sv_badge_theme" value="<?= $key ?>"<?= $sel ? ' checked' : '' ?>>
+                  <span class="sv-badge-theme-radio"></span>
+                  <span class="sv-badge-theme-b" style="background:<?= $t['bg'] ?>;color:<?= $t['c'] ?>;border:<?= $t['br'] ?>;">NAME</span>
+                  <span class="sv-badge-theme-name"><?= $t['label'] ?></span>
+                </label>
+                <?php endforeach; ?>
+              </div>
             </div>
           </div>
         </div>
@@ -652,8 +699,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
 
     </div><!-- /svEmbyPanel -->
 
-  </div><!-- /sv-settings-panel -->
-
   <!-- Hidden inputs for form submit (all server slots) -->
   <?php for ($i = 1; $i <= SV_MAX_SERVERS; $i++): ?>
   <input type="hidden" name="SERVER<?= $i ?>_ENABLED" id="svHidEnabled<?= $i ?>" value="0" autocomplete="off">
@@ -666,12 +711,20 @@ $lightClass   = $sv_light ? ' sv-light' : '';
   <!-- ── Footer ─────────────────────────────────────────────────────── -->
   <input type="hidden" name="sv_active_tab" id="svActiveTabInput" value="<?= htmlspecialchars($active_tab) ?>">
 
-  <div class="sv-footer" style="justify-content:center;">
+  <div class="sv-actions-bar">
     <input type="hidden" name="#apply" value="apply" id="svApplyHidden">
-    <input type="button" name="#apply_btn" id="svApplyBtn" value="<?= _('Apply') ?>">
-    <input type="button" id="svResetBtn" value="<?= _('Reset to Defaults') ?>">
-    <input type="button" value="<?= _('Done') ?>" onclick="done()">
+    <button type="button" id="svApplyBtn" class="sv-action-btn sv-action-btn--apply" title="Save settings">
+      <i class="fa fa-check" aria-hidden="true"></i> Apply
+    </button>
+    <button type="button" id="svResetBtn" class="sv-action-btn sv-action-btn--reset" title="Reset to defaults">
+      <i class="fa fa-undo" aria-hidden="true"></i> Reset to Defaults
+    </button>
+    <button type="button" class="sv-action-btn sv-action-btn--done" onclick="done()" title="Return to dashboard">
+      <i class="fa fa-arrow-left" aria-hidden="true"></i> Done
+    </button>
   </div>
+
+  </div><!-- /sv-settings-panel -->
 
   <div class="sv-footer-row">
     <a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" id="svSupportLink" class="sv-support-link">Support</a>
@@ -1421,7 +1474,9 @@ function setTab(which) {
     var resetBtn = document.getElementById('svResetBtn');
     if (resetBtn) {
         resetBtn.style.display = '';
-        resetBtn.value = (which === 'widget') ? 'Reset to Defaults' : 'Clear Form';
+        resetBtn.innerHTML = (which === 'widget')
+            ? '<i class="fa fa-undo" aria-hidden="true"></i> Reset to Defaults'
+            : '<i class="fa fa-eraser" aria-hidden="true"></i> Clear Form';
     }
     try { sessionStorage.setItem('sv_active_tab', which); } catch(_) {}
     try { history.replaceState(null, '', '#' + which); } catch(_) {}
@@ -1444,6 +1499,7 @@ function resetDefaults() {
             WIDGET_DETAILS_OPEN:'0',
             WIDGET_SHOW_SUMMARY:'1', WIDGET_SUMMARY_OPEN:'0',
             WIDGET_SHOW_DOCKER:'1',
+            HEADER_SHOW_BADGE:'1',
             LIB_SECTIONS_OPEN:'0',
             TOOL_ALLOW_KILL:'0',
             VERIFY_SSL:'0',
@@ -1627,7 +1683,7 @@ function resetDefaults() {
 
     // ── Intercept form submit via AJAX (prevents browser save-password prompt) ──
     var form     = document.querySelector('form[name="streamviewer_settings"]');
-    var applyBtn = document.getElementById('svApplyBtn') || (form && form.querySelector('input[name="#apply_btn"]'));
+    var applyBtn = document.getElementById('svApplyBtn');
 
     // Store original DB path to detect changes
     var _origDbPath = (document.querySelector('input[name="STATS_DB_PATH"]') || {}).value || '';
@@ -1660,13 +1716,13 @@ function resetDefaults() {
                 + 'Are you sure you want to continue?'
             );
             if (!ok) {
-                if (applyBtn) { applyBtn.disabled = false; applyBtn.value = 'Apply'; }
+                if (applyBtn) { applyBtn.disabled = false; applyBtn.innerHTML = '<i class="fa fa-check" aria-hidden="true"></i> Apply'; }
                 return false;
             }
         }
 
         // Disable apply button while saving
-        if (applyBtn) { applyBtn.disabled = true; applyBtn.value = 'Saving…'; }
+        if (applyBtn) { applyBtn.disabled = true; applyBtn.innerHTML = '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i> Saving\u2026'; }
 
         // Serialize the form to URL-encoded string (works reliably with Unraid .page files)
         var params = $(form).serialize();
@@ -1685,7 +1741,7 @@ function resetDefaults() {
             },
             error: function(xhr) {
                 alert('Save failed (HTTP ' + (xhr.status || '?') + '). Please try again.');
-                if (applyBtn) { applyBtn.disabled = false; applyBtn.value = 'Apply'; }
+                if (applyBtn) { applyBtn.disabled = false; applyBtn.innerHTML = '<i class="fa fa-check" aria-hidden="true"></i> Apply'; }
             },
         });
 

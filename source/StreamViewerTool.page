@@ -184,6 +184,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
           </select>
         </div>
       </div>
+      <div class="svt-table-wrap">
       <table class="svt-table" id="svt-history-table">
           <thead>
             <tr>
@@ -200,6 +201,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
             <tr><td colspan="7" class="svt-table__empty">Loading...</td></tr>
           </tbody>
         </table>
+      </div>
     </div>
 
     </div><!-- /svtPanelDashboard -->
@@ -400,6 +402,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
 
       <!-- History table -->
       <div class="svt-section" style="padding: 0;">
+          <div class="svt-table-wrap">
           <table class="svt-table" id="svt-hist-table">
             <thead>
               <tr>
@@ -416,6 +419,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
               <tr><td colspan="7" class="svt-table__empty">Loading...</td></tr>
             </tbody>
           </table>
+          </div>
         <div class="svt-hist-footer" id="svt-hist-footer"></div>
       </div>
 

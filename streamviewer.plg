@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "streamviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.04.01a">
+ <!ENTITY version   "2026.04.06">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "cbb44bd3ab1f9f213cd7a2448abbf463">
+ <!ENTITY md5       "4aead693b861d8eb4b3379c5a1494102">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
@@ -25,27 +25,50 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 
 # Stream Viewer
 
+## v2026.04.06
+
+### Bug Fixes
+- Fixed multiple crond processes spawning on settings save
+- Fixed syslog spam from cron entries
+- Fixed Jellyfin/Emby autoplay recording: each episode now gets its own history entry instead of only the last one
+- Fixed user activity chart not showing all usernames by calculating container height dynamically based on number of users
+- Fixed horizontal page scroll on mobile dashboard widget (overflow containment on widget wrapper, fallback tbody, and td elements; header meta changed from inline-flex/margin-left to flex/padding-left; progressive margin reduction across breakpoints; flex-wrap on stream info row at 480px)
+- Fixed horizontal page scroll on mobile statistics page (wrapped history tables in scrollable containers, made tab bar horizontally scrollable, added overflow containment to page wrapper)
+- Server side session recording via background poll daemon (replaces browser dependent JS polling). Statistics now record even when no browser tab is open
+- Old cron entry self cleanup for users upgrading from previous versions
+- Poll daemon starts/stops automatically when statistics are toggled on/off in settings. Existing users with statistics enabled get the daemon automatically on update
+
+### New Features
+- Live streaming indicator in the navigation bar with cast icon and purple badge. Shows number of active streams, hidden when nothing is playing. Click navigates to Statistics page
+- Header stream badge show/hide toggle in settings
+
+### Improvements
+- Header indicator works independently of statistics setting (widget poll also updates the count)
+- Header indicator icon color adapts to current theme
+- Replaced native Unraid buttons with custom styled (Settings page)
+- Reorganized widget settings order: Media summary default state and Allow killing sessions moved below Max streams shown, Badge color theme moved below Allow killing sessions
+
 ## v2026.04.01a
 
-### Fixed
+### Bug Fixes
 - Removed containOverflow() that was modifying Unraid parent DOM elements and breaking the dashboard layout for some users
 
 ## v2026.04.01
 
-### Widget
-- Codecs displayed as a standalone row below User/Device/IP instead of a collapsible section
-- Synopsis moved below codecs, arrow direction corrected (down when collapsed, up when open)
-- Simplified synopsis toggle header, removed background bar
+### Bug Fixes
 - Fixed horizontal scrolling on mobile devices with JS overflow containment
-- Progress bar, server badge and transcode badge now shrink properly on small screens
-- CPU and RAM labels visible again in the footer on mobile
+- Fixed progress bar, server badge and transcode badge not shrinking properly on small screens
+- Fixed CPU and RAM labels not visible in the footer on mobile
+- Fixed synopsis toggle arrow direction (down when collapsed, up when open)
 
-### Settings
-- Removed "Technical details default state" option
+### New Features
+- Codecs displayed as a standalone row below User/Device/IP instead of a collapsible section
+- Synopsis moved below codecs as a simplified toggle without background bar
+
+### Improvements
 - Toggle switches resized to match LogsViewer (23x13px)
-
-### Statistics
-- Removed Beta label from page title
+- Removed "Technical details default state" option from settings
+- Removed Beta label from statistics page title
 - Alerts tab renamed to Insights with new icon
 
 ## Version 2026.03.30
@@ -261,6 +284,23 @@ if [[ -f "$BAK" ]]; then
     rm -f "$BAK"
 fi
 
+# Stop any running poll daemon (from previous version)
+if [[ -f /var/run/streamviewer_poll.pid ]]; then
+    kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
+    rm -f /var/run/streamviewer_poll.pid
+    sleep 1
+fi
+
+# Remove old cron entry (from previous versions)
+if grep -q "streamviewer_cron" /var/spool/cron/crontabs/root 2>/dev/null; then
+    sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root
+fi
+
+# Start poll daemon if statistics are enabled
+if grep -q "STATS_ENABLED=\"1\"" "$CFG" 2>/dev/null; then
+    nohup /usr/local/emhttp/plugins/&name;/streamviewer_poll.sh >/dev/null 2>/dev/null &amp;
+fi
+
 echo ""
 echo "----------------------------------------------------"
 echo " &name; (&branch; build) installed successfully."
@@ -273,6 +313,15 @@ echo ""
 
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
+# Stop poll daemon
+if [[ -f /var/run/streamviewer_poll.pid ]]; then
+    kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
+    rm -f /var/run/streamviewer_poll.pid
+fi
+
+# Remove old cron entry (from previous versions)
+sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root 2>/dev/null
+
 removepkg &name;-&version;
 rm -rf /usr/local/emhttp/plugins/&name;
 rm -rf /boot/config/plugins/&name;

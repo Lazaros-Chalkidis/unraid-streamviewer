@@ -121,7 +121,7 @@
 .streamviewer-settings .sv-settings-panel {
   background: var(--sv-panel-bg);
   border: 1px solid var(--sv-c-border);
-  border-radius: 0 8px 0 0;
+  border-radius: 0 8px 8px 8px;
   overflow: hidden;
   padding: 0;
 }
@@ -1080,4 +1080,77 @@
 .sv-masked-input {
   -webkit-text-security: disc;
   text-security: disc;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ACTION BAR (Apply / Reset / Done)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.sv-actions-bar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 12px 16px 6px;
+}
+
+.sv-action-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: .25rem !important;
+  padding: 3px 8px !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  line-height: 1.4 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  width: auto !important;
+  min-width: 0 !important;
+  transition: background .2s, border-color .2s, color .2s !important;
+  border: 1px solid var(--sv-c-border-strong) !important;
+  background: var(--sv-c-bg-subtle) !important;
+  color: var(--sv-c-text-mid) !important;
+  white-space: nowrap !important;
+}
+.sv-action-btn:hover {
+  background: var(--sv-c-bg-hover) !important;
+  border-color: var(--sv-c-text-faint) !important;
+}
+.sv-action-btn:active { transform: scale(.98); }
+.sv-action-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed !important;
+}
+
+.sv-action-btn--apply {
+  background: rgba(76,175,80,.1) !important;
+  border-color: rgba(76,175,80,.3) !important;
+  color: #4caf50 !important;
+}
+.sv-action-btn--apply:hover {
+  background: rgba(76,175,80,.2) !important;
+  border-color: rgba(76,175,80,.5) !important;
+}
+
+.sv-action-btn--reset {
+  background: rgba(244,125,66,.12) !important;
+  border-color: rgba(244,125,66,.3) !important;
+  color: #f47d42 !important;
+}
+.sv-action-btn--reset:hover {
+  background: rgba(244,125,66,.2) !important;
+  border-color: rgba(244,125,66,.5) !important;
+}
+
+.sv-action-btn--done {
+  background: var(--sv-c-bg-subtle) !important;
+  border-color: var(--sv-c-border-strong) !important;
+  color: var(--sv-c-text-mid) !important;
+}
+.sv-action-btn--done:hover {
+  background: var(--sv-c-bg-hover) !important;
+  border-color: var(--sv-c-text-faint) !important;
 }

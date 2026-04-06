@@ -1,0 +1,5 @@
+Menu="Buttons:0"
+Title="Active Streams"
+Icon="cast.svg"
+---
+<script src="/plugins/streamviewer/js/streamviewer-header.js"></script>

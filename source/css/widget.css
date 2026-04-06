@@ -52,15 +52,24 @@
   flex-shrink: 0 !important;
 }
 
+/* ── Overflow containment — prevent widget from causing page scroll ─────── */
+.sv-widget-wrap,
+#db-streamviewer,
+#db-streamviewer td {
+  overflow: hidden !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
 /* ── 2. HEADER — RESPONSIVE (Unraid 7.2+) ────────────────────────────────── */
-.sv-header { display: flex; width: 100%; align-items: flex-start; overflow: hidden; box-sizing: border-box; }
+.sv-header { display: flex; width: 100%; align-items: flex-start; overflow: hidden; box-sizing: border-box; max-width: 100%; }
 .sv-header__left,
 .sv-header .tile-header-left  { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .2rem; overflow: hidden; }
 .sv-header__right { flex-shrink: 0; display: flex; align-items: flex-start; }
-.sv-header__top   { display: inline-flex; gap: 1rem; min-width: 0; overflow: hidden; }
+.sv-header__top   { display: flex; gap: 1rem; min-width: 0; overflow: hidden; max-width: 100%; }
 .sv-header__icon  { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
 .sv-header__title { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sv-header__controls { display: flex; align-items: center; gap: .1rem; }
+.sv-header__controls { display: flex; align-items: center; gap: .1rem; flex-shrink: 0; }
 
 /* ── 3. HEADER — LEGACY (pre-7.2) ─────────────────────────────────────────── */
 .sv-legacy-header {
@@ -75,9 +84,12 @@
 
 /* ── 4. HEADER META (badge row) ───────────────────────────────────────────── */
 .sv-header-meta {
-  display: inline-flex; align-items: center; gap: .4rem;
+  display: flex; align-items: center; gap: .4rem;
   margin-top: -13px;
-  margin-left: calc(32px + 1.5rem); /* clear the icon, align under title text */
+  padding-left: calc(32px + 1.5rem); /* clear the icon, align under title text */
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 
@@ -613,10 +625,12 @@
   .sv-stream__device { max-width: 100px; }
   .sv-stream__progress-wrap { max-width: 180px; }
   .sv-docker-stat__bar { width: 29px; }
+  .sv-header-meta { padding-left: calc(32px + 1rem); }
 }
 
 /* Large phones */
 @media (max-width: 480px) {
+  .sv-header-meta { padding-left: .5rem; }
   .sv-stream__progress-wrap { max-width: 140px; }
   .sv-stream__device { max-width: 80px; }
   .sv-stream__ip { font-size: .8em; padding: .1em .2em; }
@@ -628,10 +642,12 @@
   .sv-stream__badges-row { gap: .15rem; }
   .sv-stream__transcode-speed { min-width: auto; }
   .sv-stream__server-type { font-size: .6em; }
+  .sv-stream__sub { flex-wrap: wrap; gap: .25rem; }
 }
 
 /* Small phones */
 @media (max-width: 360px) {
+  .sv-header-meta { padding-left: .25rem; }
   .sv-stream__sub { flex-wrap: wrap; gap: .25rem; }
   .sv-stream__progress-wrap { max-width: 120px; }
   .sv-stream__device-wrap { display: none; }

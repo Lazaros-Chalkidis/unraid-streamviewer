@@ -39,6 +39,7 @@
   padding: 0;
   box-sizing: border-box;
   display: block;
+  overflow: hidden;
 }
 @media (max-width: 1400px) { .svt-wrapper { width: 80%; } }
 @media (max-width: 1024px) { .svt-wrapper { width: 92%; } }
@@ -52,7 +53,11 @@
   gap: .4rem;
   position: relative;
   margin: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
+.svt-tabs::-webkit-scrollbar { display: none; }
 .svt-tab {
   display: inline-flex;
   align-items: center;
@@ -67,6 +72,8 @@
   font-weight: 700;
   user-select: none;
   transition: background .25s ease, color .25s ease, border-color .25s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .svt-tab .svt-tabicon { opacity: .9; font-size: 1.05em; }
 .svt-tab:hover { background: var(--svt-border-subtle); color: var(--svt-text); }

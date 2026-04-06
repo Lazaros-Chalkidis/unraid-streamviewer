@@ -1174,6 +1174,9 @@ function loadGraphs() {
             uaData.push(ua[u].hours);
             uaColors.push(USER_COLORS[u % USER_COLORS.length]);
         }
+        var uaWrap = document.getElementById('svt-gr-users');
+        if (uaWrap) uaWrap = uaWrap.parentNode;
+        if (uaWrap) uaWrap.style.height = Math.max(154, ua.length * 42 + 40) + 'px';
         grMakeChart('svt-gr-users', {
             type: 'bar',
             data: { labels: uaLabels, datasets: [{ data: uaData, backgroundColor: uaColors, borderRadius: 4, maxBarThickness: 36 }] },

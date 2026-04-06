@@ -171,6 +171,23 @@ if [[ -f "$BAK" ]]; then
     rm -f "$BAK"
 fi
 
+# Stop any running poll daemon (from previous version)
+if [[ -f /var/run/streamviewer_poll.pid ]]; then
+    kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
+    rm -f /var/run/streamviewer_poll.pid
+    sleep 1
+fi
+
+# Remove old cron entry (from previous versions)
+if grep -q "streamviewer_cron" /var/spool/cron/crontabs/root 2>/dev/null; then
+    sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root
+fi
+
+# Start poll daemon if statistics are enabled
+if grep -q "STATS_ENABLED=\"1\"" "$CFG" 2>/dev/null; then
+    nohup /usr/local/emhttp/plugins/&name;/streamviewer_poll.sh >/dev/null 2>/dev/null &amp;
+fi
+
 echo ""
 echo "----------------------------------------------------"
 echo " &name; (&branch; build) installed successfully."
@@ -179,7 +196,16 @@ echo " Settings: Settings > Stream Viewer"
 echo "----------------------------------------------------"
 echo ""'
 
-PLG_REMOVE_SCRIPT='removepkg &name;-&version;
+PLG_REMOVE_SCRIPT='# Stop poll daemon
+if [[ -f /var/run/streamviewer_poll.pid ]]; then
+    kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
+    rm -f /var/run/streamviewer_poll.pid
+fi
+
+# Remove old cron entry (from previous versions)
+sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root 2>/dev/null
+
+removepkg &name;-&version;
 rm -rf /usr/local/emhttp/plugins/&name;
 rm -rf /boot/config/plugins/&name;
 rm -rf /tmp/streamviewer_cache

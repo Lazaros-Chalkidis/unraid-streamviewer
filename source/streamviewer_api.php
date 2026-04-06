@@ -54,6 +54,34 @@ final class StreamViewerEndpoint
         $this->verifySsl = (($this->loadCfg()['VERIFY_SSL'] ?? '0') === '1');
     }
 
+    // ── Cron: headless session recording ──────────────────────────────────
+
+    /**
+     * Poll all enabled media servers and record active sessions to SQLite.
+     * Called from streamviewer_cron.php (no HTTP context needed).
+     * Returns the number of active sessions found (0 if stats disabled).
+     */
+    public function cronPoll(): int
+    {
+        $cfg = $this->loadCfg();
+
+        // Bail out immediately if statistics are disabled
+        if (($cfg['STATS_ENABLED'] ?? '0') !== '1') return 0;
+
+        $servers = $this->getEnabledServers($cfg);
+        if (empty($servers)) return 0;
+
+        $results  = $this->fetchAllSessionsParallel($servers);
+        $sessions = [];
+        foreach ($results as $result) {
+            foreach ($result['sessions'] ?? [] as $s) $sessions[] = $s;
+        }
+
+        $this->recordSessions($sessions);
+
+        return count($sessions);
+    }
+
     // ── Config (cached per request) ─────────────────────────────────────
 
     private function loadCfg(): array
@@ -423,6 +451,7 @@ final class StreamViewerEndpoint
             (string)($s['server_name'] ?? ''),
             (string)($s['session_id']  ?? ''),
             (string)($s['session_key'] ?? ''),
+            (string)($s['title']       ?? ''),
         ];
         return hash('sha256', implode('|', $parts));
     }
@@ -791,6 +820,9 @@ final class StreamViewerEndpoint
 
         // Passive recording: log sessions to SQLite for stats (non-blocking)
         try { $this->recordSessions($sessions); } catch (\Throwable $e) { /* never block the widget */ }
+
+        // Write live count for header indicator (works with or without stats)
+        @file_put_contents(self::CACHE_DIR . '/header_count', (string)count($sessions));
 
         $this->rawJson($json);
     }
