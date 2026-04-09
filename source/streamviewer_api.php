@@ -98,7 +98,9 @@ final class StreamViewerEndpoint
 
     /**
      * Validate and return the configured stats DB directory.
-     * Whitelist: must start with /mnt/user/ and resolve to the same prefix.
+     * Whitelist: input path must start with /mnt/ (covers /mnt/user/, /mnt/cache/, /mnt/disk*, custom pools).
+     * realpath is not used for validation because Unraid's FUSE layer can resolve
+     * /mnt/user/ to /mnt/disk1/ or /mnt/cache/ or custom pool paths.
      */
     private function statsDbDir(): ?string
     {
@@ -108,18 +110,17 @@ final class StreamViewerEndpoint
         $dir = trim((string)($cfg['STATS_DB_PATH'] ?? ''));
         if ($dir === '') $dir = self::STATS_DEFAULT_PATH;
 
-        // Security: path traversal protection -- whitelist /mnt/user/ only
-        $real = @realpath($dir);
-        if ($real === false) {
-            // Directory may not exist yet -- validate parent
-            $parent = @realpath(dirname($dir));
-            if ($parent === false || strncmp($parent, '/mnt/user/', 10) !== 0) return null;
+        // Security: input path must be under /mnt/ and contain no traversal
+        if (strncmp($dir, '/mnt/', 5) !== 0) return null;
+        if (strpos($dir, '..') !== false) return null;
+
+        // Create directory if it doesn't exist
+        if (!is_dir($dir)) {
             @mkdir($dir, 0700, true);
-            $real = @realpath($dir);
-            if ($real === false) return null;
+            if (!is_dir($dir)) return null;
         }
-        if (strncmp($real, '/mnt/user/', 10) !== 0) return null;
-        return $real;
+
+        return $dir;
     }
 
     /**

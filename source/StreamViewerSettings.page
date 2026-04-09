@@ -144,8 +144,8 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
 
     $statsPath = trim((string)($_POST['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer'));
     if ($statsPath === '') $statsPath = '/mnt/user/appdata/Stream-Viewer';
-    // Security: only allow paths under /mnt/user/
-    if (strncmp($statsPath, '/mnt/user/', 10) !== 0) $statsPath = '/mnt/user/appdata/Stream-Viewer';
+    // Security: only allow paths under /mnt/
+    if (strncmp($statsPath, '/mnt/', 5) !== 0) $statsPath = '/mnt/user/appdata/Stream-Viewer';
     $new_cfg['STATS_DB_PATH'] = rtrim($statsPath, '/');
 
     $retDays = (int)($_POST['STATS_RETENTION_DAYS'] ?? 90);

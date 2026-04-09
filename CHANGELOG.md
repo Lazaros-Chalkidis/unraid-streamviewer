@@ -1,6 +1,9 @@
 
 # Stream Viewer
 
+## v2026.04.09
+- Fixed statistics database not being created on systems with custom storage pools (e.g. /mnt/cache/, /mnt/app_data/) where PHP's realpath resolved /mnt/user/ to the underlying mount point
+
 ## v2026.04.06
 
 ### Bug Fixes

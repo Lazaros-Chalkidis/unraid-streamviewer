@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "streamviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.04.06">
+ <!ENTITY version   "2026.04.09">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "4aead693b861d8eb4b3379c5a1494102">
+ <!ENTITY md5       "6886f7e8ae853d790dbe394bc1729e75">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
@@ -24,6 +24,9 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 <CHANGES>
 
 # Stream Viewer
+
+## v2026.04.09
+- Fixed statistics database not being created on systems with custom storage pools (e.g. /mnt/cache/, /mnt/app_data/) where PHP's realpath resolved /mnt/user/ to the underlying mount point
 
 ## v2026.04.06
 
