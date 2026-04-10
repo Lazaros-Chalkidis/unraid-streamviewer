@@ -2,6 +2,8 @@
 <?php
 /**
  * StreamViewer Poll -- headless session recorder
+ * Copyright (C) 2026 Lazaros Chalkidis
+ * License: GPLv3
  *
  * Polls all enabled media servers and writes active sessions to SQLite
  * so that statistics are recorded even when no browser is open.

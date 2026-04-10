@@ -1,5 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Stream Viewer -- Statistics Tool Page
+   Copyright (C) 2026 Lazaros Chalkidis
+   License: GPLv3
    /plugins/streamviewer/js/streamviewer-tool.js
 
    Drives the statistics / history tool page.

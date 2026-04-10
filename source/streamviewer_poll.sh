@@ -1,14 +1,19 @@
 #!/bin/bash
 # StreamViewer Poll Daemon
+# Copyright (C) 2026 Lazaros Chalkidis - License: GPLv3
 # Runs in background, polls media servers every 60 seconds.
 # Started/stopped by the settings page when statistics are toggled.
 
 PIDFILE="/var/run/streamviewer_poll.pid"
 SCRIPT="/usr/local/emhttp/plugins/streamviewer/streamviewer_cron.php"
+VARINI="/var/local/emhttp/var.ini"
 
 echo $$ > "$PIDFILE"
 
 while true; do
-    /usr/bin/php "$SCRIPT" >/dev/null 2>&1
+    # Wait for array to be started before polling
+    if grep -qs 'mdState="STARTED"' "$VARINI" 2>/dev/null; then
+        /usr/bin/php "$SCRIPT" >/dev/null 2>&1
+    fi
     sleep 60
 done

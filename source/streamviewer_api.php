@@ -1,4 +1,5 @@
 <?php
+// StreamViewer for Unraid - Copyright (C) 2026 Lazaros Chalkidis - License: GPLv3
 declare(strict_types=1);
 
 require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';

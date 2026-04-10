@@ -1,6 +1,11 @@
 
 # Stream Viewer
 
+## v2026.04.10
+
+### Bug Fixes
+- Fixed poll daemon starting before array is mounted, which could interfere with share initialization on boot
+
 ## v2026.04.09
 - Fixed statistics database not being created on systems with custom storage pools (e.g. /mnt/cache/, /mnt/app_data/) where PHP's realpath resolved /mnt/user/ to the underlying mount point
 

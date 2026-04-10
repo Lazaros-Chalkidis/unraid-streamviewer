@@ -1,4 +1,5 @@
 <?php
+// StreamViewer for Unraid - Copyright (C) 2026 Lazaros Chalkidis - License: GPLv3
 header('Content-Type: application/json');
 header('Cache-Control: no-cache');
 $cfg = @parse_ini_file('/boot/config/plugins/streamviewer/streamviewer.cfg') ?: [];

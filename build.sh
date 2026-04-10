@@ -1,5 +1,6 @@
 #!/bin/bash
 # StreamViewer — build.sh
+# Copyright (C) 2026 Lazaros Chalkidis - License: GPLv3
 # Packages the plugin source into a .txz and generates the .plg file.
 #
 # Usage:

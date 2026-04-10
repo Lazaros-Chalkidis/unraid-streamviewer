@@ -1,5 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Stream Viewer  —  streamviewer.js
+   Copyright (C) 2026 Lazaros Chalkidis
+   License: GPLv3
    Drives the dashboard widget.
 
    Config is injected via window.streamviewerConfig.

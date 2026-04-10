@@ -1,4 +1,5 @@
 // StreamViewer header indicator
+// Copyright (C) 2026 Lazaros Chalkidis - License: GPLv3
 // Click handler (called by Unraid button onclick)
 function StreamViewerButton(){
     location.href = '/Tools/StreamViewerTool';
