@@ -2,9 +2,12 @@
 # Stream Viewer
 
 ## v2026.04.10
-
-### Bug Fixes
-- Fixed poll daemon starting before array is mounted, which could interfere with share initialization on boot
+- Fixed poll daemon starting before array is fully mounted, which could prevent user shares from initializing on boot
+- Daemon now starts via Unraid event system after array is fully ready instead of during plugin installation
+- Added mountpoint verification before each poll cycle
+- Web API no longer creates database directories (only the daemon does), preventing filesystem access during early boot
+- Added automatic cleanup of orphaned mount directories from failed boots
+- Added event/stopped script to properly stop daemon when array stops
 
 ## v2026.04.09
 - Fixed statistics database not being created on systems with custom storage pools (e.g. /mnt/cache/, /mnt/app_data/) where PHP's realpath resolved /mnt/user/ to the underlying mount point

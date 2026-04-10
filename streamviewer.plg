@@ -7,7 +7,7 @@
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "fa2afa49bf80f4579a88f0c73ad0ef9b">
+ <!ENTITY md5       "87f021fea47102e9ee61a4b27e9b9275">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
@@ -26,9 +26,12 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 # Stream Viewer
 
 ## v2026.04.10
-
-### Bug Fixes
-- Fixed poll daemon starting before array is mounted, which could interfere with share initialization on boot
+- Fixed poll daemon starting before array is fully mounted, which could prevent user shares from initializing on boot
+- Daemon now starts via Unraid event system after array is fully ready instead of during plugin installation
+- Added mountpoint verification before each poll cycle
+- Web API no longer creates database directories (only the daemon does), preventing filesystem access during early boot
+- Added automatic cleanup of orphaned mount directories from failed boots
+- Added event/stopped script to properly stop daemon when array stops
 
 ## v2026.04.09
 - Fixed statistics database not being created on systems with custom storage pools (e.g. /mnt/cache/, /mnt/app_data/) where PHP's realpath resolved /mnt/user/ to the underlying mount point
@@ -279,6 +282,7 @@ find /usr/local/emhttp/plugins/&name; -type d -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name; -type f -exec chmod 644 {} \;
 find /usr/local/emhttp/plugins/&name; -name "*.page" -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name; -name "*.sh"   -exec chmod 755 {} \;
+find /usr/local/emhttp/plugins/&name;/event -type f -exec chmod 755 {} \; 2>/dev/null
 
 # Init cache dir with restricted permissions
 mkdir -p /tmp/streamviewer_cache
@@ -304,10 +308,12 @@ if grep -q "streamviewer_cron" /var/spool/cron/crontabs/root 2>/dev/null; then
     sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root
 fi
 
-# Start poll daemon if statistics are enabled
-if grep -q "STATS_ENABLED=\"1\"" "$CFG" 2>/dev/null; then
-    nohup /usr/local/emhttp/plugins/&name;/streamviewer_poll.sh >/dev/null 2>/dev/null &amp;
+# Clean orphaned dirs under /mnt/user from failed mounts (previous boot)
+if ! mountpoint -q /mnt/user 2>/dev/null; then
+    rm -rf /mnt/user/* 2>/dev/null
 fi
+
+# Daemon is started by event/started after array is fully mounted
 
 echo ""
 echo "----------------------------------------------------"
@@ -325,6 +331,11 @@ echo ""
 if [[ -f /var/run/streamviewer_poll.pid ]]; then
     kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
     rm -f /var/run/streamviewer_poll.pid
+fi
+
+# Clean orphaned dirs under /mnt/user from failed mounts
+if ! mountpoint -q /mnt/user 2>/dev/null; then
+    rm -rf /mnt/user/* 2>/dev/null
 fi
 
 # Remove old cron entry (from previous versions)

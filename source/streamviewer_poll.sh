@@ -9,10 +9,11 @@ SCRIPT="/usr/local/emhttp/plugins/streamviewer/streamviewer_cron.php"
 VARINI="/var/local/emhttp/var.ini"
 
 echo $$ > "$PIDFILE"
+cd /
 
 while true; do
-    # Wait for array to be started before polling
-    if grep -qs 'mdState="STARTED"' "$VARINI" 2>/dev/null; then
+    # Wait for array AND user shares to be fully mounted before polling
+    if grep -qs 'mdState="STARTED"' "$VARINI" 2>/dev/null && mountpoint -q /mnt/user 2>/dev/null; then
         /usr/bin/php "$SCRIPT" >/dev/null 2>&1
     fi
     sleep 60

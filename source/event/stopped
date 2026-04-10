@@ -1,0 +1,6 @@
+#!/bin/bash
+# Stop poll daemon when array stops
+if [[ -f /var/run/streamviewer_poll.pid ]]; then
+    kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
+    rm -f /var/run/streamviewer_poll.pid
+fi

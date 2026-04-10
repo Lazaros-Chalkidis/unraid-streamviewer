@@ -1,0 +1,18 @@
+#!/bin/bash
+# Start poll daemon after array is fully started
+# Called automatically by Unraid's event system
+(
+    # Extra safety: wait for user shares to be fully mounted
+    while ! mountpoint -q /mnt/user 2>/dev/null; do
+        sleep 5
+    done
+    sleep 10
+    CFG=/boot/config/plugins/streamviewer/streamviewer.cfg
+    if grep -q 'STATS_ENABLED="1"' "$CFG" 2>/dev/null; then
+        if [[ -f /var/run/streamviewer_poll.pid ]]; then
+            kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
+            rm -f /var/run/streamviewer_poll.pid
+        fi
+        nohup /usr/local/emhttp/plugins/streamviewer/streamviewer_poll.sh >/dev/null 2>/dev/null &
+    fi
+) &

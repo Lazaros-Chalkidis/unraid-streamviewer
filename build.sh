@@ -159,6 +159,7 @@ find /usr/local/emhttp/plugins/&name; -type d -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name; -type f -exec chmod 644 {} \;
 find /usr/local/emhttp/plugins/&name; -name "*.page" -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name; -name "*.sh"   -exec chmod 755 {} \;
+find /usr/local/emhttp/plugins/&name;/event -type f -exec chmod 755 {} \; 2>/dev/null
 
 # Init cache dir with restricted permissions
 mkdir -p /tmp/streamviewer_cache
@@ -184,10 +185,12 @@ if grep -q "streamviewer_cron" /var/spool/cron/crontabs/root 2>/dev/null; then
     sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root
 fi
 
-# Start poll daemon if statistics are enabled
-if grep -q "STATS_ENABLED=\"1\"" "$CFG" 2>/dev/null; then
-    nohup /usr/local/emhttp/plugins/&name;/streamviewer_poll.sh >/dev/null 2>/dev/null &amp;
+# Clean orphaned dirs under /mnt/user from failed mounts (previous boot)
+if ! mountpoint -q /mnt/user 2>/dev/null; then
+    rm -rf /mnt/user/* 2>/dev/null
 fi
+
+# Daemon is started by event/started after array is fully mounted
 
 echo ""
 echo "----------------------------------------------------"
@@ -201,6 +204,11 @@ PLG_REMOVE_SCRIPT='# Stop poll daemon
 if [[ -f /var/run/streamviewer_poll.pid ]]; then
     kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
     rm -f /var/run/streamviewer_poll.pid
+fi
+
+# Clean orphaned dirs under /mnt/user from failed mounts
+if ! mountpoint -q /mnt/user 2>/dev/null; then
+    rm -rf /mnt/user/* 2>/dev/null
 fi
 
 # Remove old cron entry (from previous versions)

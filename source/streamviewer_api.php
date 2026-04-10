@@ -102,6 +102,8 @@ final class StreamViewerEndpoint
      * Whitelist: input path must start with /mnt/ (covers /mnt/user/, /mnt/cache/, /mnt/disk*, custom pools).
      * realpath is not used for validation because Unraid's FUSE layer can resolve
      * /mnt/user/ to /mnt/disk1/ or /mnt/cache/ or custom pool paths.
+     * Directory creation only happens from CLI context (daemon/cron), never from
+     * web requests which may run before user shares are fully mounted.
      */
     private function statsDbDir(): ?string
     {
@@ -115,10 +117,15 @@ final class StreamViewerEndpoint
         if (strncmp($dir, '/mnt/', 5) !== 0) return null;
         if (strpos($dir, '..') !== false) return null;
 
-        // Create directory if it doesn't exist
         if (!is_dir($dir)) {
-            @mkdir($dir, 0700, true);
-            if (!is_dir($dir)) return null;
+            // Only create from CLI (daemon/cron) -- web requests must not touch
+            // /mnt/user/ as shares may not be fully mounted yet
+            if (php_sapi_name() === 'cli') {
+                @mkdir($dir, 0700, true);
+                if (!is_dir($dir)) return null;
+            } else {
+                return null;
+            }
         }
 
         return $dir;
