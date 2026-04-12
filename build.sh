@@ -151,7 +151,7 @@ LIB_SECTIONS_OPEN="0"
 CFGEOF
 
 # ── Shared PLG sections ───────────────────────────────────────────────────────
-PLG_DESCRIPTION="A real-time media stream monitor and statistics tracker for Plex, Jellyfin and Emby servers on Unraid."
+PLG_DESCRIPTION="A real-time media stream monitor and statistics tracker for Plex, Jellyfin and Emby. View active streams directly from the dashboard, and track detailed watch history through a dedicated statistics page."
 
 PLG_INSTALL_SCRIPT='# Fix ownership and permissions
 chown -R root:root /usr/local/emhttp/plugins/&name;
@@ -191,6 +191,16 @@ if ! mountpoint -q /mnt/user 2>/dev/null; then
 fi
 
 # Daemon is started by event/started after array is fully mounted
+# But if array is already running (live update), start it now
+VARINI="/var/local/emhttp/var.ini"
+if grep -qs mdState.*STARTED "$VARINI" 2>/dev/null; then
+  if mountpoint -q /mnt/user 2>/dev/null; then
+    CFG=/boot/config/plugins/&name;/&name;.cfg
+    if grep -q STATS_ENABLED.*1 "$CFG" 2>/dev/null; then
+        nohup /usr/local/emhttp/plugins/&name;/streamviewer_poll.sh >/dev/null 2>/dev/null &amp;
+    fi
+  fi
+fi
 
 echo ""
 echo "----------------------------------------------------"

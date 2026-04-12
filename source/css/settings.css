@@ -661,6 +661,7 @@
   font-size: 12px;
   color: var(--sv-c-text-mid);
   flex-wrap: wrap;
+  width: 100%;
 }
 .sv-cancel-btn {
   display: inline-flex !important;
@@ -676,6 +677,9 @@
   line-height: 1.4 !important;
   height: auto !important;
   min-height: 0 !important;
+  min-width: 0 !important;
+  width: auto !important;
+  margin-left: auto !important;
   transition: background .2s !important;
 }
 .sv-cancel-btn:hover { background: rgba(231,76,60,.18) !important; }

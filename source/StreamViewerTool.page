@@ -518,6 +518,98 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
         <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--short"><canvas id="svt-gr-bandwidth"></canvas></div>
       </div>
 
+      <!-- Row: Day of week + Monthly -->
+      <div class="svt-graph-row">
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Plays by day of week</span>
+            <span class="svt-graph-card__sub">Which days your users watch the most</span>
+          </div>
+          <div class="svt-graph-canvas-wrap"><canvas id="svt-gr-dow"></canvas></div>
+        </div>
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Monthly plays</span>
+            <span class="svt-graph-card__sub">Plays and watch time per month</span>
+          </div>
+          <div class="svt-graph-canvas-wrap"><canvas id="svt-gr-monthly"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Row: Top devices + Library activity -->
+      <div class="svt-graph-row">
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Top devices</span>
+            <span class="svt-graph-card__sub">Most used platforms and players</span>
+          </div>
+          <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--tall"><canvas id="svt-gr-devices"></canvas></div>
+        </div>
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Library activity</span>
+            <span class="svt-graph-card__sub">Plays per server and content type</span>
+          </div>
+          <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--tall"><canvas id="svt-gr-libraries"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Full width: Concurrent streams -->
+      <div class="svt-graph-card">
+        <div class="svt-graph-card__hd">
+          <span class="svt-graph-card__title">Concurrent streams</span>
+          <span class="svt-graph-card__sub">Peak simultaneous streams per day</span>
+        </div>
+        <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--short"><canvas id="svt-gr-concurrent"></canvas></div>
+      </div>
+
+      <!-- Row: Source resolution + Stream resolution -->
+      <div class="svt-graph-row">
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Source resolution</span>
+            <span class="svt-graph-card__sub">Resolution of files on disk</span>
+          </div>
+          <div class="svt-graph-legend" id="svt-gr-legend-srcres"></div>
+          <div class="svt-graph-canvas-wrap"><canvas id="svt-gr-srcres"></canvas></div>
+        </div>
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Stream resolution</span>
+            <span class="svt-graph-card__sub">Resolution delivered to clients</span>
+          </div>
+          <div class="svt-graph-legend" id="svt-gr-legend-stmres"></div>
+          <div class="svt-graph-canvas-wrap"><canvas id="svt-gr-stmres"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Full width: Watch completion -->
+      <div class="svt-graph-card">
+        <div class="svt-graph-card__hd">
+          <span class="svt-graph-card__title">Watch completion</span>
+          <span class="svt-graph-card__sub">How much of each title viewers actually watched</span>
+        </div>
+        <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--short"><canvas id="svt-gr-completion"></canvas></div>
+      </div>
+
+      <!-- Row: Plays by country + Top locations -->
+      <div class="svt-graph-row">
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Plays by country</span>
+            <span class="svt-graph-card__sub">Where your remote viewers are located</span>
+          </div>
+          <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--tall"><canvas id="svt-gr-country"></canvas></div>
+        </div>
+        <div class="svt-graph-card">
+          <div class="svt-graph-card__hd">
+            <span class="svt-graph-card__title">Top locations</span>
+            <span class="svt-graph-card__sub">Most active cities</span>
+          </div>
+          <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--tall"><canvas id="svt-gr-locations"></canvas></div>
+        </div>
+      </div>
+
     </div>
 
     <!-- ── Insights tab ───────────────────────────────────────────────── -->

@@ -38,7 +38,7 @@ final class StreamViewerEndpoint
     private const STATS_DEFAULT_PATH   = '/mnt/user/appdata/Stream-Viewer';
     private const STATS_RETENTION_DAYS = 90;
     private const STATS_PRUNE_CHANCE   = 50;    // 1-in-N requests triggers prune
-    private const STATS_SCHEMA_VER     = 3;
+    private const STATS_SCHEMA_VER     = 5;
     private const STATS_BUSY_TIMEOUT   = 3000;  // ms -- SQLite WAL busy wait
     private const LIBRARY_CACHE_TTL    = 300;   // seconds -- 5 min cache for library data
 
@@ -79,6 +79,12 @@ final class StreamViewerEndpoint
         }
 
         $this->recordSessions($sessions);
+
+        // Resolve any new public IPs to geo data (background, non-blocking)
+        $db = $this->openDb();
+        if ($db !== null) {
+            try { $this->resolveGeoIps($db); } catch (\Throwable $e) { /* silent */ }
+        }
 
         return count($sessions);
     }
@@ -315,6 +321,30 @@ final class StreamViewerEndpoint
             3 => function(\SQLite3 $db) {
                 @$db->exec("ALTER TABLE recently_added ADD COLUMN type_label TEXT NOT NULL DEFAULT ''");
             },
+
+            // v3 -> v4: resolution tracking + media duration for completion %
+            4 => function(\SQLite3 $db) {
+                @$db->exec("ALTER TABLE active_sessions ADD COLUMN stream_resolution TEXT NOT NULL DEFAULT ''");
+                @$db->exec("ALTER TABLE active_sessions ADD COLUMN media_duration_ms INTEGER NOT NULL DEFAULT 0");
+                @$db->exec("ALTER TABLE watch_history ADD COLUMN stream_resolution TEXT NOT NULL DEFAULT ''");
+                @$db->exec("ALTER TABLE watch_history ADD COLUMN media_duration_ms INTEGER NOT NULL DEFAULT 0");
+            },
+
+            // v4 -> v5: GeoIP cache for location-based stats
+            5 => function(\SQLite3 $db) {
+                @$db->exec("
+                    CREATE TABLE IF NOT EXISTS ip_geo_cache (
+                        ip           TEXT PRIMARY KEY,
+                        country_code TEXT NOT NULL DEFAULT '',
+                        country      TEXT NOT NULL DEFAULT '',
+                        region       TEXT NOT NULL DEFAULT '',
+                        city         TEXT NOT NULL DEFAULT '',
+                        lat          REAL NOT NULL DEFAULT 0,
+                        lon          REAL NOT NULL DEFAULT 0,
+                        cached_at    INTEGER NOT NULL DEFAULT 0
+                    )
+                ");
+            },
         ];
 
         foreach ($migrations as $ver => $fn) {
@@ -363,16 +393,18 @@ final class StreamViewerEndpoint
                 INSERT INTO active_sessions
                     (session_key, session_id, user, title, media_type, server_name, server_type,
                      play_type, ip_address, device, quality, bandwidth_kbps, duration_ms,
-                     progress_ms, first_seen, last_seen)
+                     progress_ms, first_seen, last_seen, stream_resolution, media_duration_ms)
                 VALUES (:sk, :sid, :user, :title, :mt, :sn, :st, :pt, :ip, :dev,
-                        :qual, :bw, :dur, :prog, :now, :now)
+                        :qual, :bw, :dur, :prog, :now, :now, :sres, :mdur)
                 ON CONFLICT(session_key) DO UPDATE SET
                     progress_ms = :prog,
                     duration_ms = :dur,
                     last_seen   = :now,
                     play_type   = :pt,
                     quality     = :qual,
-                    bandwidth_kbps = :bw
+                    bandwidth_kbps = :bw,
+                    stream_resolution = :sres,
+                    media_duration_ms = :mdur
             ");
             $stmt->bindValue(':sk',    $key,                                    SQLITE3_TEXT);
             $stmt->bindValue(':sid',   (string)($s['session_id'] ?? ''),        SQLITE3_TEXT);
@@ -389,6 +421,8 @@ final class StreamViewerEndpoint
             $stmt->bindValue(':dur',   (int)($s['duration_ms'] ?? 0),           SQLITE3_INTEGER);
             $stmt->bindValue(':prog',  (int)($s['progress_ms'] ?? 0),           SQLITE3_INTEGER);
             $stmt->bindValue(':now',   $now,                                    SQLITE3_INTEGER);
+            $stmt->bindValue(':sres',  (string)($s['stream_resolution'] ?? ''), SQLITE3_TEXT);
+            $stmt->bindValue(':mdur',  (int)($s['duration_ms'] ?? 0),           SQLITE3_INTEGER);
             $stmt->execute();
             $stmt->close();
         }
@@ -399,9 +433,9 @@ final class StreamViewerEndpoint
             INSERT INTO watch_history
                 (session_key, user, title, media_type, server_name, server_type,
                  play_type, ip_address, device, quality, bandwidth_kbps,
-                 duration_sec, started_at, ended_at)
+                 duration_sec, started_at, ended_at, stream_resolution, media_duration_ms)
             VALUES (:sk, :user, :title, :mt, :sn, :st, :pt, :ip, :dev,
-                    :qual, :bw, :dur, :start, :end)
+                    :qual, :bw, :dur, :start, :end, :sres, :mdur)
         ");
         $delStmt = $db->prepare("DELETE FROM active_sessions WHERE session_key = :sk");
 
@@ -431,6 +465,8 @@ final class StreamViewerEndpoint
             $moveStmt->bindValue(':dur',   $durationSec,         SQLITE3_INTEGER);
             $moveStmt->bindValue(':start', (int)$row['first_seen'], SQLITE3_INTEGER);
             $moveStmt->bindValue(':end',   (int)$row['last_seen'],  SQLITE3_INTEGER);
+            $moveStmt->bindValue(':sres',  (string)($row['stream_resolution'] ?? ''), SQLITE3_TEXT);
+            $moveStmt->bindValue(':mdur',  (int)($row['media_duration_ms'] ?? 0),     SQLITE3_INTEGER);
             $moveStmt->execute();
             $moveStmt->reset();
 
@@ -505,6 +541,68 @@ final class StreamViewerEndpoint
         $stmt = $db->prepare("DELETE FROM watch_history WHERE ended_at < :cutoff AND ended_at > 0");
         $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
         $stmt->execute();
+        $stmt->close();
+    }
+
+    /**
+     * Batch-resolve uncached public IPs to geo data via ip-api.com/batch.
+     * Called from cronPoll(). Silently skips on any error.
+     * Resolves up to 100 IPs per cycle (api limit per batch request).
+     */
+    private function resolveGeoIps(\SQLite3 $db): void
+    {
+        // Collect unique public IPs from watch_history not yet cached
+        $res = $db->query("
+            SELECT DISTINCT h.ip_address
+            FROM watch_history h
+            LEFT JOIN ip_geo_cache g ON g.ip = h.ip_address
+            WHERE h.ip_address != '' AND g.ip IS NULL
+            LIMIT 100
+        ");
+        if ($res === false) return;
+
+        $ips = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $ip = (string)$row['ip_address'];
+            if (!$this->isPrivateIp($ip)) $ips[] = $ip;
+        }
+        if (empty($ips)) return;
+
+        // Build batch request for ip-api.com
+        $payload = [];
+        foreach ($ips as $ip) {
+            $payload[] = ['query' => $ip, 'fields' => 'status,country,countryCode,regionName,city,lat,lon,query'];
+        }
+
+        [$body, $code, $err] = $this->httpPostJson(
+            'http://ip-api.com/batch?fields=status,country,countryCode,regionName,city,lat,lon,query',
+            json_encode($payload)
+        );
+
+        if ($body === null || $code !== 200) return;
+        $results = @json_decode($body, true);
+        if (!is_array($results)) return;
+
+        $now  = time();
+        $stmt = $db->prepare("
+            INSERT OR REPLACE INTO ip_geo_cache
+                (ip, country_code, country, region, city, lat, lon, cached_at)
+            VALUES (:ip, :cc, :co, :rg, :ci, :la, :lo, :ca)
+        ");
+
+        foreach ($results as $r) {
+            if (!is_array($r) || ($r['status'] ?? '') !== 'success') continue;
+            $stmt->bindValue(':ip', (string)($r['query'] ?? ''),       SQLITE3_TEXT);
+            $stmt->bindValue(':cc', (string)($r['countryCode'] ?? ''), SQLITE3_TEXT);
+            $stmt->bindValue(':co', (string)($r['country'] ?? ''),     SQLITE3_TEXT);
+            $stmt->bindValue(':rg', (string)($r['regionName'] ?? ''),  SQLITE3_TEXT);
+            $stmt->bindValue(':ci', (string)($r['city'] ?? ''),        SQLITE3_TEXT);
+            $stmt->bindValue(':la', (float)($r['lat'] ?? 0),           SQLITE3_FLOAT);
+            $stmt->bindValue(':lo', (float)($r['lon'] ?? 0),           SQLITE3_FLOAT);
+            $stmt->bindValue(':ca', $now,                              SQLITE3_INTEGER);
+            $stmt->execute();
+            $stmt->reset();
+        }
         $stmt->close();
     }
 
@@ -817,6 +915,37 @@ final class StreamViewerEndpoint
             } catch (\Throwable $e) {}
         }
 
+        // Last activity: most recent watch_history entry (shown when idle)
+        $lastActivity = null;
+        $db = $this->openDb();
+        if ($db !== null) {
+            $la = @$db->querySingle(
+                "SELECT user, title, ended_at FROM watch_history ORDER BY ended_at DESC LIMIT 1",
+                true
+            );
+            if (!$la || (int)($la['ended_at'] ?? 0) <= 0) {
+                $la = @$db->querySingle(
+                    "SELECT user, title, last_seen AS ended_at FROM active_sessions ORDER BY last_seen DESC LIMIT 1",
+                    true
+                );
+            }
+            if ($la && (int)($la['ended_at'] ?? 0) > 0) {
+                $ago = time() - (int)$la['ended_at'];
+                if ($ago < 0) $ago = 0;
+                if ($ago < 86400 * 30) {
+                    if ($ago < 60)        $agoStr = $ago . 's ago';
+                    elseif ($ago < 3600)  $agoStr = floor($ago / 60) . 'm ago';
+                    elseif ($ago < 86400) $agoStr = floor($ago / 3600) . 'h ago';
+                    else                  $agoStr = floor($ago / 86400) . 'd ago';
+                    $lastActivity = [
+                        'user'  => (string)($la['user'] ?? ''),
+                        'title' => (string)($la['title'] ?? ''),
+                        'ago'   => $agoStr,
+                    ];
+                }
+            }
+        }
+
         $json = (string)json_encode([
             'sessions'       => $sessions,
             'servers'        => $serverStats,
@@ -824,6 +953,7 @@ final class StreamViewerEndpoint
             'total_sessions' => count($sessions),
             'timestamp'      => time(),
             'no_servers'     => empty($servers),
+            'last_activity'  => $lastActivity,
         ]);
         $this->cachePut($cachePath, $json);
 
@@ -1005,6 +1135,24 @@ final class StreamViewerEndpoint
             }
 
             $playType  = $this->normalizePlexPlayType($item);
+            $resConversion = '';
+            if ($playType === 'transcode') {
+                $srcW = (int)($videoS['width']  ?? 0);
+                $srcH = (int)($videoS['height'] ?? 0);
+                if ($srcW <= 0) $srcW = (int)($media['width']  ?? 0);
+                if ($srcH <= 0) $srcH = (int)($media['height'] ?? 0);
+                $stmW = (int)($item['TranscodeSession']['width']  ?? 0);
+                $stmH = (int)($item['TranscodeSession']['height'] ?? 0);
+                $srcLabel = $this->resLabelWH($srcW, $srcH);
+                $stmLabel = $this->resLabelWH($stmW, $stmH);
+                if ($srcLabel !== '' && $stmLabel !== '' && $srcLabel !== $stmLabel) {
+                    $resConversion = $srcLabel . chr(0xe2).chr(0x86).chr(0x92) . $stmLabel;
+                } elseif ($stmLabel !== '') {
+                    $resConversion = $stmLabel;
+                } elseif ($srcLabel !== '') {
+                    $resConversion = $srcLabel;
+                }
+            }
             $thumbPath = $item['grandparentThumb'] ?? $item['parentThumb'] ?? $item['thumb'] ?? null;
             $thumbUrl  = ($thumbPath !== null && $thumbPath !== '' && $srv['url'] !== '')
                 ? rtrim($srv['url'], '/') . '/photo/:/transcode?width=600&height=900&minSize=1&url='
@@ -1029,6 +1177,10 @@ final class StreamViewerEndpoint
                 'duration_ms'           => (int)($item['duration']                        ?? 0),
                 'bandwidth_kbps'        => (int)($media['bitrate']                        ?? 0),
                 'quality'               => $this->formatPlexQuality((string)($media['videoResolution'] ?? '')),
+                'stream_resolution'     => ($playType === 'transcode' && isset($item['TranscodeSession']))
+                                            ? $this->heightToLabel((int)($item['TranscodeSession']['height'] ?? 0))
+                                            : $this->formatPlexQuality((string)($media['videoResolution'] ?? '')),
+                'resolution_label'      => $resConversion,
                 'bitrate'               => (int)($media['bitrate']                        ?? 0),
                 'container'             => (string)($media['container']                   ?? ''),
                 'video_codec'           => (string)($videoS['codec']                      ?? ''),
@@ -1065,6 +1217,63 @@ final class StreamViewerEndpoint
     {
         if ($res === '') return '';
         return $res;
+    }
+
+    private function heightToLabel(int $h): string
+    {
+        if ($h <= 0) return '';
+        if ($h <= 480)  return '480';
+        if ($h <= 576)  return '576';
+        if ($h <= 720)  return '720';
+        if ($h <= 1080) return '1080';
+        if ($h <= 1440) return '1440';
+        return '4k';
+    }
+
+    private function resLabel(int $h): string
+    {
+        return $this->resLabelWH(0, $h);
+    }
+
+    private function resLabelWH(int $w, int $h): string
+    {
+        if ($w > 0) {
+            if ($w >= 3200) return '4K';
+            if ($w >= 1600) return '1080p';
+            if ($w >= 1100) return '720p';
+            if ($w >= 700)  return '480p';
+            if ($w >= 500)  return '360p';
+            return '240p';
+        }
+        if ($h <= 0) return '';
+        if ($h >= 2000) return '4K';
+        if ($h >= 900)  return '1080p';
+        if ($h >= 600)  return '720p';
+        if ($h >= 350)  return '480p';
+        if ($h >= 200)  return '360p';
+        return '240p';
+    }
+
+    private function plexResFormat(string $res): string
+    {
+        $r = strtolower(trim($res));
+        if ($r === '4k')   return '4K';
+        if ($r === 'sd')   return 'SD';
+        if ($r === '')     return '';
+        return $r . 'p';
+    }
+
+    private function plexResToHeight(string $res): int
+    {
+        $r = strtolower(trim($res));
+        if ($r === '4k')   return 2160;
+        if ($r === '1080') return 1080;
+        if ($r === '720')  return 720;
+        if ($r === '576')  return 576;
+        if ($r === '480')  return 480;
+        if ($r === 'sd')   return 480;
+        $n = (int)$r;
+        return $n > 0 ? $n : 0;
     }
 
     private function detectPlexVideoRange(?array $videoStream): string
@@ -1123,6 +1332,7 @@ final class StreamViewerEndpoint
             $audioSpatial = $subLang = $subCodec = '';
             $bitrate = $audioChannels = $bitDepth = 0;
             $videoRange = '';
+            $srcW = 0;
 
             $mediaSources = $nowPlaying['MediaSources'] ?? [];
             $streams = [];
@@ -1141,6 +1351,7 @@ final class StreamViewerEndpoint
                 if ($sType === 'Video' && $videoCodec === '') {
                     $videoCodec = (string)($s['Codec'] ?? '');
                     $h = (int)($s['Height'] ?? 0);
+                    $srcW = (int)($s['Width'] ?? 0);
                     if ($h > 0) $quality = (string)$h;
                     $bitDepth   = (int)($s['BitDepth'] ?? 0);
                     $vr = (string)($s['VideoRange'] ?? '');
@@ -1194,6 +1405,19 @@ final class StreamViewerEndpoint
                 ? rtrim($srv['url'], '/') . '/Items/' . urlencode($imageId) . '/Images/Primary?maxHeight=600&maxWidth=400&quality=96&api_key=' . urlencode($srv['token'])
                 : '';
 
+            $jfResConversion = '';
+            if ($playType === 'transcode' && $transInfo !== null) {
+                $srcLabel = $this->resLabelWH($srcW, (int)$quality);
+                $stmW2 = (int)($transInfo['Width'] ?? 0);
+                $stmH2 = (int)($transInfo['Height'] ?? 0);
+                $stmLabel = $this->resLabelWH($stmW2, $stmH2);
+                if ($srcLabel !== '' && $stmLabel !== '' && $srcLabel !== $stmLabel) {
+                    $jfResConversion = $srcLabel . chr(0xe2).chr(0x86).chr(0x92) . $stmLabel;
+                } elseif ($srcLabel !== '') {
+                    $jfResConversion = $srcLabel;
+                }
+            }
+
             $sessions[] = $this->normalizeSession([
                 'server_name'           => $srv['name'],
                 'server_type'           => 'jellyfin',
@@ -1211,6 +1435,10 @@ final class StreamViewerEndpoint
                 'duration_ms'           => $durationMs,
                 'bandwidth_kbps'        => $bitrate,
                 'quality'               => $quality,
+                'stream_resolution'     => ($playType === 'transcode' && $transInfo !== null)
+                                            ? $this->heightToLabel((int)($transInfo['Height'] ?? 0) ?: (int)$quality)
+                                            : $this->heightToLabel((int)$quality),
+                'resolution_label'      => $jfResConversion,
                 'bitrate'               => $bitrate,
                 'container'             => $container,
                 'video_codec'           => $videoCodec,
@@ -1342,6 +1570,8 @@ final class StreamViewerEndpoint
             'duration_ms'           => $durationMs,
             'progress_pct'          => $progressPct,
             'quality'               => $this->sanitizeStr($raw['quality']               ?? ''),
+            'stream_resolution'     => $this->sanitizeStr($raw['stream_resolution']     ?? ''),
+            'resolution_label'      => $this->sanitizeStr($raw['resolution_label']      ?? ''),
             'bitrate'               => (int)($raw['bitrate']                            ?? 0),
             'bandwidth_kbps'        => (int)($raw['bandwidth_kbps']                     ?? 0),
             'container'             => $this->sanitizeStr($raw['container']             ?? ''),
@@ -2197,6 +2427,213 @@ final class StreamViewerEndpoint
         $bwKeyed = [];
         foreach ($bwDays as $b) $bwKeyed[$b['date']] = $b;
 
+        // 8. Plays by day of week (bar, Sun=0 .. Sat=6)
+        $stmt = $db->prepare("
+            SELECT CAST(strftime('%w', ended_at, 'unixepoch', 'localtime') AS INTEGER) AS dow,
+                   COUNT(*) AS cnt
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+            GROUP BY dow ORDER BY dow ASC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $dowCounts = array_fill(0, 7, 0);
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $d = (int)($row['dow'] ?? 0);
+            if ($d >= 0 && $d < 7) $dowCounts[$d] = (int)$row['cnt'];
+        }
+        $stmt->close();
+
+        // 9. Plays per month (bar)
+        $stmt = $db->prepare("
+            SELECT strftime('%Y-%m', ended_at, 'unixepoch', 'localtime') AS month,
+                   COUNT(*) AS cnt,
+                   COALESCE(SUM(duration_sec), 0) AS total_sec
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+            GROUP BY month ORDER BY month ASC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $monthlyPlays = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $monthlyPlays[] = [
+                'month' => (string)$row['month'],
+                'plays' => (int)$row['cnt'],
+                'hours' => round((int)$row['total_sec'] / 3600, 1),
+            ];
+        }
+        $stmt->close();
+
+        // 10. Top devices/platforms (horizontal bar, top 10)
+        $stmt = $db->prepare("
+            SELECT device, COUNT(*) AS cnt,
+                   COALESCE(SUM(duration_sec), 0) AS total_sec
+            FROM watch_history
+            WHERE ended_at >= :cutoff AND device != ''
+            GROUP BY device ORDER BY cnt DESC LIMIT 10
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $topDevices = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $topDevices[] = [
+                'device' => (string)$row['device'],
+                'plays'  => (int)$row['cnt'],
+                'hours'  => round((int)$row['total_sec'] / 3600, 1),
+            ];
+        }
+        $stmt->close();
+
+        // 11. Library activity (server + media_type breakdown)
+        $stmt = $db->prepare("
+            SELECT server_name, media_type, COUNT(*) AS cnt,
+                   COALESCE(SUM(duration_sec), 0) AS total_sec
+            FROM watch_history
+            WHERE ended_at >= :cutoff
+            GROUP BY server_name, media_type
+            ORDER BY cnt DESC LIMIT 15
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $libraryActivity = [];
+        $mtLabels = ['movie' => 'Movies', 'episode' => 'TV Shows', 'track' => 'Music'];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $mt = (string)($row['media_type'] ?? '');
+            $libraryActivity[] = [
+                'label' => trim((string)$row['server_name'] . ' - ' . ($mtLabels[$mt] ?? ucfirst($mt))),
+                'plays' => (int)$row['cnt'],
+                'hours' => round((int)$row['total_sec'] / 3600, 1),
+            ];
+        }
+        $stmt->close();
+
+        // 12. Concurrent streams per day (max overlapping sessions)
+        $stmt = $db->prepare("
+            SELECT started_at, ended_at
+            FROM watch_history
+            WHERE ended_at >= :cutoff AND started_at > 0 AND ended_at > started_at
+            ORDER BY started_at ASC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $events = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $sa = (int)$row['started_at'];
+            $ea = (int)$row['ended_at'];
+            $events[] = [$sa, 1];
+            $events[] = [$ea, -1];
+        }
+        $stmt->close();
+        usort($events, function($a, $b) { return $a[0] - $b[0] ?: $a[1] - $b[1]; });
+
+        $tz = new \DateTimeZone(date_default_timezone_get());
+        $concurrentDays = [];
+        $running = 0;
+        foreach ($events as $ev) {
+            $running += $ev[1];
+            $day = (new \DateTime("@{$ev[0]}"))->setTimezone($tz)->format('Y-m-d');
+            if (!isset($concurrentDays[$day]) || $running > $concurrentDays[$day]['peak']) {
+                $concurrentDays[$day] = ['date' => $day, 'peak' => max(0, $running)];
+            }
+        }
+
+        // 13. Source resolution distribution (donut)
+        $stmt = $db->prepare("
+            SELECT quality, COUNT(*) AS cnt
+            FROM watch_history
+            WHERE ended_at >= :cutoff AND quality != ''
+            GROUP BY quality ORDER BY cnt DESC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $sourceResDist = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $sourceResDist[] = ['label' => (string)$row['quality'], 'count' => (int)$row['cnt']];
+        }
+        $stmt->close();
+
+        // 14. Stream resolution distribution (donut)
+        $stmt = $db->prepare("
+            SELECT stream_resolution, COUNT(*) AS cnt
+            FROM watch_history
+            WHERE ended_at >= :cutoff AND stream_resolution != ''
+            GROUP BY stream_resolution ORDER BY cnt DESC
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $streamResDist = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $streamResDist[] = ['label' => (string)$row['stream_resolution'], 'count' => (int)$row['cnt']];
+        }
+        $stmt->close();
+
+        // 15. Watch completion distribution (histogram buckets: 0-25%, 25-50%, 50-75%, 75-100%)
+        $stmt = $db->prepare("
+            SELECT duration_sec, media_duration_ms
+            FROM watch_history
+            WHERE ended_at >= :cutoff AND media_duration_ms > 0
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $completionBuckets = [0, 0, 0, 0];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $mediaSec  = (int)$row['media_duration_ms'] / 1000;
+            if ($mediaSec <= 0) continue;
+            $watchSec  = (int)$row['duration_sec'];
+            $pct = min(100, ($watchSec / $mediaSec) * 100);
+            if ($pct < 25)       $completionBuckets[0]++;
+            elseif ($pct < 50)   $completionBuckets[1]++;
+            elseif ($pct < 75)   $completionBuckets[2]++;
+            else                 $completionBuckets[3]++;
+        }
+        $stmt->close();
+
+        // 16. Plays by country (from geo cache)
+        $stmt = $db->prepare("
+            SELECT g.country, g.country_code, COUNT(*) AS cnt
+            FROM watch_history h
+            INNER JOIN ip_geo_cache g ON g.ip = h.ip_address
+            WHERE h.ended_at >= :cutoff AND h.ip_address != ''
+            GROUP BY g.country_code
+            ORDER BY cnt DESC LIMIT 15
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $playsByCountry = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $playsByCountry[] = [
+                'country'      => (string)$row['country'],
+                'country_code' => (string)$row['country_code'],
+                'plays'        => (int)$row['cnt'],
+            ];
+        }
+        $stmt->close();
+
+        // 17. Top locations (city + country, top 10)
+        $stmt = $db->prepare("
+            SELECT g.city, g.country, g.country_code, g.lat, g.lon, COUNT(*) AS cnt
+            FROM watch_history h
+            INNER JOIN ip_geo_cache g ON g.ip = h.ip_address
+            WHERE h.ended_at >= :cutoff AND h.ip_address != '' AND g.city != ''
+            GROUP BY g.city, g.country_code
+            ORDER BY cnt DESC LIMIT 10
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $topLocations = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $topLocations[] = [
+                'city'         => (string)$row['city'],
+                'country'      => (string)$row['country'],
+                'country_code' => (string)$row['country_code'],
+                'lat'          => (float)$row['lat'],
+                'lon'          => (float)$row['lon'],
+                'plays'        => (int)$row['cnt'],
+            ];
+        }
+        $stmt->close();
+
         $this->json([
             'watch_time_daily'   => $fillDates($cutoff, $watchDays, ['plex' => 0, 'jellyfin' => 0, 'emby' => 0]),
             'peak_hours'         => $peakHours,
@@ -2205,6 +2642,16 @@ final class StreamViewerEndpoint
             'user_activity'      => $userActivity,
             'local_remote_daily' => $fillDates($cutoff, $lrDays, ['local' => 0, 'remote' => 0]),
             'bandwidth_daily'    => $fillDates($cutoff, $bwKeyed, ['avg_mbps' => 0]),
+            'plays_by_dow'       => $dowCounts,
+            'plays_per_month'    => $monthlyPlays,
+            'top_devices'        => $topDevices,
+            'library_activity'   => $libraryActivity,
+            'concurrent_daily'   => $fillDates($cutoff, $concurrentDays, ['peak' => 0]),
+            'source_res_dist'    => $sourceResDist,
+            'stream_res_dist'    => $streamResDist,
+            'completion_buckets' => $completionBuckets,
+            'plays_by_country'   => $playsByCountry,
+            'top_locations'      => $topLocations,
         ]);
     }
 

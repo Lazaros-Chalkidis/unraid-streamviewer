@@ -32,6 +32,7 @@ var _initialized  = false;    // true after first successful fetch
 var _reloadScheduled = false; // true when 403 auto-reload is pending
 var _lastActiveStreams = 0;   // track active streams for docker stats mini-poll
 var _dockerPollTimer  = null; // independent docker stats polling timer
+var _emptyStateEl     = null; // preserved reference to empty state element
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -65,6 +66,20 @@ function fmtMs(ms) {
     var m   = Math.floor((s % 3600) / 60);
     var sec = s % 60;
     return h + ':' + pad2(m) + ':' + pad2(sec);
+}
+
+function fmtRemaining(progressMs, durationMs) {
+    if (!durationMs || durationMs <= 0 || !progressMs) return '';
+    var leftMs = durationMs - progressMs;
+    if (leftMs <= 0) return '';
+    var leftMin = Math.ceil(leftMs / 60000);
+    if (leftMin < 1) return '';
+    if (leftMin >= 60) {
+        var h = Math.floor(leftMin / 60);
+        var m = leftMin % 60;
+        return m > 0 ? h + 'h ' + m + 'm left' : h + 'h left';
+    }
+    return leftMin + 'm left';
 }
 
 function fmtNow() {
@@ -254,13 +269,17 @@ function renderRow(s) {
     if (cfg.showTranscode) {
         var tLabel = isPaused ? 'Paused' : ptm.label;
         var tMod   = isPaused ? 'paused' : ptm.badge;
+        var resSuffix = '';
+        if (!isPaused && ptm.bar === 'trans' && s.resolution_label) {
+            resSuffix = '<span class="sv-stream__transcode-res">' + esc(s.resolution_label) + '</span>';
+        }
         var speedSuffix = '';
         if (!isPaused && ptm.bar === 'trans' && s.server_type === 'plex') {
             var speedVal = (s.transcode_speed > 0) ? s.transcode_speed.toFixed(1) + 'x' : '';
             speedSuffix = '<span class="sv-stream__transcode-speed">' + esc(speedVal) + '</span>';
         }
         transHtml = '<span class="sv-stream__transcode sv-stream__transcode--' + esc(tMod) + '">'
-            + esc(tLabel) + speedSuffix + '</span>';
+            + esc(tLabel) + resSuffix + speedSuffix + '</span>';
     }
 
     // Left group: quality + live bitrate
@@ -326,6 +345,8 @@ function renderRow(s) {
     var progressHtml = '';
     if (cfg.showProgress && s.duration_ms > 0) {
         var pct = Math.min(100, Math.max(0, s.progress_pct || 0));
+        var remaining = fmtRemaining(s.progress_ms, s.duration_ms);
+        var remainingHtml = remaining ? '<span class="sv-stream__time-left">\u00b7 ' + esc(remaining) + '</span>' : '';
         progressHtml = '<div class="sv-stream__progress-wrap">'
             + '<div class="sv-stream__progress" title="' + pct.toFixed(1) + '%">'
             +   '<div class="sv-stream__progress-bar" style="width:' + pct.toFixed(2) + '%"></div>'
@@ -333,6 +354,7 @@ function renderRow(s) {
             + '<span class="sv-stream__time">'
             + esc(fmtMs(s.progress_ms)) + ' / ' + esc(fmtMs(s.duration_ms))
             + '</span>'
+            + remainingHtml
             + '</div>';
     }
 
@@ -398,6 +420,7 @@ function renderRow(s) {
         + ' data-quality="'     + esc(s.quality     || '') + '"'
         + ' data-play-type="'   + esc(s.play_type   || '') + '"'
         + ' data-bandwidth="'   + (s.bandwidth_kbps > 0 ? '1' : '0') + '"'
+        + ' data-res-label="'   + esc(s.resolution_label || '') + '"'
         + '>'
         + barHtml + badgesRowHtml + titleHtml + subHtml + detailsHtml + badgesHtml
         + '</div>';
@@ -434,6 +457,7 @@ function patchRow(el, s) {
     var needRebuild = false;
     if (el.dataset.state    !== (s.state     || '')) needRebuild = true;
     if (el.dataset.playType !== (s.play_type || '')) needRebuild = true;
+    if (el.dataset.resLabel !== (s.resolution_label || '')) needRebuild = true;
     if (needRebuild) {
         return true;
     }
@@ -539,9 +563,9 @@ function patchRow(el, s) {
     return false; // no rebuild needed
 }
 
-function renderStreams(sessions) {
+function renderStreams(sessions, lastActivity) {
     var container  = DOM.container();
-    var emptyState = DOM.emptyState();
+    var emptyState = _emptyStateEl;
     if (!container) return;
 
     var visible = sortSessions(sessions);
@@ -551,7 +575,19 @@ function renderStreams(sessions) {
 
     if (visible.length === 0) {
         container.innerHTML = '';
-        if (emptyState) emptyState.style.display = '';
+        if (emptyState) {
+            container.appendChild(emptyState);
+            emptyState.style.display = '';
+            var laEl = emptyState.querySelector('#sv-last-activity');
+            if (laEl) {
+                if (lastActivity && lastActivity.user && lastActivity.title) {
+                    laEl.textContent = 'Last stream ' + lastActivity.ago + ' by ' + lastActivity.user + ' \u2013 ' + lastActivity.title;
+                    laEl.style.display = '';
+                } else {
+                    laEl.style.display = 'none';
+                }
+            }
+        }
         return;
     }
 
@@ -910,7 +946,7 @@ function fetchSessions(onDone) {
             _sessions    = Array.isArray(data.sessions) ? data.sessions : [];
             _serverStats = Array.isArray(data.servers)  ? data.servers  : [];
 
-            renderStreams(_sessions);
+            renderStreams(_sessions, data.last_activity || null);
             updateBadge(data.total_sessions || 0);
             _lastActiveStreams = data.total_sessions || 0;
             updateTimestamp();
@@ -1069,8 +1105,7 @@ function renderNoServers() {
         + '<i class="fa fa-cog"></i>&nbsp;Open Settings'
         + '</a>'
         + '</div>';
-    var emptyState = DOM.emptyState();
-    if (emptyState) emptyState.style.display = 'none';
+    if (_emptyStateEl) _emptyStateEl.style.display = 'none';
 }
 
 
@@ -1141,9 +1176,9 @@ function init() {
 
     // Loading skeleton
     var container  = DOM.container();
-    var emptyState = DOM.emptyState();
-    if (container)  container.innerHTML      = buildSkeletons();
-    if (emptyState) emptyState.style.display = 'none';
+    _emptyStateEl  = DOM.emptyState();
+    if (container)       container.innerHTML      = buildSkeletons();
+    if (_emptyStateEl)   _emptyStateEl.style.display = 'none';
 
     fetchSessions(function() { startPolling(); });
 }

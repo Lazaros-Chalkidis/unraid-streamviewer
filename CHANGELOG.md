@@ -1,7 +1,37 @@
 
 # Stream Viewer
 
+## v2026.04.12
+
+### Bug Fixes
+- Fixed poll daemon not restarting after a live plugin update. The daemon now auto-starts if the array is already running, so a reboot is no longer needed after updating.
+
+### New Features
+- Dashboard Widget:
+- Time remaining indicator next to progress bar (e.g. "47m left", "1h 12m left")
+- Resolution conversion in transcode badge (e.g. "TRANSCODE 1080p > 720p 2.4x")
+- Last activity display when no streams are active (e.g. "Last stream 2h ago by user - Movie Title")
+- Statistics - Graphs tab (10 new charts):
+- Plays by day of week
+- Monthly plays (always displays all 12 months)
+- Top devices and platforms
+- Library activity (plays per server and content type)
+- Concurrent streams per day (peak simultaneous streams)
+- Source resolution distribution
+- Stream resolution distribution
+- Watch completion histogram (0-25%, 25-50%, 50-75%, 75-100%)
+- Plays by country (GeoIP lookup via ip-api.com)
+- Top locations by city
+
+### Improvements
+- Standardized bar chart thickness across all graphs to match Peak viewing hours
+- Improved footer timestamp styling and readability
+- Increased progress bar width by 20%
+- Fixed Cancel button sizing and alignment in Plex OAuth sign-in flow
+
 ## v2026.04.10
+
+### Bug Fixes
 - Fixed poll daemon starting before array is fully mounted, which could prevent user shares from initializing on boot
 - Daemon now starts via Unraid event system after array is fully ready instead of during plugin installation
 - Added mountpoint verification before each poll cycle
@@ -10,6 +40,8 @@
 - Added event/stopped script to properly stop daemon when array stops
 
 ## v2026.04.09
+
+### Bug Fixes
 - Fixed statistics database not being created on systems with custom storage pools (e.g. /mnt/cache/, /mnt/app_data/) where PHP's realpath resolved /mnt/user/ to the underlying mount point
 
 ## v2026.04.06

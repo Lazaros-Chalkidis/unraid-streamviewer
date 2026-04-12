@@ -158,8 +158,13 @@
   display: flex; align-items: center; justify-content: center; gap: .4rem;
   padding: 1.1rem .5rem;
   color: var(--sv-c-text-faint); font-size: .85em; font-style: italic;
+  flex-wrap: wrap;
 }
 .sv-empty-icon { font-size: 1em; }
+.sv-last-activity {
+  width: 100%; text-align: center;
+  font-size: .9em; font-style: normal; color: var(--sv-c-text-faint); opacity: .7;
+}
 
 /* ── 8. STREAM ROW ────────────────────────────────────────────────────────── */
 .sv-stream {
@@ -344,7 +349,7 @@
 /* ── Progress block ───────────────────────────────────────────────────────── */
 .sv-stream__progress-wrap {
   display: flex; align-items: center; gap: .35rem;
-  flex-shrink: 1; min-width: 0; max-width: 220px;
+  flex-shrink: 1; min-width: 0; max-width: 264px;
 }
 .sv-stream__progress {
   flex: 1; height: 5px;
@@ -364,6 +369,14 @@
   font-size: .72em; color: var(--sv-c-text-faint);
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
+.sv-stream__time-left {
+  font-size: .72em; white-space: nowrap;
+  color: var(--sv-c-text-faint); font-variant-numeric: tabular-nums;
+}
+.sv-stream__transcode-res {
+  margin-left: .3em; opacity: .85; font-weight: 500; display: inline-block;
+  text-transform: none;
+}
 
 /* ── 9. FOOTER ───────────────────────────────────────────────────────────── */
 .sv-footer {
@@ -374,7 +387,7 @@
   font-size: .75em;
 }
 .sv-footer-left  { display: flex; align-items: center; gap: .5rem; color: var(--sv-c-text-muted); min-width: 0; flex: 1; }
-.sv-footer-right { display: flex; align-items: center; gap: .3rem; font-size: .78em; flex-shrink: 0; }
+.sv-footer-right { display: flex; align-items: center; gap: .3rem; font-size: 0.9rem; flex-shrink: 0; }
 
 /* Docker resource stats in footer (micro-bar design) */
 .sv-docker-stats {
@@ -415,7 +428,7 @@
   transition: background .4s ease;
 }
 
-.sv-ts-icon  { color: var(--sv-c-text-muted); flex-shrink: 0; }
+.sv-ts-icon  { color: var(--sv-c-text-muted); flex-shrink: 0; opacity: 0.7; }
 .sv-ts-value { font-variant-numeric: tabular-nums; color: var(--sv-c-text); }
 
 /* Pulse animation (active refresh) — flash green once per refresh cycle */
@@ -625,7 +638,7 @@
 /* Tablet and small desktop */
 @media (max-width: 640px) {
   .sv-stream__device { max-width: 100px; }
-  .sv-stream__progress-wrap { max-width: 180px; }
+  .sv-stream__progress-wrap { max-width: 216px; }
   .sv-docker-stat__bar { width: 29px; }
   .sv-header-meta { padding-left: calc(32px + 1rem); }
 }
@@ -633,7 +646,7 @@
 /* Large phones */
 @media (max-width: 480px) {
   .sv-header-meta { padding-left: .5rem; }
-  .sv-stream__progress-wrap { max-width: 140px; }
+  .sv-stream__progress-wrap { max-width: 168px; }
   .sv-stream__device { max-width: 80px; }
   .sv-stream__ip { font-size: .8em; padding: .1em .2em; }
   .sv-docker-stat__bar { width: 22px; }
@@ -651,7 +664,7 @@
 @media (max-width: 360px) {
   .sv-header-meta { padding-left: .25rem; }
   .sv-stream__sub { flex-wrap: wrap; gap: .25rem; }
-  .sv-stream__progress-wrap { max-width: 120px; }
+  .sv-stream__progress-wrap { max-width: 144px; }
   .sv-stream__device-wrap { display: none; }
   .sv-docker-stats { gap: .3rem; }
   .sv-docker-stat__bar { width: 18px; }

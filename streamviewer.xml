@@ -4,9 +4,9 @@
   <PluginURL>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/streamviewer.plg</PluginURL>
   <PluginAuthor>Lazaros Chalkidis</PluginAuthor>
   <Beta>false</Beta>
-  <Category>Tools:Utilities MediaApp:Other</Category>
+  <Category>MediaServer:Video MediaApp:Video</Category>
   <Name>Stream Viewer</Name>
-  <Description><![CDATA[A real-time media stream monitor and statistics tracker. View active streams from your Plex, Jellyfin and Emby servers directly from the dashboard, and track watch history through a dedicated statistics page.]]></Description>
+  <Description><![CDATA[A real-time media stream monitor and statistics tracker for Plex, Jellyfin and Emby. View active streams directly from the dashboard, and track detailed watch history through a dedicated statistics page.]]></Description>
   <Project>https://github.com/Lazaros-Chalkidis/unraid-streamviewer</Project>
   <Support>https://forums.unraid.net/topic/197757-plugin-stream-viewer/</Support>
   <Icon>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/source/streamviewerplugin.png</Icon>

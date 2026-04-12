@@ -205,21 +205,21 @@ function loadDailyChart() {
                         data: plex,
                         backgroundColor: '#e5a00d',
                         borderRadius: 2,
-                        maxBarThickness: 40,
+                        maxBarThickness: 20,
                     },
                     {
                         label: 'Jellyfin',
                         data: jf,
                         backgroundColor: '#00a4dc',
                         borderRadius: 2,
-                        maxBarThickness: 40,
+                        maxBarThickness: 20,
                     },
                     {
                         label: 'Emby',
                         data: emby,
                         backgroundColor: '#52b54b',
                         borderRadius: 2,
-                        maxBarThickness: 40,
+                        maxBarThickness: 20,
                     },
                 ],
             },
@@ -1181,7 +1181,7 @@ function loadGraphs() {
         if (uaWrap) uaWrap.style.height = Math.max(154, ua.length * 42 + 40) + 'px';
         grMakeChart('svt-gr-users', {
             type: 'bar',
-            data: { labels: uaLabels, datasets: [{ data: uaData, backgroundColor: uaColors, borderRadius: 4, maxBarThickness: 36 }] },
+            data: { labels: uaLabels, datasets: [{ data: uaData, backgroundColor: uaColors, borderRadius: 4, maxBarThickness: 20 }] },
             options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: $.extend(grBaseTooltip(), { callbacks: { label: function(it) { return it.parsed.x + 'h'; } } }) },
                 scales: { x: { ticks: { color: grTick(), font: { size: 15 }, callback: function(v) { return v + 'h'; } }, grid: { color: grGrid() }, beginAtZero: true },
                           y: { ticks: { color: grTick(), font: { size: 16 } }, grid: { display: false } } } }
@@ -1210,7 +1210,7 @@ function loadGraphs() {
                 { label: 'Remote', data: lrRemote, backgroundColor: '#c62828', borderRadius: 2, maxBarThickness: 20 },
             ]},
             options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: grBaseTooltip() },
-                scales: { x: { stacked: true, ticks: { color: grTick(), font: { size: 15 } }, grid: { display: false } },
+                scales: { x: { stacked: true, ticks: { color: grTick(), font: { size: 11 }, maxRotation: 0 }, grid: { display: false } },
                           y: { stacked: true, ticks: { color: grTick(), font: { size: 15 }, precision: 0 }, grid: { color: grGrid() }, beginAtZero: true } },
                 interaction: { mode: 'index', intersect: false } }
         });
@@ -1229,6 +1229,200 @@ function loadGraphs() {
                 scales: { x: { ticks: { color: grTick(), font: { size: 15 } }, grid: { display: false } },
                           y: { ticks: { color: grTick(), font: { size: 15 }, callback: function(v) { return v + ' Mbps'; } }, grid: { color: grGrid() }, beginAtZero: true } } }
         });
+
+        // 8. Plays by day of week (bar)
+        var dow = data.plays_by_dow || [];
+        var dowLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        var dowColors = [];
+        var dowMax = Math.max.apply(null, dow.length ? dow : [0]);
+        for (var di = 0; di < 7; di++) {
+            dowColors.push((dow[di] || 0) === dowMax && dowMax > 0 ? '#e5a00d' : 'rgba(229,160,13,.5)');
+        }
+        grMakeChart('svt-gr-dow', {
+            type: 'bar',
+            data: { labels: dowLabels, datasets: [{ data: dow, backgroundColor: dowColors, borderRadius: 2, maxBarThickness: 20 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: $.extend(grBaseTooltip(), { callbacks: { label: function(it) { return it.parsed.y + ' plays'; } } }) },
+                scales: { x: { ticks: { color: grTick(), font: { size: 14 } }, grid: { display: false } },
+                          y: { ticks: { color: grTick(), font: { size: 14 }, precision: 0 }, grid: { color: grGrid() }, beginAtZero: true } } }
+        });
+
+        // 9. Monthly plays (bar) -- always show 12 months
+        var mp = data.plays_per_month || [];
+        var monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        var mpLookup = {};
+        for (var mi = 0; mi < mp.length; mi++) {
+            mpLookup[mp[mi].month || ''] = mp[mi];
+        }
+        var mpLabels = [], mpPlays = [], mpHours = [];
+        var now = new Date();
+        for (var m = 0; m < 12; m++) {
+            var key = now.getFullYear() + '-' + (m + 1 < 10 ? '0' : '') + (m + 1);
+            mpLabels.push(monthNames[m]);
+            var entry = mpLookup[key];
+            mpPlays.push(entry ? (entry.plays || 0) : 0);
+            mpHours.push(entry ? (entry.hours || 0) : 0);
+        }
+        grMakeChart('svt-gr-monthly', {
+            type: 'bar',
+            data: { labels: mpLabels, datasets: [{ data: mpPlays, backgroundColor: 'rgba(0,164,220,.7)', borderRadius: 2, maxBarThickness: 20 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: $.extend(grBaseTooltip(), { callbacks: { label: function(it) { var h = mpHours[it.dataIndex] || 0; return it.parsed.y + ' plays (' + h + 'h)'; } } }) },
+                scales: { x: { ticks: { color: grTick(), font: { size: 13 } }, grid: { display: false } },
+                          y: { ticks: { color: grTick(), font: { size: 14 }, precision: 0 }, grid: { color: grGrid() }, beginAtZero: true } } }
+        });
+
+        // 10. Top devices (horizontal bar)
+        var td = data.top_devices || [];
+        var tdLabels = [], tdData = [], tdColors = [];
+        for (var ti = 0; ti < td.length; ti++) {
+            tdLabels.push(td[ti].device);
+            tdData.push(td[ti].plays);
+            tdColors.push(AVATAR_COLORS[ti % AVATAR_COLORS.length]);
+        }
+        var tdWrap = document.getElementById('svt-gr-devices');
+        if (tdWrap) tdWrap = tdWrap.parentNode;
+        if (tdWrap) tdWrap.style.height = Math.max(154, td.length * 42 + 40) + 'px';
+        grMakeChart('svt-gr-devices', {
+            type: 'bar',
+            data: { labels: tdLabels, datasets: [{ data: tdData, backgroundColor: tdColors, borderRadius: 4, maxBarThickness: 20 }] },
+            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: $.extend(grBaseTooltip(), { callbacks: { label: function(it) { var h = td[it.dataIndex] ? td[it.dataIndex].hours : 0; return it.parsed.x + ' plays (' + h + 'h)'; } } }) },
+                scales: { x: { ticks: { color: grTick(), font: { size: 14 }, precision: 0 }, grid: { color: grGrid() }, beginAtZero: true },
+                          y: { ticks: { color: grTick(), font: { size: 13 } }, grid: { display: false } } } }
+        });
+
+        // 11. Library activity (horizontal bar)
+        var la = data.library_activity || [];
+        var laLabels = [], laData = [], laColors = [];
+        for (var li = 0; li < la.length; li++) {
+            laLabels.push(la[li].label);
+            laData.push(la[li].plays);
+            laColors.push(AVATAR_COLORS[li % AVATAR_COLORS.length]);
+        }
+        var laWrap = document.getElementById('svt-gr-libraries');
+        if (laWrap) laWrap = laWrap.parentNode;
+        if (laWrap) laWrap.style.height = Math.max(154, la.length * 42 + 40) + 'px';
+        grMakeChart('svt-gr-libraries', {
+            type: 'bar',
+            data: { labels: laLabels, datasets: [{ data: laData, backgroundColor: laColors, borderRadius: 4, maxBarThickness: 20 }] },
+            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: $.extend(grBaseTooltip(), { callbacks: { label: function(it) { var h = la[it.dataIndex] ? la[it.dataIndex].hours : 0; return it.parsed.x + ' plays (' + h + 'h)'; } } }) },
+                scales: { x: { ticks: { color: grTick(), font: { size: 14 }, precision: 0 }, grid: { color: grGrid() }, beginAtZero: true },
+                          y: { ticks: { color: grTick(), font: { size: 13 } }, grid: { display: false } } } }
+        });
+
+        // 12. Concurrent streams per day (line)
+        var cs = data.concurrent_daily || [];
+        var csLabels = [], csData = [];
+        for (var ci = 0; ci < cs.length; ci++) {
+            csLabels.push(grFormatDate(cs[ci].date));
+            csData.push(cs[ci].peak || 0);
+        }
+        grMakeChart('svt-gr-concurrent', {
+            type: 'line',
+            data: { labels: csLabels, datasets: [{ data: csData, borderColor: '#e91e63', backgroundColor: 'rgba(233,30,99,.1)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 2, stepped: 'middle' }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: $.extend(grBaseTooltip(), { callbacks: { label: function(it) { return it.parsed.y + ' concurrent'; } } }) },
+                scales: { x: { ticks: { color: grTick(), font: { size: 15 } }, grid: { display: false } },
+                          y: { ticks: { color: grTick(), font: { size: 15 }, precision: 0, stepSize: 1 }, grid: { color: grGrid() }, beginAtZero: true } } }
+        });
+
+        // 13. Source resolution donut
+        var RES_COLORS = ['#e5a00d','#2196f3','#4caf50','#e91e63','#9c27b0','#ff5722','#00bcd4','#8bc34a'];
+        var sr = data.source_res_dist || [];
+        var srLabels = [], srData = [], srColors = [];
+        var srTotal = 0;
+        for (var si = 0; si < sr.length; si++) srTotal += sr[si].count;
+        srTotal = srTotal || 1;
+        var srLegendItems = [];
+        for (var si = 0; si < sr.length; si++) {
+            var lbl = sr[si].label === '4k' ? '4K' : sr[si].label + 'p';
+            srLabels.push(lbl);
+            srData.push(sr[si].count);
+            srColors.push(RES_COLORS[si % RES_COLORS.length]);
+            srLegendItems.push({ color: RES_COLORS[si % RES_COLORS.length], label: lbl + ' ' + Math.round(sr[si].count / srTotal * 100) + '%' });
+        }
+        grBuildLegend(document.getElementById('svt-gr-legend-srcres'), srLegendItems);
+        if (sr.length > 0) {
+            grMakeChart('svt-gr-srcres', {
+                type: 'doughnut',
+                data: { labels: srLabels, datasets: [{ data: srData, backgroundColor: srColors, borderWidth: 0 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: grBaseTooltip() }, cutout: '60%' }
+            });
+        }
+
+        // 14. Stream resolution donut
+        var stm = data.stream_res_dist || [];
+        var stmLabels = [], stmData = [], stmColors = [];
+        var stmTotal = 0;
+        for (var sti = 0; sti < stm.length; sti++) stmTotal += stm[sti].count;
+        stmTotal = stmTotal || 1;
+        var stmLegendItems = [];
+        for (var sti = 0; sti < stm.length; sti++) {
+            var slbl = stm[sti].label === '4k' ? '4K' : stm[sti].label + 'p';
+            stmLabels.push(slbl);
+            stmData.push(stm[sti].count);
+            stmColors.push(RES_COLORS[sti % RES_COLORS.length]);
+            stmLegendItems.push({ color: RES_COLORS[sti % RES_COLORS.length], label: slbl + ' ' + Math.round(stm[sti].count / stmTotal * 100) + '%' });
+        }
+        grBuildLegend(document.getElementById('svt-gr-legend-stmres'), stmLegendItems);
+        if (stm.length > 0) {
+            grMakeChart('svt-gr-stmres', {
+                type: 'doughnut',
+                data: { labels: stmLabels, datasets: [{ data: stmData, backgroundColor: stmColors, borderWidth: 0 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: grBaseTooltip() }, cutout: '60%' }
+            });
+        }
+
+        // 15. Watch completion histogram
+        var cb = data.completion_buckets || [0,0,0,0];
+        var cbLabels = ['0-25%', '25-50%', '50-75%', '75-100%'];
+        var cbColors = ['#c62828', '#ff9800', '#2196f3', '#4caf50'];
+        grMakeChart('svt-gr-completion', {
+            type: 'bar',
+            data: { labels: cbLabels, datasets: [{ data: cb, backgroundColor: cbColors, borderRadius: 2, maxBarThickness: 20 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: $.extend(grBaseTooltip(), { callbacks: { label: function(it) { return it.parsed.y + ' plays'; } } }) },
+                scales: { x: { ticks: { color: grTick(), font: { size: 14 } }, grid: { display: false } },
+                          y: { ticks: { color: grTick(), font: { size: 14 }, precision: 0 }, grid: { color: grGrid() }, beginAtZero: true } } }
+        });
+
+        // 16. Plays by country (horizontal bar)
+        var pc = data.plays_by_country || [];
+        var pcLabels = [], pcData = [], pcColors = [];
+        for (var pi = 0; pi < pc.length; pi++) {
+            pcLabels.push(pc[pi].country);
+            pcData.push(pc[pi].plays);
+            pcColors.push(AVATAR_COLORS[pi % AVATAR_COLORS.length]);
+        }
+        var pcWrap = document.getElementById('svt-gr-country');
+        if (pcWrap) pcWrap = pcWrap.parentNode;
+        if (pcWrap) pcWrap.style.height = Math.max(154, pc.length * 42 + 40) + 'px';
+        if (pc.length > 0) {
+            grMakeChart('svt-gr-country', {
+                type: 'bar',
+                data: { labels: pcLabels, datasets: [{ data: pcData, backgroundColor: pcColors, borderRadius: 4, maxBarThickness: 20 }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: $.extend(grBaseTooltip(), { callbacks: { label: function(it) { return it.parsed.x + ' plays'; } } }) },
+                    scales: { x: { ticks: { color: grTick(), font: { size: 14 }, precision: 0 }, grid: { color: grGrid() }, beginAtZero: true },
+                              y: { ticks: { color: grTick(), font: { size: 13 } }, grid: { display: false } } } }
+            });
+        }
+
+        // 17. Top locations (horizontal bar)
+        var tl = data.top_locations || [];
+        var tlLabels = [], tlData = [], tlColors = [];
+        for (var tli = 0; tli < tl.length; tli++) {
+            tlLabels.push(tl[tli].city + ', ' + tl[tli].country_code);
+            tlData.push(tl[tli].plays);
+            tlColors.push(AVATAR_COLORS[tli % AVATAR_COLORS.length]);
+        }
+        var tlWrap = document.getElementById('svt-gr-locations');
+        if (tlWrap) tlWrap = tlWrap.parentNode;
+        if (tlWrap) tlWrap.style.height = Math.max(154, tl.length * 42 + 40) + 'px';
+        if (tl.length > 0) {
+            grMakeChart('svt-gr-locations', {
+                type: 'bar',
+                data: { labels: tlLabels, datasets: [{ data: tlData, backgroundColor: tlColors, borderRadius: 4, maxBarThickness: 20 }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: $.extend(grBaseTooltip(), { callbacks: { label: function(it) { return it.parsed.x + ' plays'; } } }) },
+                    scales: { x: { ticks: { color: grTick(), font: { size: 14 }, precision: 0 }, grid: { color: grGrid() }, beginAtZero: true },
+                              y: { ticks: { color: grTick(), font: { size: 13 } }, grid: { display: false } } } }
+            });
+        }
     });
 }
 

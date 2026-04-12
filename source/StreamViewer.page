@@ -101,6 +101,7 @@ $render_streams_panel = static function(): string {
         <div class="sv-empty-state" id="sv-empty-state">
             <i class="fa fa-circle-o sv-empty-icon" aria-hidden="true"></i>
             <span>No active streams</span>
+            <span class="sv-last-activity" id="sv-last-activity" style="display:none;"></span>
         </div>
     </div>
 
