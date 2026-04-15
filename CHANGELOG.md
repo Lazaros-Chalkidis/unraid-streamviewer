@@ -1,6 +1,17 @@
 
 # Stream Viewer
 
+## v2026.04.16
+
+### Bug Fixes
+- Widened the stream progress bar (fixed flex ratio so it claims available space instead of being squeezed)
+- Reduced progress bar height from 5px to 4px for a cleaner look
+- Fixed file permissions (.page files 644, .sh files 755)
+- Reorganized source files into subfolders (include/, img/, icons/, event/)
+- Added section headers and table of contents to CSS and JS files
+- Removed unused PHP functions (plexResFormat, plexResToHeight, httpPost)
+- Removed unused CSS classes (svt-beta-badge, svt-btn, svt-page-info, svt-lib-status--partial)
+
 ## v2026.04.12
 
 ### Bug Fixes

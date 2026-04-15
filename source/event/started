@@ -13,6 +13,6 @@
             kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
             rm -f /var/run/streamviewer_poll.pid
         fi
-        nohup /usr/local/emhttp/plugins/streamviewer/streamviewer_poll.sh >/dev/null 2>/dev/null &
+        nohup /usr/local/emhttp/plugins/streamviewer/include/streamviewer_poll.sh >/dev/null 2>/dev/null &
     fi
 ) &

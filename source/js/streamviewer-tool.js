@@ -20,6 +20,7 @@ window.__svtLoaded = true;
 // 1. STATE
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── State & Configuration ──────────────────────────────────────────────────
 var _cfg        = window.svToolConfig || {};
 var _token      = _cfg.svToken || '';
 var _light      = _cfg.lightTheme || false;
@@ -29,6 +30,8 @@ var _chart      = null;  // Chart.js instance
 var _loading    = false;
 
 // Theme-dependent chart colors
+
+// ── Chart Colors ──────────────────────────────────────────────────────────
 var _chartColors = _light ? {
     tooltipBg:    '#ffffff',
     tooltipTitle: '#333333',
@@ -48,12 +51,15 @@ var _chartColors = _light ? {
 };
 
 // API base
-var API = '/plugins/streamviewer/streamviewer_api.php';
+
+// ── API Endpoint ──────────────────────────────────────────────────────────
+var API = '/plugins/streamviewer/include/streamviewer_api.php';
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 2. DOM REFS
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── DOM Cache ──────────────────────────────────────────────────────────────
 var DOM = {
     period:       function() { return document.getElementById('svt-period'); },
     subtitle:     function() { return document.getElementById('svt-subtitle'); },
@@ -90,6 +96,7 @@ var DOM = {
 // 3. FETCH HELPERS
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── API Helpers ───────────────────────────────────────────────────────────
 function apiUrl(action, extra) {
     var url = API + '?action=' + encodeURIComponent(action)
             + '&_svt=' + encodeURIComponent(_token)
@@ -111,6 +118,7 @@ function fetchJson(action, extra) {
 // 4. RENDER -- Summary Cards + Play Types
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Dashboard Tab ─────────────────────────────────────────────────────────
 function loadStats() {
     return fetchJson('get_stats').then(function(data) {
         var el;
@@ -284,6 +292,8 @@ function loadDailyChart() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // Color palette for user avatars
+
+// ── Dashboard: Top Media & Users ──────────────────────────────────────────
 var AVATAR_COLORS = ['#e5a00d','#00a4dc','#52b54b','#e91e63','#9c27b0','#ff5722','#00bcd4','#8bc34a'];
 
 var MEDIA_COLORS = {
@@ -362,6 +372,7 @@ function loadTopUsers() {
     });
 }
 
+// ── Shared Utility Functions ──────────────────────────────────────────────
 function mediaTypeIcon(type) {
     switch (type) {
         case 'episode': return 'fa-tv';
@@ -384,6 +395,7 @@ function userInitials(name) {
 // 7. RENDER -- History Table
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Dashboard: History ────────────────────────────────────────────────────
 function loadHistory() {
     var filterServer = (DOM.filterServer() || {}).value || '';
     var filterPlay   = (DOM.filterPlay()   || {}).value || '';
@@ -447,6 +459,7 @@ function playBadge(type) {
 // 8. UTILITY HELPERS
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Formatting Helpers ────────────────────────────────────────────────────
 function formatNumber(n) {
     if (typeof n !== 'number') n = parseInt(n, 10) || 0;
     return n.toLocaleString();
@@ -462,6 +475,7 @@ function formatDate(ts) {
          + ('0' + h).slice(-2) + ':' + m;
 }
 
+// ── Escaping & Select Sizing ──────────────────────────────────────────────
 var _escDiv = null;
 function esc(s) {
     if (!s) return '';
@@ -498,6 +512,7 @@ function autoSizeOnChange() { autoSizeSelect(this); }
 // 9. LOAD ALL
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Tab Loading Orchestration ─────────────────────────────────────────────
 function loadAll() {
     if (_loading) return $.Deferred().resolve();
     _loading = true;
@@ -521,6 +536,7 @@ function loadAll() {
 // 10. TAB SWITCHING
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Tab Switching ─────────────────────────────────────────────────────────
 var TAB_MAP = {
     svtTabDashboard:  'svtPanelDashboard',
     svtTabLibraries:  'svtPanelLibraries',
@@ -599,6 +615,7 @@ function switchTab(tabId) {
 // 11a. LIBRARIES TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Libraries Tab ─────────────────────────────────────────────────────────
 var LIB_TYPE_COLORS = {
     'movie':  '#c0392b',
     'show':   '#2980b9',
@@ -694,6 +711,7 @@ function loadLibraries() {
     });
 }
 
+// ── Libraries: Recently Added ─────────────────────────────────────────────
 function loadRecentlyAdded() {
     return fetchJson('get_recently_added', 'limit=10').then(function(data) {
         var body = document.getElementById('svt-lib-recent-body');
@@ -727,6 +745,7 @@ function loadRecentlyAdded() {
     });
 }
 
+// ── Time Helpers ──────────────────────────────────────────────────────────
 function timeAgo(ts) {
     if (!ts) return 'Never';
     var diff = Math.floor(Date.now() / 1000) - ts;
@@ -741,6 +760,7 @@ function timeAgo(ts) {
 // 11b. USERS TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Users Tab ─────────────────────────────────────────────────────────────
 var USER_COLORS = ['#e5a00d','#00a4dc','#52b54b','#e91e63','#9c27b0','#ff5722','#00bcd4','#8bc34a'];
 
 function loadUserStats() {
@@ -869,6 +889,7 @@ function loadUserStats() {
 // 11c. HISTORY TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── History Tab ───────────────────────────────────────────────────────────
 function histGetFilters() {
     return {
         period:      ((document.getElementById('svt-hist-period') || {}).value || '30d'),
@@ -994,6 +1015,7 @@ function renderHistFooter(page, pages, total, perPage) {
     el.innerHTML = html;
 }
 
+// ── History: CSV Export ───────────────────────────────────────────────────
 function histExportCsv() {
     var f = histGetFilters();
     var extra = 'per_page=100&period=' + encodeURIComponent(f.period);
@@ -1047,6 +1069,8 @@ function histExportCsv() {
 }
 
 // Simple string hash for consistent avatar colors per username
+
+// ── Graphs Tab ────────────────────────────────────────────────────────────
 function hashStr(s) {
     var h = 0;
     for (var i = 0; i < (s || '').length; i++) {
@@ -1431,6 +1455,7 @@ function loadGraphs() {
 // 11e. ALERTS TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Alerts Tab ────────────────────────────────────────────────────────────
 function loadAlerts() {
     var contentEl = document.getElementById('svt-alerts-content');
     if (contentEl) contentEl.innerHTML = '<div class="svt-table__empty">Loading...</div>';
@@ -1595,6 +1620,7 @@ function renderAlertSection(id, icon, title, subtitle, items, renderFn) {
     return h;
 }
 
+// ── Duration Formatting ───────────────────────────────────────────────────
 function formatDuration(sec) {
     sec = Math.round(sec || 0);
     if (sec < 60) return sec + 's';
@@ -1613,6 +1639,7 @@ function formatDuration(sec) {
 // that polling stops and no data is recorded. This background poller calls
 // get_sessions silently so recording continues regardless of which page is open.
 
+// ── Background Recording ──────────────────────────────────────────────────
 var _bgRecordTimer = null;
 var _bgRecordIntervalMs = 15000; // 15 seconds
 
@@ -1638,6 +1665,7 @@ function bgRecordPoll() {
 // 12. EVENT BINDINGS
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Initialization ────────────────────────────────────────────────────────
 function init() {
     if (!_cfg.statsEnabled) return;
 

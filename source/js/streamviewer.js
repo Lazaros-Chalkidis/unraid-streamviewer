@@ -21,6 +21,7 @@ window.__svLoaded = true;
 // 1. MODULE STATE
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── State & Configuration ──────────────────────────────────────────────────
 var _cfg          = {};       // resolved, sanitised config
 var _sessions     = [];       // last-fetched sessions (all servers combined)
 var _serverStats  = [];       // last-fetched per-server status objects
@@ -39,6 +40,7 @@ var _emptyStateEl     = null; // preserved reference to empty state element
 // 2. DOM HELPERS  (lazy — always look up fresh so re-mounts work)
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── DOM Cache ──────────────────────────────────────────────────────────────
 var DOM = {
     container:  function() { return document.getElementById('sv-streams-container'); },
     emptyState: function() { return document.getElementById('sv-empty-state');       },
@@ -57,6 +59,7 @@ var DOM = {
 // 3. FORMATTERS
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Utility Functions ──────────────────────────────────────────────────────
 function pad2(n) { return n < 10 ? '0' + n : String(n); }
 
 function fmtMs(ms) {
@@ -142,6 +145,7 @@ function fmtBitrate(kbps) {
 // 3b. DOMINANT COLOR EXTRACTION (canvas-based, for synopsis tinting)
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Dominant Color Extraction ─────────────────────────────────────────────
 var _colorCache = {};
 var _colorCanvas = null;
 
@@ -203,6 +207,7 @@ function applyDominantColors(container) {
 // 4. SESSION SORTING
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Session Sorting ───────────────────────────────────────────────────────
 var SORT_PT = { transcode: 0, direct_stream: 1, direct_play: 2 };
 
 function sortSessions(sessions) {
@@ -221,6 +226,7 @@ function sortSessions(sessions) {
 // 5. RENDER — single stream row
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Stream Rendering ──────────────────────────────────────────────────────
 function renderRow(s) {
     var cfg      = _cfg;
     var ptm      = playTypeMeta(s.play_type);
@@ -301,7 +307,7 @@ function renderRow(s) {
 
     // Row 3: collapsible thumbnail preview
     var thumbSrc = s.thumb_url
-        ? '/plugins/streamviewer/streamviewer_api.php?action=get_thumb&_svt='
+        ? '/plugins/streamviewer/include/streamviewer_api.php?action=get_thumb&_svt='
           + encodeURIComponent(_cfg.svToken || '')
           + '&u=' + encodeURIComponent(s.thumb_url)
         : '';
@@ -658,6 +664,8 @@ function renderStreams(sessions, lastActivity) {
  * Resolve a server_index (1-based config slot) from a server display name.
  * PHP injects _cfg.servers = [{index, type, name}, ...] from the cfg file.
  */
+
+// ── Kill Session ─────────────────────────────────────────────────────────
 function resolveServerIndex(serverName) {
     var servers = _cfg.servers || [];
     for (var i = 0; i < servers.length; i++) {
@@ -699,7 +707,7 @@ function doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSession
     btn.innerHTML = '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i>';
 
     $.ajax({
-        url:      '/plugins/streamviewer/streamviewer_api.php?_svt=' + encodeURIComponent(_cfg.svToken || ''),
+        url:      '/plugins/streamviewer/include/streamviewer_api.php?_svt=' + encodeURIComponent(_cfg.svToken || ''),
         method:   'POST',
         timeout:  15000,
         headers:  { 'X-Requested-With': 'XMLHttpRequest' },
@@ -763,6 +771,7 @@ function doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSession
 // 8. STATUS UPDATES
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── UI Updates (badge, timestamp, pulse, errors) ─────────────────────────
 function updateBadge(count) {
     var bc  = DOM.badgeCount();
     var dot = DOM.badgeDot();
@@ -807,6 +816,7 @@ function updateErrorIndicator(stats) {
     }
 }
 
+// ── Docker Stats ─────────────────────────────────────────────────────────
 var _lastDockerHtml = '';  // persist across Unraid tile re-renders
 
 function updateDockerStats(stats, activeStreams) {
@@ -877,7 +887,7 @@ function fetchDockerStats() {
     if (!_cfg.showDocker || _lastActiveStreams === 0 || _dockerFetching) return;
     _dockerFetching = true;
     $.ajax({
-        url:      '/plugins/streamviewer/streamviewer_api.php',
+        url:      '/plugins/streamviewer/include/streamviewer_api.php',
         method:   'GET',
         timeout:  12000,
         headers:  { 'X-Requested-With': 'XMLHttpRequest' },
@@ -909,6 +919,7 @@ function stopDockerPoll() {
 // 9. API FETCH
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Session Fetching ──────────────────────────────────────────────────────
 function fetchSessions(onDone) {
     if (Date.now() < _backoffUntil) {
         // Fix Αιτία Α: ανανέωσε το timestamp ακόμα και σε backoff
@@ -929,7 +940,7 @@ function fetchSessions(onDone) {
     var _inFlightTimeout = setTimeout(function() { _inFlight = false; }, 40000);
 
     $.ajax({
-        url:      '/plugins/streamviewer/streamviewer_api.php',
+        url:      '/plugins/streamviewer/include/streamviewer_api.php',
         method:   'GET',
         timeout:  38000,  // worst case: 5 servers × 7s timeout + margin
         headers:  { 'X-Requested-With': 'XMLHttpRequest' },
@@ -994,6 +1005,7 @@ function fetchSessions(onDone) {
 // 10. POLLING
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Polling & Visibility ──────────────────────────────────────────────────
 var _lastFetchAt   = 0;      // timestamp of last successful fetch attempt
 var _watchdogTimer = null;   // detects stalled polling and recovers
 
@@ -1075,7 +1087,7 @@ function wireRefreshBtn(el) {
     });
 }
 
-// ── Row 3 thumbnail toggle ─────────────────────────────────────────────────
+// ── Row 3 Toggle (synopsis/thumbnail expand) ────────────────────────────
 function bindRow3Toggles(container) {
     // Use a single delegated listener on the container to avoid
     // duplicate listeners accumulating on every refresh cycle
@@ -1094,6 +1106,7 @@ function bindRow3Toggles(container) {
 // 12. "NO SERVERS" STATE
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── No-servers State & Config ─────────────────────────────────────────────
 function renderNoServers() {
     var container = DOM.container();
     if (!container) return;
@@ -1147,6 +1160,7 @@ function resolveConfig() {
 // 14. THEME DETECTION (light/dark)
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Initialization ───────────────────────────────────────────────────────
 function detectTheme() {
     var bg = getComputedStyle(document.body).backgroundColor || '';
     var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);

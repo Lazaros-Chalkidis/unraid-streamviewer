@@ -1254,28 +1254,6 @@ final class StreamViewerEndpoint
         return '240p';
     }
 
-    private function plexResFormat(string $res): string
-    {
-        $r = strtolower(trim($res));
-        if ($r === '4k')   return '4K';
-        if ($r === 'sd')   return 'SD';
-        if ($r === '')     return '';
-        return $r . 'p';
-    }
-
-    private function plexResToHeight(string $res): int
-    {
-        $r = strtolower(trim($res));
-        if ($r === '4k')   return 2160;
-        if ($r === '1080') return 1080;
-        if ($r === '720')  return 720;
-        if ($r === '576')  return 576;
-        if ($r === '480')  return 480;
-        if ($r === 'sd')   return 480;
-        $n = (int)$r;
-        return $n > 0 ? $n : 0;
-    }
-
     private function detectPlexVideoRange(?array $videoStream): string
     {
         if ($videoStream === null) return '';
@@ -3836,30 +3814,6 @@ final class StreamViewerEndpoint
             CURLOPT_CONNECTTIMEOUT => self::HTTP_CONNECT_TIMEOUT,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_MAXREDIRS      => 3,
-            CURLOPT_SSL_VERIFYPEER => $verify,
-            CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
-            CURLOPT_HTTPHEADER     => $this->buildCurlHeaders($headers),
-        ]);
-        $body = curl_exec($ch);
-        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $err  = curl_error($ch) ?: null;
-        curl_close($ch);
-        return [$body === false ? null : $body, $code, $err];
-    }
-
-    private function httpPost(string $url, array $postData, array $headers = [], bool $forceVerify = false): array
-    {
-        if (!filter_var($url, FILTER_VALIDATE_URL)) return [null, 0, 'Invalid URL'];
-        if (!function_exists('curl_init')) return [null, 0, 'cURL not available'];
-
-        $verify = $forceVerify || $this->verifySsl;
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => self::HTTP_TIMEOUT,
-            CURLOPT_CONNECTTIMEOUT => self::HTTP_CONNECT_TIMEOUT,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => http_build_query($postData),
             CURLOPT_SSL_VERIFYPEER => $verify,
             CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
             CURLOPT_HTTPHEADER     => $this->buildCurlHeaders($headers),

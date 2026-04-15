@@ -5,7 +5,7 @@
 # Started/stopped by the settings page when statistics are toggled.
 
 PIDFILE="/var/run/streamviewer_poll.pid"
-SCRIPT="/usr/local/emhttp/plugins/streamviewer/streamviewer_cron.php"
+SCRIPT="/usr/local/emhttp/plugins/streamviewer/include/streamviewer_cron.php"
 VARINI="/var/local/emhttp/var.ini"
 
 echo $$ > "$PIDFILE"

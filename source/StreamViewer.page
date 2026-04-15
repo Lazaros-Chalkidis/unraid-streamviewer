@@ -1,8 +1,8 @@
 Menu="Dashboard:0"
-Icon="streamviewer.png"
+Icon="img/streamviewer.png"
 ---
 <?php
-require_once '/usr/local/emhttp/plugins/streamviewer/streamviewer_api.php';
+require_once '/usr/local/emhttp/plugins/streamviewer/include/streamviewer_api.php';
 require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
 
 // ── Config ─────────────────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ $render_header_responsive = static function(
 <span class="tile-header sv-header">
     <span class="tile-header-left sv-header__left">
         <div class="sv-header__top">
-            <img src="/plugins/streamviewer/streamviewer.png"
+            <img src="/plugins/streamviewer/img/streamviewer.png"
                  class="sv-header__icon" alt="Stream Viewer"
                  style="width:32px;height:32px;object-fit:contain;">
             <h3 class="tile-header-main sv-header__title">{$tile_title}</h3>

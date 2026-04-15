@@ -2,18 +2,18 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "streamviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.04.12">
+ <!ENTITY version   "2026.04.16">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "e041d5f6be968bc491d1876bc06da494">
+ <!ENTITY md5       "2e050ec9ecede6585a817651d55110c1">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
 <PLUGIN name="&name;" Title="Stream Viewer" author="&author;" version="&version;"
         pluginURL="&selfURL;" launch="&launch;"
-        icon="streamviewerplugin.png"
+        icon="img/streamviewerplugin.png"
         min="7.2.0"
         support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
 
@@ -24,6 +24,17 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 <CHANGES>
 
 # Stream Viewer
+
+## v2026.04.16
+
+### Bug Fixes
+- Widened the stream progress bar (fixed flex ratio so it claims available space instead of being squeezed)
+- Reduced progress bar height from 5px to 4px for a cleaner look
+- Fixed file permissions (.page files 644, .sh files 755)
+- Reorganized source files into subfolders (include/, img/, icons/, event/)
+- Added section headers and table of contents to CSS and JS files
+- Removed unused PHP functions (plexResFormat, plexResToHeight, httpPost)
+- Removed unused CSS classes (svt-beta-badge, svt-btn, svt-page-info, svt-lib-status--partial)
 
 ## v2026.04.12
 
@@ -312,7 +323,6 @@ LIB_SECTIONS_OPEN="0"
 chown -R root:root /usr/local/emhttp/plugins/&name;
 find /usr/local/emhttp/plugins/&name; -type d -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name; -type f -exec chmod 644 {} \;
-find /usr/local/emhttp/plugins/&name; -name "*.page" -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name; -name "*.sh"   -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name;/event -type f -exec chmod 755 {} \; 2>/dev/null
 
@@ -352,7 +362,7 @@ if grep -qs mdState.*STARTED "$VARINI" 2>/dev/null; then
   if mountpoint -q /mnt/user 2>/dev/null; then
     CFG=/boot/config/plugins/&name;/&name;.cfg
     if grep -q STATS_ENABLED.*1 "$CFG" 2>/dev/null; then
-        nohup /usr/local/emhttp/plugins/&name;/streamviewer_poll.sh >/dev/null 2>/dev/null &amp;
+        nohup /usr/local/emhttp/plugins/&name;/include/streamviewer_poll.sh >/dev/null 2>/dev/null &amp;
     fi
   fi
 fi

@@ -188,13 +188,26 @@ unraid-streamviewer/
 │   ├── js/
 │   │   ├── streamviewer.js
 │   │   ├── streamviewer-tool.js
+│   │   ├── streamviewer-header.js
 │   │   └── chart.min.js
+│   ├── include/
+│   │   ├── streamviewer_api.php
+│   │   ├── streamviewer_cron.php
+│   │   ├── streamviewer_header.php
+│   │   └── streamviewer_poll.sh
+│   ├── img/
+│   │   ├── streamviewer.png
+│   │   ├── streamviewerplugin.png
+│   │   └── avatar.png
+│   ├── icons/
+│   │   └── cast.svg
+│   ├── event/
+│   │   ├── started
+│   │   └── stopped
 │   ├── StreamViewer.page
+│   ├── StreamViewerButton.page
 │   ├── StreamViewerSettings.page
 │   ├── StreamViewerTool.page
-│   ├── streamviewer_api.php
-│   ├── streamviewer.png
-│   ├── avatar.png
 │   └── README.md
 ├── screenshots/
 │   └── pc/

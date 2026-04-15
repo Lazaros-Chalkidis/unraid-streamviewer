@@ -34,7 +34,7 @@ if ($lockFp === false || !flock($lockFp, LOCK_EX | LOCK_NB)) {
 
 // Load the main API class (the auto-run guard checks SCRIPT_FILENAME,
 // so requiring this file will not trigger an HTTP response)
-require_once '/usr/local/emhttp/plugins/streamviewer/streamviewer_api.php';
+require_once '/usr/local/emhttp/plugins/streamviewer/include/streamviewer_api.php';
 
 try {
     $count = (new StreamViewerEndpoint())->cronPoll();

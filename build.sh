@@ -81,9 +81,9 @@ METAEOF
 # ── Permissions ───────────────────────────────────────────────────────────────
 find "${PLUGIN_DEST}" -type d                          -exec chmod 755 {} \;
 find "${PLUGIN_DEST}" -type f                          -exec chmod 644 {} \;
-find "${PLUGIN_DEST}" -name "*.page"                   -exec chmod 755 {} \;
 find "${PLUGIN_DEST}" -name "*.sh"                     -exec chmod 755 {} \;
-# .php and all other files stay at 644 (set by the find above)
+find "${PLUGIN_DEST}/event" -type f                    -exec chmod 755 {} \; 2>/dev/null
+# .page, .php and all other files stay at 644 (set by the find above)
 
 # ── Create .txz ───────────────────────────────────────────────────────────────
 FILENAME="${PLUGIN_NAME}-${VERSION}"
@@ -157,7 +157,6 @@ PLG_INSTALL_SCRIPT='# Fix ownership and permissions
 chown -R root:root /usr/local/emhttp/plugins/&name;
 find /usr/local/emhttp/plugins/&name; -type d -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name; -type f -exec chmod 644 {} \;
-find /usr/local/emhttp/plugins/&name; -name "*.page" -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name; -name "*.sh"   -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name;/event -type f -exec chmod 755 {} \; 2>/dev/null
 
@@ -197,7 +196,7 @@ if grep -qs mdState.*STARTED "$VARINI" 2>/dev/null; then
   if mountpoint -q /mnt/user 2>/dev/null; then
     CFG=/boot/config/plugins/&name;/&name;.cfg
     if grep -q STATS_ENABLED.*1 "$CFG" 2>/dev/null; then
-        nohup /usr/local/emhttp/plugins/&name;/streamviewer_poll.sh >/dev/null 2>/dev/null &amp;
+        nohup /usr/local/emhttp/plugins/&name;/include/streamviewer_poll.sh >/dev/null 2>/dev/null &amp;
     fi
   fi
 fi
@@ -256,7 +255,7 @@ if [[ "$LOCAL_INSTALL" == "local" ]]; then
 
 <PLUGIN name="&name;" Title="Stream Viewer" author="&author;" version="&version;"
         pluginURL="&selfURL;" launch="&launch;"
-        icon="streamviewerplugin.png"
+        icon="img/streamviewerplugin.png"
         min="7.2.0"
         support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
 
@@ -333,7 +332,7 @@ else
 
 <PLUGIN name="&name;" Title="Stream Viewer" author="&author;" version="&version;"
         pluginURL="&selfURL;" launch="&launch;"
-        icon="streamviewerplugin.png"
+        icon="img/streamviewerplugin.png"
         min="7.2.0"
         support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
 

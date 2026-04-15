@@ -75,7 +75,7 @@ function StreamViewerButton(){
 
     function poll(){
         var x = new XMLHttpRequest();
-        x.open('GET', '/plugins/streamviewer/streamviewer_header.php?t=' + Date.now());
+        x.open('GET', '/plugins/streamviewer/include/streamviewer_header.php?t=' + Date.now());
         x.timeout = 5000;
         x.onload = function(){
             try {

@@ -1,8 +1,19 @@
 /* ==========================================================================
-   STREAM VIEWER — Widget & Tool Page Styles
+   STREAM VIEWER — Widget Styles
    Copyright (C) 2026 Lazaros Chalkidis
    License: GPLv3
    /plugins/streamviewer/css/widget.css
+
+   SECTIONS
+    1. CSS Custom Properties        9. Empty State
+    2. Button Baseline             10. Stream Row (bar, rows 1-3, progress,
+    3. Overflow Containment            synopsis, thumbnail, server badges)
+    4. Header — Responsive         11. Footer (docker stats, pulse, error)
+    5. Header — Legacy             12. Technical Details
+    6. Header Meta (badge row)     13. Kill Button
+    7. Body + Overflow             14. Loading Skeleton
+    8. Streams Container           15. No-servers State
+                                   16. Responsive Tweaks
    ========================================================================== */
 
 /* ── 1. CSS CUSTOM PROPERTIES ─────────────────────────────────────────────── */
@@ -44,7 +55,7 @@
   --sv-c-bg-faint:      rgba(0,0,0,.02);
 }
 
-/* ── Button baseline — override Unraid's width:100% on all buttons ─────────── */
+/* ── 2. BUTTON BASELINE ───────────────────────────────────────────────────── */
 .sv-body button,
 .sv-body input[type="button"],
 .sv-body input[type="submit"] {
@@ -54,7 +65,7 @@
   flex-shrink: 0 !important;
 }
 
-/* ── Overflow containment — prevent widget from causing page scroll ─────── */
+/* ── 3. OVERFLOW CONTAINMENT ──────────────────────────────────────────────── */
 .sv-widget-wrap,
 #db-streamviewer,
 #db-streamviewer td {
@@ -63,7 +74,7 @@
   box-sizing: border-box !important;
 }
 
-/* ── 2. HEADER — RESPONSIVE (Unraid 7.2+) ────────────────────────────────── */
+/* ── 4. HEADER — RESPONSIVE (Unraid 7.2+) ────────────────────────────────── */
 .sv-header { display: flex; width: 100%; align-items: flex-start; overflow: hidden; box-sizing: border-box; max-width: 100%; }
 .sv-header__left,
 .sv-header .tile-header-left  { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .2rem; overflow: hidden; }
@@ -73,7 +84,7 @@
 .sv-header__title { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sv-header__controls { display: flex; align-items: center; gap: .1rem; flex-shrink: 0; }
 
-/* ── 3. HEADER — LEGACY (pre-7.2) ─────────────────────────────────────────── */
+/* ── 5. HEADER — LEGACY (pre-7.2) ─────────────────────────────────────────── */
 .sv-legacy-header {
   display: flex; justify-content: space-between; align-items: flex-start;
   padding: .3rem 0; width: 100%; overflow: hidden; box-sizing: border-box;
@@ -84,7 +95,7 @@
 .sv-legacy-title { font-size: 1.05em; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sv-legacy-controls { display: flex; align-items: center; gap: .1rem; flex-shrink: 0; }
 
-/* ── 4. HEADER META (badge row) ───────────────────────────────────────────── */
+/* ── 6. HEADER META (badge row) ───────────────────────────────────────────── */
 .sv-header-meta {
   display: flex; align-items: center; gap: .4rem;
   margin-top: -13px;
@@ -127,7 +138,7 @@
   100% { box-shadow: 0 0 0 0   rgba(72,109,186,0);  }
 }
 
-/* ── 5. BODY + OVERFLOW CONTAINMENT ───────────────────────────────────────── */
+/* ── 7. BODY + OVERFLOW CONTAINMENT ───────────────────────────────────────── */
 
 /* Widget wrapper: hard boundary for all content */
 .sv-widget-wrap {
@@ -144,7 +155,7 @@
   box-sizing: border-box;
 }
 
-/* ── 6. STREAMS CONTAINER ─────────────────────────────────────────────────── */
+/* ── 8. STREAMS CONTAINER ─────────────────────────────────────────────────── */
 .sv-streams {
   display: flex; flex-direction: column;
   gap: var(--sv-row-gap);
@@ -153,7 +164,7 @@
   min-width: 0; overflow: hidden;
 }
 
-/* ── 7. EMPTY STATE ───────────────────────────────────────────────────────── */
+/* ── 9. EMPTY STATE ───────────────────────────────────────────────────────── */
 .sv-empty-state {
   display: flex; align-items: center; justify-content: center; gap: .4rem;
   padding: 1.1rem .5rem;
@@ -166,7 +177,7 @@
   font-size: .9em; font-style: normal; color: var(--sv-c-text-faint); opacity: .7;
 }
 
-/* ── 8. STREAM ROW ────────────────────────────────────────────────────────── */
+/* ── 10. STREAM ROW ────────────────────────────────────────────────────────── */
 .sv-stream {
   display: grid;
   grid-template-columns: 10px 1fr;
@@ -349,10 +360,10 @@
 /* ── Progress block ───────────────────────────────────────────────────────── */
 .sv-stream__progress-wrap {
   display: flex; align-items: center; gap: .35rem;
-  flex-shrink: 1; min-width: 0; max-width: 264px;
+  flex: 0 0 264px; min-width: 0; max-width: 264px;
 }
 .sv-stream__progress {
-  flex: 1; height: 5px;
+  flex: 1; height: 4px;
   background: var(--sv-c-border);
   border-radius: 3px; overflow: hidden;
   min-width: 30px;
@@ -376,176 +387,6 @@
 .sv-stream__transcode-res {
   margin-left: .3em; opacity: .85; font-weight: 500; display: inline-block;
   text-transform: none;
-}
-
-/* ── 9. FOOTER ───────────────────────────────────────────────────────────── */
-.sv-footer {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: .35rem 0 .1rem;
-  border-top: 1px solid var(--sv-c-bg-hover);
-  margin-top: .2rem;
-  font-size: .75em;
-}
-.sv-footer-left  { display: flex; align-items: center; gap: .5rem; color: var(--sv-c-text-muted); min-width: 0; flex: 1; }
-.sv-footer-right { display: flex; align-items: center; gap: .3rem; font-size: 0.9rem; flex-shrink: 0; }
-
-/* Docker resource stats in footer (micro-bar design) */
-.sv-docker-stats {
-  display: inline-flex; align-items: center; gap: .6rem;
-  font-size: .85em; color: var(--sv-c-text-muted);
-}
-.sv-docker-stats:empty { display: none; }
-.sv-docker-stat {
-  display: inline-flex; align-items: center; gap: .3rem;
-  white-space: nowrap;
-}
-.sv-docker-stat__label { font-weight: 500; color: var(--sv-c-text-muted); }
-.sv-docker-stat__bar {
-  display: inline-block; width: 38px; height: 4px;
-  background: var(--sv-c-bg-hover); border-radius: 2px;
-  overflow: hidden; position: relative;
-}
-.sv-docker-stat__fill {
-  position: absolute; left: 0; top: 0; height: 100%;
-  border-radius: 2px; transition: width .6s ease, background .4s ease;
-}
-.sv-docker-stat__fill--cpu { background: #a3a3a3; }
-.sv-docker-stat__fill--ram { background: #85B7EB; }
-.sv-docker-stat__val { font-weight: 600; color: var(--sv-c-text-mid); min-width: 28px; }
-
-/* Badge in footer (stream count) */
-.sv-footer-left .sv-badge-streams {
-  display: inline-flex; align-items: center; gap: .3rem;
-  font-size: 1em; color: var(--sv-c-text-muted);
-}
-.sv-footer-left #sv-badge-count {
-  font-weight: 700; color: var(--sv-c-text);
-}
-.sv-footer-left .sv-badge-label { opacity: .6; }
-.sv-footer-left .sv-badge-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%; display: inline-block; flex-shrink: 0;
-  transition: background .4s ease;
-}
-
-.sv-ts-icon  { color: var(--sv-c-text-muted); flex-shrink: 0; opacity: 0.7; }
-.sv-ts-value { font-variant-numeric: tabular-nums; color: var(--sv-c-text); }
-
-/* Pulse animation (active refresh) — flash green once per refresh cycle */
-.sv-pulse {
-  display: inline-block; width: 6px; height: 6px;
-  border-radius: 50%; background: rgba(76,175,80,.2);
-}
-.sv-pulse--active {
-  animation: sv-refresh-flash .9s ease-out 1 forwards;
-}
-@keyframes sv-refresh-flash {
-  0%   { background: rgba(76,175,80,1);   box-shadow: 0 0 5px rgba(76,175,80,.8); }
-  60%  { background: rgba(76,175,80,.5);  box-shadow: 0 0 2px rgba(76,175,80,.3); }
-  100% { background: rgba(76,175,80,.2);  box-shadow: none; }
-}
-
-/* Error badge */
-.sv-err-badge {
-  display: inline-flex; align-items: center; gap: .25rem;
-  font-size: .78em; color: #ff9800;
-  background: rgba(255,152,0,.1);
-  border: 1px solid rgba(255,152,0,.25);
-  padding: .08em .4em; border-radius: 4px;
-  cursor: default;
-}
-
-/* ── 10. TECHNICAL DETAILS ────────────────────────────────────────────────── */
-.sv-stream__details {
-  grid-row: 4; grid-column: 2; padding: 0;
-  margin-top: .25rem;
-  min-width: 0; overflow: hidden;
-}
-.sv-stream__details-bd {
-  display: flex; flex-wrap: wrap; gap: .25rem; padding: .15rem 0 .4rem;
-}
-.sv-dtag {
-  display: inline-flex; align-items: center;
-  padding: .1rem .4rem; border-radius: 3px;
-  font-size: .68em; font-weight: 600; line-height: 1.3;
-  background: var(--sv-c-border-subtle); color: var(--sv-c-text-mid);
-  border: 1px solid var(--sv-c-border-subtle);
-}
-.sv-dtag--accent { background: rgba(0,164,220,.1); color: #00a4dc; border-color: rgba(0,164,220,.25); }
-.sv-dtag--sub    { background: var(--sv-c-bg-subtle); color: var(--sv-c-text-muted); }
-.sv-dtag--hw     { background: rgba(82,181,74,.1); color: #52b54b; border-color: rgba(82,181,74,.25); }
-.sv-dtag--reason { background: rgba(244,125,66,.08); color: rgba(244,125,66,.8); border-color: rgba(244,125,66,.2); font-weight: 500; }
-
-/* ── 11. KILL BUTTON ─────────────────────────────────────────────────────── */
-.sv-kill-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: auto !important; height: auto !important;
-  min-width: 0 !important; max-width: none !important;
-  flex: 0 0 auto !important; flex-shrink: 0;
-  padding: 0; margin: 0;
-  border-radius: 3px;
-  border: none;
-  background: transparent;
-  color: rgba(226,75,74,.45);
-  font-size: .72em; line-height: 1;
-  cursor: pointer;
-  box-sizing: border-box;
-  transition: background .15s, color .15s;
-}
-.sv-kill-btn:hover { background: rgba(226,75,74,.12); color: #e24b4a; }
-.sv-kill-btn:disabled { opacity: .4; cursor: not-allowed; }
-
-/* ── 12. LOADING SKELETON ─────────────────────────────────────────────────── */
-.sv-loading {
-  display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: .6rem; padding: 1.5rem 1rem;
-}
-.sv-loading__bars { display: flex; gap: 4px; align-items: flex-end; height: 36px; }
-.sv-loading__bar {
-  width: 6px; border-radius: 2px; background: #f47d42;
-  animation: sv-bar-grow 1.2s ease-in-out infinite;
-}
-.sv-loading__bar:nth-child(2) { animation-delay: .1s; }
-.sv-loading__bar:nth-child(3) { animation-delay: .2s; }
-.sv-loading__bar:nth-child(4) { animation-delay: .3s; }
-.sv-loading__bar:nth-child(5) { animation-delay: .4s; }
-@keyframes sv-bar-grow {
-  0%, 100% { height: 8px; opacity: .3; }
-  50% { height: 32px; opacity: 1; }
-}
-.sv-loading__text {
-  font-size: .78em; color: var(--sv-c-text-faint);
-}
-
-/* ── 13. NO-SERVERS STATE ─────────────────────────────────────────────────── */
-.sv-no-servers-state {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: .6rem; padding: 1.5rem 1rem; text-align: center;
-}
-.sv-no-servers-icon {
-  font-size: 1.8em; opacity: .25; margin-bottom: .2rem;
-  color: var(--sv-c-text);
-}
-.sv-no-servers-title {
-  font-size: .85em; color: var(--sv-c-text-faint); font-weight: 500;
-}
-.sv-no-servers-btn {
-  display: inline-flex !important; align-items: center; gap: .4rem;
-  margin-top: .3rem;
-  padding: .35rem .8rem !important;
-  font-size: .78em !important; font-weight: 600;
-  color: var(--sv-c-text-mid) !important;
-  border: 1px solid var(--sv-c-border-strong) !important;
-  border-radius: 5px !important;
-  text-decoration: none !important;
-  background: var(--sv-c-bg-hover) !important;
-  transition: background .2s, border-color .2s, color .2s;
-}
-.sv-no-servers-btn:hover {
-  background: var(--sv-c-border) !important;
-  border-color: var(--sv-c-text-faint) !important;
-  color: var(--sv-c-text) !important;
-  text-decoration: none !important;
 }
 
 
@@ -633,12 +474,182 @@
 .sv-stream__server-type--plex     { background: rgba(229,160,13,.25); color: var(--sv-plex);   border: 0.1em solid rgba(229,160,13,.3); }
 .sv-stream__server-type--jellyfin { background: rgba(0,164,220,.2);   color: var(--sv-jf);     border: 0.1em solid rgba(0,164,220,.25); }
 .sv-stream__server-type--emby     { background: rgba(82,181,74,.2);   color: var(--sv-emby);   border: 0.1em solid rgba(82,181,74,.25); }
-/* ── 14. RESPONSIVE TWEAKS ────────────────────────────────────────────────── */
+/* ── 11. FOOTER ───────────────────────────────────────────────────────────── */
+.sv-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .35rem 0 .1rem;
+  border-top: 1px solid var(--sv-c-bg-hover);
+  margin-top: .2rem;
+  font-size: .75em;
+}
+.sv-footer-left  { display: flex; align-items: center; gap: .5rem; color: var(--sv-c-text-muted); min-width: 0; flex: 1; }
+.sv-footer-right { display: flex; align-items: center; gap: .3rem; font-size: 0.9rem; flex-shrink: 0; }
+
+/* Docker resource stats in footer (micro-bar design) */
+.sv-docker-stats {
+  display: inline-flex; align-items: center; gap: .6rem;
+  font-size: .85em; color: var(--sv-c-text-muted);
+}
+.sv-docker-stats:empty { display: none; }
+.sv-docker-stat {
+  display: inline-flex; align-items: center; gap: .3rem;
+  white-space: nowrap;
+}
+.sv-docker-stat__label { font-weight: 500; color: var(--sv-c-text-muted); }
+.sv-docker-stat__bar {
+  display: inline-block; width: 38px; height: 4px;
+  background: var(--sv-c-bg-hover); border-radius: 2px;
+  overflow: hidden; position: relative;
+}
+.sv-docker-stat__fill {
+  position: absolute; left: 0; top: 0; height: 100%;
+  border-radius: 2px; transition: width .6s ease, background .4s ease;
+}
+.sv-docker-stat__fill--cpu { background: #a3a3a3; }
+.sv-docker-stat__fill--ram { background: #85B7EB; }
+.sv-docker-stat__val { font-weight: 600; color: var(--sv-c-text-mid); min-width: 28px; }
+
+/* Badge in footer (stream count) */
+.sv-footer-left .sv-badge-streams {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: 1em; color: var(--sv-c-text-muted);
+}
+.sv-footer-left #sv-badge-count {
+  font-weight: 700; color: var(--sv-c-text);
+}
+.sv-footer-left .sv-badge-label { opacity: .6; }
+.sv-footer-left .sv-badge-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%; display: inline-block; flex-shrink: 0;
+  transition: background .4s ease;
+}
+
+.sv-ts-icon  { color: var(--sv-c-text-muted); flex-shrink: 0; opacity: 0.7; }
+.sv-ts-value { font-variant-numeric: tabular-nums; color: var(--sv-c-text); }
+
+/* Pulse animation (active refresh) — flash green once per refresh cycle */
+.sv-pulse {
+  display: inline-block; width: 6px; height: 6px;
+  border-radius: 50%; background: rgba(76,175,80,.2);
+}
+.sv-pulse--active {
+  animation: sv-refresh-flash .9s ease-out 1 forwards;
+}
+@keyframes sv-refresh-flash {
+  0%   { background: rgba(76,175,80,1);   box-shadow: 0 0 5px rgba(76,175,80,.8); }
+  60%  { background: rgba(76,175,80,.5);  box-shadow: 0 0 2px rgba(76,175,80,.3); }
+  100% { background: rgba(76,175,80,.2);  box-shadow: none; }
+}
+
+/* Error badge */
+.sv-err-badge {
+  display: inline-flex; align-items: center; gap: .25rem;
+  font-size: .78em; color: #ff9800;
+  background: rgba(255,152,0,.1);
+  border: 1px solid rgba(255,152,0,.25);
+  padding: .08em .4em; border-radius: 4px;
+  cursor: default;
+}
+
+/* ── 12. TECHNICAL DETAILS ────────────────────────────────────────────────── */
+.sv-stream__details {
+  grid-row: 4; grid-column: 2; padding: 0;
+  margin-top: .25rem;
+  min-width: 0; overflow: hidden;
+}
+.sv-stream__details-bd {
+  display: flex; flex-wrap: wrap; gap: .25rem; padding: .15rem 0 .4rem;
+}
+.sv-dtag {
+  display: inline-flex; align-items: center;
+  padding: .1rem .4rem; border-radius: 3px;
+  font-size: .68em; font-weight: 600; line-height: 1.3;
+  background: var(--sv-c-border-subtle); color: var(--sv-c-text-mid);
+  border: 1px solid var(--sv-c-border-subtle);
+}
+.sv-dtag--accent { background: rgba(0,164,220,.1); color: #00a4dc; border-color: rgba(0,164,220,.25); }
+.sv-dtag--sub    { background: var(--sv-c-bg-subtle); color: var(--sv-c-text-muted); }
+.sv-dtag--hw     { background: rgba(82,181,74,.1); color: #52b54b; border-color: rgba(82,181,74,.25); }
+.sv-dtag--reason { background: rgba(244,125,66,.08); color: rgba(244,125,66,.8); border-color: rgba(244,125,66,.2); font-weight: 500; }
+
+/* ── 13. KILL BUTTON ─────────────────────────────────────────────────────── */
+.sv-kill-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: auto !important; height: auto !important;
+  min-width: 0 !important; max-width: none !important;
+  flex: 0 0 auto !important; flex-shrink: 0;
+  padding: 0; margin: 0;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: rgba(226,75,74,.45);
+  font-size: .72em; line-height: 1;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background .15s, color .15s;
+}
+.sv-kill-btn:hover { background: rgba(226,75,74,.12); color: #e24b4a; }
+.sv-kill-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── 14. LOADING SKELETON ─────────────────────────────────────────────────── */
+.sv-loading {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: .6rem; padding: 1.5rem 1rem;
+}
+.sv-loading__bars { display: flex; gap: 4px; align-items: flex-end; height: 36px; }
+.sv-loading__bar {
+  width: 6px; border-radius: 2px; background: #f47d42;
+  animation: sv-bar-grow 1.2s ease-in-out infinite;
+}
+.sv-loading__bar:nth-child(2) { animation-delay: .1s; }
+.sv-loading__bar:nth-child(3) { animation-delay: .2s; }
+.sv-loading__bar:nth-child(4) { animation-delay: .3s; }
+.sv-loading__bar:nth-child(5) { animation-delay: .4s; }
+@keyframes sv-bar-grow {
+  0%, 100% { height: 8px; opacity: .3; }
+  50% { height: 32px; opacity: 1; }
+}
+.sv-loading__text {
+  font-size: .78em; color: var(--sv-c-text-faint);
+}
+
+/* ── 15. NO-SERVERS STATE ─────────────────────────────────────────────────── */
+.sv-no-servers-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .6rem; padding: 1.5rem 1rem; text-align: center;
+}
+.sv-no-servers-icon {
+  font-size: 1.8em; opacity: .25; margin-bottom: .2rem;
+  color: var(--sv-c-text);
+}
+.sv-no-servers-title {
+  font-size: .85em; color: var(--sv-c-text-faint); font-weight: 500;
+}
+.sv-no-servers-btn {
+  display: inline-flex !important; align-items: center; gap: .4rem;
+  margin-top: .3rem;
+  padding: .35rem .8rem !important;
+  font-size: .78em !important; font-weight: 600;
+  color: var(--sv-c-text-mid) !important;
+  border: 1px solid var(--sv-c-border-strong) !important;
+  border-radius: 5px !important;
+  text-decoration: none !important;
+  background: var(--sv-c-bg-hover) !important;
+  transition: background .2s, border-color .2s, color .2s;
+}
+.sv-no-servers-btn:hover {
+  background: var(--sv-c-border) !important;
+  border-color: var(--sv-c-text-faint) !important;
+  color: var(--sv-c-text) !important;
+  text-decoration: none !important;
+}
+
+/* ── 16. RESPONSIVE TWEAKS ────────────────────────────────────────────────── */
 
 /* Tablet and small desktop */
 @media (max-width: 640px) {
   .sv-stream__device { max-width: 100px; }
-  .sv-stream__progress-wrap { max-width: 216px; }
+  .sv-stream__progress-wrap { flex-basis: 216px; max-width: 216px; }
   .sv-docker-stat__bar { width: 29px; }
   .sv-header-meta { padding-left: calc(32px + 1rem); }
 }
@@ -646,7 +657,7 @@
 /* Large phones */
 @media (max-width: 480px) {
   .sv-header-meta { padding-left: .5rem; }
-  .sv-stream__progress-wrap { max-width: 168px; }
+  .sv-stream__progress-wrap { flex-basis: 168px; max-width: 168px; }
   .sv-stream__device { max-width: 80px; }
   .sv-stream__ip { font-size: .8em; padding: .1em .2em; }
   .sv-docker-stat__bar { width: 22px; }
@@ -664,7 +675,7 @@
 @media (max-width: 360px) {
   .sv-header-meta { padding-left: .25rem; }
   .sv-stream__sub { flex-wrap: wrap; gap: .25rem; }
-  .sv-stream__progress-wrap { max-width: 144px; }
+  .sv-stream__progress-wrap { flex-basis: 144px; max-width: 144px; }
   .sv-stream__device-wrap { display: none; }
   .sv-docker-stats { gap: .3rem; }
   .sv-docker-stat__bar { width: 18px; }

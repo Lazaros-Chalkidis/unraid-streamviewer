@@ -1,13 +1,13 @@
 Menu="SystemInformation"
 Name="Stream Viewer Statistics"
-Icon="streamviewer.png"
+Icon="img/streamviewer.png"
 Type="xmenu"
 Tabs="false"
 Title="Stream Viewer Statistics"
 ---
 <?php
 require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
-require_once '/usr/local/emhttp/plugins/streamviewer/streamviewer_api.php';
+require_once '/usr/local/emhttp/plugins/streamviewer/include/streamviewer_api.php';
 
 $cfg = @parse_plugin_cfg('streamviewer', true) ?: [];
 
@@ -74,7 +74,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
     <!-- Header -->
     <div class="svt-header">
       <div class="svt-header__left">
-        <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+        <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
         <div>
           <h2 class="svt-header__title">Stream Viewer Statistics</h2>
           <span class="svt-header__sub" id="svt-subtitle">Loading...</span>
@@ -211,7 +211,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
 
       <div class="svt-header">
         <div class="svt-header__left">
-          <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+          <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
           <div>
             <h2 class="svt-header__title">Libraries overview</h2>
             <span class="svt-header__sub">Content breakdown from your media servers</span>
@@ -277,7 +277,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
 
       <div class="svt-header">
         <div class="svt-header__left">
-          <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+          <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
           <div>
             <h2 class="svt-header__title">Users overview</h2>
             <span class="svt-header__sub">Activity breakdown per user</span>
@@ -330,7 +330,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
 
       <div class="svt-header">
         <div class="svt-header__left">
-          <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+          <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
           <div>
             <h2 class="svt-header__title">Watch history</h2>
             <span class="svt-header__sub">Complete playback log across all servers</span>
@@ -428,7 +428,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
 
       <div class="svt-header">
         <div class="svt-header__left">
-          <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+          <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
           <div>
             <h2 class="svt-header__title">Graphs</h2>
             <span class="svt-header__sub">Visual analytics for your media servers</span>
@@ -617,7 +617,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
 
       <div class="svt-header">
         <div class="svt-header__left">
-          <img src="/plugins/streamviewer/streamviewer.png" class="svt-header__icon" alt="">
+          <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
           <div>
             <h2 class="svt-header__title">Insights</h2>
             <span class="svt-header__sub">Insights and warnings from your streaming data</span>
