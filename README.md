@@ -27,7 +27,7 @@ A real time media stream monitor and statistics tracker for Unraid. View active 
 - Configurable auto-refresh with adjustable polling interval
 - Mobile responsive layout
 
-**Statistics Tool Page (Beta)**
+**Statistics Tool Page**
 - Dashboard tab with active streams overview, most watched titles, top users and recent history
 - Libraries tab with server overview, collapsible sections and recently added items
 - Users tab with per-user play counts, watch time, content breakdown and play type distribution

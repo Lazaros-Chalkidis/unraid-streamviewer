@@ -74,8 +74,19 @@ final class StreamViewerEndpoint
 
         $results  = $this->fetchAllSessionsParallel($servers);
         $sessions = [];
-        foreach ($results as $result) {
-            foreach ($result['sessions'] ?? [] as $s) $sessions[] = $s;
+        $seen     = [];
+        foreach ($results as $i => $result) {
+            $srv    = $servers[$i] ?? [];
+            $srvUrl = rtrim((string)($srv['url'] ?? ''), '/');
+            foreach ($result['sessions'] ?? [] as $s) {
+                $type = (string)($s['server_type'] ?? '');
+                $key  = (string)($s['session_key'] ?? $s['session_id'] ?? '');
+                if ($key === '') { $sessions[] = $s; continue; }
+                $fp = $type . '|' . $srvUrl . '|' . $key;
+                if (isset($seen[$fp])) continue;
+                $seen[$fp] = true;
+                $sessions[] = $s;
+            }
         }
 
         $this->recordSessions($sessions);
@@ -610,7 +621,7 @@ final class StreamViewerEndpoint
 
     private function isLocalUrl(string $url): bool
     {
-        $host = (string)(parse_url($url, PHP_URL_HOST) ?: '');
+        $host = strtolower((string)(parse_url($url, PHP_URL_HOST) ?: ''));
         if ($host === '' || $host === 'localhost' || $host === '127.0.0.1') return true;
         // RFC1918 private ranges
         if (filter_var($host, FILTER_VALIDATE_IP)) {
@@ -618,9 +629,20 @@ final class StreamViewerEndpoint
                 filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false
             );
         }
-        // .local hostnames
-        $lower = strtolower($host);
-        return substr($lower, -6) === '.local';
+        // Plex direct hostnames: <dashed-ipv4>.<hash>.plex.direct
+        // The dashed prefix encodes the underlying IPv4 address that the cert is valid for.
+        // Extract that IP and re-check against the private/reserved range filter so a LAN
+        // plex.direct URL is correctly classified as local.
+        if (preg_match('/^(\d{1,3})-(\d{1,3})-(\d{1,3})-(\d{1,3})\.[a-f0-9]+\.plex\.direct$/', $host, $m)) {
+            $extracted = "{$m[1]}.{$m[2]}.{$m[3]}.{$m[4]}";
+            if (filter_var($extracted, FILTER_VALIDATE_IP)) {
+                return (bool)(
+                    filter_var($extracted, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false
+                );
+            }
+        }
+        // .local hostnames (Bonjour / mDNS)
+        return substr($host, -6) === '.local';
     }
 
     // ── Per-server failure counter (file-based in /tmp) ─────────────────
@@ -841,6 +863,9 @@ final class StreamViewerEndpoint
             'get_graph_data'     => fn() => $this->replyGetGraphData(),
             // Alert endpoints
             'get_alerts'         => fn() => $this->replyGetAlerts(),
+            // Local Plex container detection (for mismatch banner & OAuth enrichment)
+            'check_local_mismatch' => fn() => $this->replyCheckLocalMismatch(),
+            'apply_local_url'      => fn() => $this->replyApplyLocalUrl(),
         ];
 
         if (!isset($routes[$action])) $this->json(['error' => 'Invalid action'], 400);
@@ -887,6 +912,7 @@ final class StreamViewerEndpoint
 
         $sessions    = [];
         $serverStats = [];
+        $sessionSeen = [];
         foreach ($results as $i => $result) {
             $srv = $servers[$i];
             $serverStats[] = [
@@ -896,7 +922,22 @@ final class StreamViewerEndpoint
                 'error'           => $result['error'] ?? null,
                 'active_sessions' => count($result['sessions'] ?? []),
             ];
-            foreach ($result['sessions'] ?? [] as $s) $sessions[] = $s;
+            // Deduplicate across server entries that point at the same backend.
+            // A common user setup is to register the same Plex server multiple times
+            // (one per library) which makes /status/sessions return identical streams
+            // for each entry. We key by (type, server URL, session key) so genuinely
+            // different backends still surface their own sessions even if their
+            // session_key values happen to collide.
+            $srvUrl = rtrim((string)($srv['url'] ?? ''), '/');
+            foreach ($result['sessions'] ?? [] as $s) {
+                $type = (string)($s['server_type'] ?? '');
+                $key  = (string)($s['session_key'] ?? $s['session_id'] ?? '');
+                if ($key === '') { $sessions[] = $s; continue; }
+                $fp = $type . '|' . $srvUrl . '|' . $key;
+                if (isset($sessionSeen[$fp])) continue;
+                $sessionSeen[$fp] = true;
+                $sessions[] = $s;
+            }
         }
 
         // Docker container resource stats (cached 15s)
@@ -1372,8 +1413,14 @@ final class StreamViewerEndpoint
                 $transcodeBufPct = (float)($transInfo['CompletionPercentage']      ?? 0);
                 $reasons         = $transInfo['TranscodeReasons'] ?? [];
                 if (is_array($reasons) && !empty($reasons)) {
+                    // Convert "AudioCodecNotSupported" -> "Audio Codec Not Supported".
+                    // Replacement must be '$1 $2' (both backreferences). The earlier
+                    // form '$1 \$2' contained a backslash that escaped the second
+                    // dollar sign, turning $2 into the literal text "$2" and dropping
+                    // the captured uppercase letter, so a reason like
+                    // "AudioCodecNotSupported" came out as "Audio $2odec $2ot $2upported".
                     $transcodeReasons = implode(', ', array_map(function($r) {
-                        return preg_replace('/([a-z])([A-Z])/', '$1 \$2', (string)$r);
+                        return preg_replace('/([a-z])([A-Z])/', '$1 $2', (string)$r);
                     }, $reasons));
                 }
             }
@@ -3478,6 +3525,41 @@ final class StreamViewerEndpoint
 
         @unlink(self::CACHE_DIR . '/plex_pin_' . $pinId);
         $servers = $this->plexDiscover((string)$data['authToken']);
+
+        // For every Plex Media Server container running locally on this Unraid
+        // host, surface its direct LAN address as a high-priority option on the
+        // matching server's connection list. A common multi-Plex setup is one
+        // container per library on br0 with different LAN IPs, so we must
+        // enumerate all containers (not just the first) and match each one to
+        // the discovered server that shares its machineIdentifier.
+        $localContainers = $this->detectLocalPlexContainers();
+        if (!empty($localContainers)) {
+            // Build a quick lookup: machine_id -> container info
+            $byMid = [];
+            foreach ($localContainers as $lc) {
+                $mid = (string)($lc['machine_id'] ?? '');
+                if ($mid !== '') $byMid[$mid] = $lc;
+            }
+            if (!empty($byMid)) {
+                foreach ($servers as &$srv) {
+                    if (empty($srv['owned'])) continue;
+                    $mid = (string)($srv['machine_id'] ?? '');
+                    if ($mid === '' || !isset($byMid[$mid])) continue;
+                    $lc = $byMid[$mid];
+                    $injected = [
+                        'uri'                => 'http://' . $lc['ip'] . ':' . $lc['port'],
+                        'address'            => $lc['ip'],
+                        'port'               => $lc['port'],
+                        'local'              => true,
+                        'relay'              => false,
+                        'container_detected' => true,
+                    ];
+                    array_unshift($srv['connections'], $injected);
+                }
+                unset($srv);
+            }
+        }
+
         $this->json(['ok' => true, 'ready' => true, 'servers' => $servers]);
     }
 
@@ -3544,20 +3626,29 @@ final class StreamViewerEndpoint
             $conns = [];
             foreach ((array)($r['connections'] ?? []) as $c) {
                 if (empty($c['uri'])) continue;
+                $apiLocal = (bool)($c['local'] ?? false);
+                // The Plex resources API sometimes returns local:false for
+                // connections that are unambiguously LAN-side (e.g. plex.direct
+                // hostnames that encode a 10.x.x.x address). Trust the URI as
+                // the source of truth: if it points to an RFC1918 address or a
+                // plex.direct hostname encoding one, treat it as local even if
+                // the API flag disagrees.
+                $uriLocal = $this->isLocalUrl((string)$c['uri']);
                 $conns[] = [
                     'uri'     => (string)$c['uri'],
                     'address' => (string)($c['address'] ?? ''),
                     'port'    => (int)($c['port']       ?? 0),
-                    'local'   => (bool)($c['local']     ?? false),
+                    'local'   => $apiLocal || $uriLocal,
                     'relay'   => (bool)($c['relay']     ?? false),
                 ];
             }
             if (!$conns) continue;
 
             $servers[] = [
-                'name'        => (string)($r['name']        ?? 'Plex Server'),
-                'owned'       => (bool)($r['owned']         ?? false),
-                'accessToken' => (string)($r['accessToken'] ?? ''),
+                'name'        => (string)($r['name']             ?? 'Plex Server'),
+                'owned'       => (bool)($r['owned']              ?? false),
+                'accessToken' => (string)($r['accessToken']      ?? ''),
+                'machine_id'  => (string)($r['clientIdentifier'] ?? ''),
                 'connections' => $conns,
             ];
         }
@@ -3700,10 +3791,22 @@ final class StreamViewerEndpoint
                 ? round(($cpuDelta / $sysDelta) * 100, 1)
                 : 0.0;
 
-            // RAM
-            $memUsage = (int)($st['memory_stats']['usage'] ?? 0);
-            $memCache = (int)($st['memory_stats']['stats']['cache'] ?? $st['memory_stats']['stats']['inactive_file'] ?? 0);
-            $memUsed  = max(0, $memUsage - $memCache);
+            // RAM (cgroup v2: Unraid 7.2+ only)
+            //
+            // The widget should reflect the container's process memory, not its file
+            // cache. Pre-fix we used `memory_stats.usage - inactive_file`, which on
+            // cgroup v2 leaves the active file cache counted (a Plex container that
+            // is reading media accumulates large active_file pages that are not
+            // "process memory" but disk cache that the kernel can reclaim under
+            // pressure). The number ended up dwarfing the actual usage shown in the
+            // Unraid dashboard. Switch to anon + kernel + sock which is what the
+            // dashboard uses and is the standard cgroup v2 "working set" definition
+            // without file cache pollution.
+            $stats   = $st['memory_stats']['stats'] ?? [];
+            $anon    = (int)($stats['anon']   ?? 0);
+            $kernel  = (int)($stats['kernel'] ?? 0);
+            $sock    = (int)($stats['sock']   ?? 0);
+            $memUsed = $anon + $kernel + $sock;
             $memLimit = (int)($st['memory_stats']['limit'] ?? 0);
 
             $results[] = [
@@ -3773,6 +3876,250 @@ final class StreamViewerEndpoint
             }
         }
         return '';
+    }
+
+    // ── Local Plex container detection ──────────────────────────────────
+    //
+    // The OAuth flow and the settings page both need to know whether a Plex
+    // Media Server container is running on this same Unraid host. When one is,
+    // its LAN IP is surfaced as a high-priority connection choice (in the
+    // discovery dropdown) and as a mismatch banner suggestion (in settings),
+    // so the user does not end up with a remote URL pointing at their own
+    // public IP. That was the i1mran92 scenario: SV trying to reach a local
+    // Plex via NAT loopback and timing out under load.
+
+    /**
+     * Detect a Plex Media Server container running on this Unraid host.
+     * Returns ['ip' => ..., 'port' => ..., 'name' => ...] for the first match,
+     * or null if no Docker socket / no matching container / no usable IP.
+     * Matching is by container name OR image keyword (case-insensitive 'plex').
+     */
+    /**
+     * Returns a list of every Plex container running on this Unraid host,
+     * each as [ip, port, name, machine_id]. Multi-container setups are common
+     * (one Plex per library on br0 with different IPs), so this must enumerate
+     * all matches rather than return only the first. Callers match a discovered
+     * or configured server to one of these entries via machineIdentifier.
+     */
+    private function detectLocalPlexContainers(): array
+    {
+        $found = [];
+        if (!file_exists(self::DOCKER_SOCKET)) return $found;
+
+        $ch = curl_init('http://localhost/containers/json');
+        curl_setopt_array($ch, [
+            CURLOPT_UNIX_SOCKET_PATH => self::DOCKER_SOCKET,
+            CURLOPT_RETURNTRANSFER   => true,
+            CURLOPT_TIMEOUT          => 5,
+            CURLOPT_CONNECTTIMEOUT   => 3,
+        ]);
+        $body = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($body === false || $code !== 200) return $found;
+        $containers = @json_decode($body, true);
+        if (!is_array($containers)) return $found;
+
+        foreach ($containers as $c) {
+            // Names from Docker API are prefixed with '/'
+            $names = array_map(fn($n) => ltrim((string)$n, '/'), (array)($c['Names'] ?? []));
+            $image = (string)($c['Image'] ?? '');
+
+            $nameMatch = false;
+            foreach ($names as $n) {
+                if (preg_match('/plex/i', $n)) { $nameMatch = true; break; }
+            }
+            $imageMatch = (bool)preg_match('/plex/i', $image);
+            if (!$nameMatch && !$imageMatch) continue;
+
+            // Find Plex's standard port 32400 in the published ports.
+            // Fall back to 32400 anyway for host-network containers where Ports may be empty.
+            $port = 0;
+            foreach ((array)($c['Ports'] ?? []) as $p) {
+                $privPort = (int)($p['PrivatePort'] ?? 0);
+                $pubPort  = (int)($p['PublicPort']  ?? 0);
+                if ($privPort === 32400 || $pubPort === 32400) {
+                    $port = $pubPort > 0 ? $pubPort : $privPort;
+                    break;
+                }
+            }
+            if ($port === 0) $port = 32400;
+
+            $networks = (array)($c['NetworkSettings']['Networks'] ?? []);
+            foreach ($networks as $net) {
+                $ip = (string)($net['IPAddress'] ?? '');
+                if ($ip === '' || $ip === '0.0.0.0') continue;
+                // Fetch the machineIdentifier from /identity so callers can
+                // disambiguate this container from other Plex servers the
+                // user may have configured.
+                $machineId = $this->fetchPlexMachineId('http://' . $ip . ':' . $port);
+                $found[] = [
+                    'ip'         => $ip,
+                    'port'       => $port,
+                    'name'       => $names[0] ?? '',
+                    'machine_id' => $machineId,
+                ];
+                break;  // first non-empty network per container
+            }
+        }
+        return $found;
+    }
+
+    /**
+     * Backward-compatible single-container helper. Returns the first Plex
+     * container found, or null if none exist. Kept so internal callers that
+     * only need a single match (e.g. legacy code paths) do not need to change,
+     * but new logic should prefer detectLocalPlexContainers() for completeness.
+     */
+    private function detectLocalPlexContainer(): ?array
+    {
+        $all = $this->detectLocalPlexContainers();
+        return $all[0] ?? null;
+    }
+
+    /**
+     * Fetches the Plex machineIdentifier from a server's /identity endpoint.
+     * Returns an empty string if the server is unreachable or returns no id.
+     * This is the canonical way to tell two Plex servers apart, since friendly
+     * names and URLs can be edited freely.
+     */
+    private function fetchPlexMachineId(string $baseUrl): string
+    {
+        $baseUrl = rtrim($baseUrl, '/');
+        if ($baseUrl === '') return '';
+
+        $ch = curl_init($baseUrl . '/identity');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 4,
+            CURLOPT_CONNECTTIMEOUT => 2,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+        ]);
+        $body = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($body === false || $code !== 200) return '';
+
+        // Plex /identity returns JSON with MediaContainer.machineIdentifier
+        $j = @json_decode($body, true);
+        if (is_array($j)) {
+            $id = $j['MediaContainer']['machineIdentifier'] ?? $j['machineIdentifier'] ?? '';
+            if (is_string($id) && $id !== '') return $id;
+        }
+        // Fallback for XML responses (some Plex versions when Accept is ignored)
+        if (preg_match('/machineIdentifier="([^"]+)"/', (string)$body, $m)) return $m[1];
+        return '';
+    }
+
+    /**
+     * Action: check_local_mismatch
+     * Returns the list of configured Plex servers whose saved URL is NOT local,
+     * but where a local Plex container is detected on this Unraid host.
+     * The settings page uses this to render an actionable banner.
+     */
+    private function replyCheckLocalMismatch(): void
+    {
+        $localContainers = $this->detectLocalPlexContainers();
+        if (empty($localContainers)) {
+            $this->json(['ok' => true, 'mismatches' => []]);
+        }
+        // Build machine_id -> container map; drop entries without an id (we cannot
+        // verify identity safely against those).
+        $byMid = [];
+        foreach ($localContainers as $lc) {
+            $mid = (string)($lc['machine_id'] ?? '');
+            if ($mid !== '') $byMid[$mid] = $lc;
+        }
+        if (empty($byMid)) {
+            $this->json(['ok' => true, 'mismatches' => []]);
+        }
+
+        $cfg = $this->loadCfg();
+        $mismatches = [];
+
+        for ($i = 1; $i <= self::MAX_SERVERS; $i++) {
+            if (($cfg["SERVER{$i}_ENABLED"] ?? '0') !== '1') continue;
+            if (($cfg["SERVER{$i}_TYPE"]    ?? '') !== 'plex') continue;
+
+            $url  = rtrim(trim((string)($cfg["SERVER{$i}_URL"]  ?? '')), '/');
+            $name = trim((string)($cfg["SERVER{$i}_NAME"] ?? "Server {$i}"));
+            if ($url === '') continue;
+            if ($this->isLocalUrl($url)) continue; // already local, nothing to suggest
+
+            // Only flag servers whose machineIdentifier matches one of the local
+            // containers. This prevents the banner from offering to "switch to
+            // local" a remote Plex server that happens to be configured on the
+            // same Unraid.
+            $remoteMid = $this->fetchPlexMachineId($url);
+            if ($remoteMid === '' || !isset($byMid[$remoteMid])) continue;
+
+            $lc = $byMid[$remoteMid];
+            $mismatches[] = [
+                'index'         => $i,
+                'name'          => $name,
+                'current_url'   => $url,
+                'suggested_url' => 'http://' . $lc['ip'] . ':' . $lc['port'],
+            ];
+        }
+
+        $this->json(['ok' => true, 'mismatches' => $mismatches]);
+    }
+
+    /**
+     * Action: apply_local_url
+     * Writes the detected local container URL into the config for the given server
+     * index, resets its failure counter so the next poll starts clean.
+     */
+    private function replyApplyLocalUrl(): void
+    {
+        $index = (int)($_POST['index'] ?? $_GET['index'] ?? 0);
+        if ($index <= 0 || $index > self::MAX_SERVERS) {
+            $this->json(['ok' => false, 'error' => 'Invalid server index'], 400);
+        }
+
+        $cfg = $this->loadCfg();
+        if (($cfg["SERVER{$index}_TYPE"] ?? '') !== 'plex') {
+            $this->json(['ok' => false, 'error' => 'Server is not a Plex server'], 400);
+        }
+
+        $localContainers = $this->detectLocalPlexContainers();
+        if (empty($localContainers)) {
+            $this->json(['ok' => false, 'error' => 'No local Plex container detected'], 404);
+        }
+        $byMid = [];
+        foreach ($localContainers as $lc) {
+            $mid = (string)($lc['machine_id'] ?? '');
+            if ($mid !== '') $byMid[$mid] = $lc;
+        }
+        if (empty($byMid)) {
+            $this->json(['ok' => false, 'error' => 'Cannot verify local container identity'], 500);
+        }
+
+        // Identify which local container matches this configured server, by
+        // comparing machineIdentifier of the current URL against every detected
+        // container. Without this we would risk rewriting one server's URL with
+        // a different server's address.
+        $currentUrl = rtrim(trim((string)($cfg["SERVER{$index}_URL"] ?? '')), '/');
+        if ($currentUrl === '') {
+            $this->json(['ok' => false, 'error' => 'Server has no URL configured'], 400);
+        }
+        $remoteMid = $this->fetchPlexMachineId($currentUrl);
+        if ($remoteMid === '' || !isset($byMid[$remoteMid])) {
+            $this->json(['ok' => false, 'error' => 'This server is not a local Plex container'], 409);
+        }
+
+        $lc     = $byMid[$remoteMid];
+        $newUrl = 'http://' . $lc['ip'] . ':' . $lc['port'];
+        if (!$this->updateServerUrl($index, $newUrl)) {
+            $this->json(['ok' => false, 'error' => 'Failed to update configuration'], 500);
+        }
+
+        $this->resetFailure($index);
+        $this->json(['ok' => true, 'new_url' => $newUrl]);
     }
 
     private function updateServerUrl(int $index, string $newUrl): bool

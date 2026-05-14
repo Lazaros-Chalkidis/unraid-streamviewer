@@ -16,7 +16,8 @@ $statsEnabled = (($cfg['STATS_ENABLED'] ?? '0') === '1');
 // Theme detection (same as Settings page)
 $dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
 $unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
-$svt_light    = in_array($unraid_theme, ['white', 'azure'], true);
+// Light themes are white and gray; black and azure are dark.
+$svt_light    = in_array($unraid_theme, ['white', 'gray'], true);
 $lightClass   = $svt_light ? ' svt-light' : '';
 
 $tile_config = [

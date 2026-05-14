@@ -674,6 +674,50 @@ function resolveServerIndex(serverName) {
     return null;
 }
 
+// ── Confirmation modal (replaces native browser confirm) ─────────────────────
+// Returns a Promise that resolves to true if the user clicks OK, false otherwise.
+// Falls back to native confirm() if the modal markup is missing from the DOM
+// (e.g. embedded contexts where the widget renders without our template).
+function svWidgetConfirm(opts) {
+    opts = opts || {};
+    var modal     = document.getElementById('svWidgetConfirmModal');
+    var titleEl   = document.getElementById('svWidgetConfirmTitle');
+    var msgEl     = document.getElementById('svWidgetConfirmMsg');
+    var okBtn     = document.getElementById('svWidgetConfirmOk');
+    var cancelBtn = document.getElementById('svWidgetConfirmCancel');
+
+    if (!modal || !titleEl || !msgEl || !okBtn || !cancelBtn) {
+        return Promise.resolve(window.confirm((opts.title ? opts.title + '\n\n' : '') + (opts.message || '')));
+    }
+
+    titleEl.textContent = opts.title   || 'Confirm';
+    msgEl.textContent   = opts.message || '';
+    okBtn.textContent     = opts.okLabel     || 'OK';
+    cancelBtn.textContent = opts.cancelLabel || 'Cancel';
+
+    return new Promise(function(resolve) {
+        function cleanup(result) {
+            modal.style.display = 'none';
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', onCancel);
+            modal.removeEventListener('click', onBackdrop);
+            document.removeEventListener('keydown', onKey);
+            resolve(result);
+        }
+        function onOk()       { cleanup(true);  }
+        function onCancel()   { cleanup(false); }
+        function onBackdrop(e){ if (e.target === modal) cleanup(false); }
+        function onKey(e)     { if (e.key === 'Escape') cleanup(false); else if (e.key === 'Enter') cleanup(true); }
+
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        modal.addEventListener('click', onBackdrop);
+        document.addEventListener('keydown', onKey);
+
+        modal.style.display = 'flex';
+    });
+}
+
 function bindKillButtons(container) {
     if (!_cfg.allowKill) return;
     container.querySelectorAll('.sv-kill-btn').forEach(function(btn) {
@@ -691,15 +735,20 @@ function onKillClick(e) {
     var titleEl         = row && row.querySelector('.sv-stream__title');
     var title           = titleEl ? titleEl.textContent : (sessionId || 'this stream');
 
-    if (!confirm('Stop stream: "' + title + '"?\n\nThis will immediately disconnect the user.')) return;
-
-    var serverIndex = resolveServerIndex(serverName);
-    if (!serverIndex) {
-        alert('Could not identify the server for this stream.\nTry saving Settings and refreshing.');
-        return;
-    }
-
-    doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSessionUuid);
+    svWidgetConfirm({
+        title:    'Stop stream',
+        message:  'Stop stream "' + title + '"? This will immediately disconnect the user.',
+        okLabel:  'Stop',
+        cancelLabel: 'Cancel',
+    }).then(function(ok) {
+        if (!ok) return;
+        var serverIndex = resolveServerIndex(serverName);
+        if (!serverIndex) {
+            alert('Could not identify the server for this stream.\nTry saving Settings and refreshing.');
+            return;
+        }
+        doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSessionUuid);
+    });
 }
 
 function doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSessionUuid) {

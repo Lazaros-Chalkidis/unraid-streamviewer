@@ -1,6 +1,22 @@
 
 # Stream Viewer
 
+## v2026.05.14
+
+### Bug Fixes
+- Plex local plex.direct hostnames were being treated as remote, breaking the auto-rediscover logic for OAuth-configured servers
+- Widget RAM stat for media containers was inflated by file cache; now reports real working-set memory matching the Unraid dashboard
+- Emby/Jellyfin transcode reason badges showed garbled text like "Audio $2odec $2ot $2upported" instead of "Audio Codec Not Supported"
+- Light/dark theme detection treated Azure as light and forgot Gray entirely. All four official Unraid themes (Black, White, Azure, Gray) now render with the correct contrast
+
+### New Features
+- OAuth discovery detects Plex containers running on the same Unraid host and offers their direct LAN address as a top-priority "Local Container" option in the connection dropdown
+- Settings page shows a one-click "Switch to local" banner when a configured Plex server is reachable as a local container but stored with a non-local URL
+- Stop stream confirmation and Reset to defaults notification now use styled in-plugin modals instead of the native browser dialogs
+
+### Improvements
+- Credits modal redesigned to match the Logs Viewer layout
+
 ## v2026.04.16
 
 ### Bug Fixes

@@ -11,7 +11,11 @@ $cfg = @parse_plugin_cfg('streamviewer', true) ?: [];
 // ── Theme detection (light/dark) ──────────────────────────────────────────
 $dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
 $unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
-$sv_light     = in_array($unraid_theme, ['white', 'azure'], true);
+// Official Unraid themes split into two groups: black and azure use a dark
+// background, white and gray use a light one. Earlier versions of this
+// detection mistakenly placed azure in the light group and omitted gray,
+// which made the widget render with the wrong contrast on those two themes.
+$sv_light     = in_array($unraid_theme, ['white', 'gray'], true);
 
 // ── Build enabled server list for JS ──────────────────────────────────────
 $enabled_servers = [];
@@ -180,7 +184,8 @@ $render_fallback_tbody = static function(
     string $header_html,
     string $panel_html,
     string $config_html,
-    string $lightClass
+    string $lightClass,
+    string $confirm_modal_html
 ): string {
     return <<<HTML
 <link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/widget.css">
@@ -193,6 +198,11 @@ $render_fallback_tbody = static function(
     <tr class="dash_streamviewer_toggle sv-content">
         <td colspan="3">
             {$panel_html}
+        </td>
+    </tr>
+    <tr class="sv-w-modal-host-row">
+        <td colspan="3" style="padding:0;border:0;">
+            <div class="sv-w-modal-host {$lightClass}">{$confirm_modal_html}</div>
         </td>
     </tr>
 </tbody>
@@ -230,18 +240,39 @@ $tile = [
 
 $lightClass = $sv_light ? ' sv-light' : '';
 
+// Confirmation modal markup (used to replace native confirm() when stopping a stream)
+$confirm_modal_html = <<<'HTML'
+<div id="svWidgetConfirmModal" class="sv-w-confirm-modal" style="display:none;">
+  <div class="sv-w-confirm-box">
+    <div class="sv-w-confirm-body">
+      <div class="sv-w-confirm-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e5a00d" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </div>
+      <div class="sv-w-confirm-title" id="svWidgetConfirmTitle">Stop stream</div>
+      <div class="sv-w-confirm-msg"   id="svWidgetConfirmMsg"></div>
+    </div>
+    <div class="sv-w-confirm-footer">
+      <button type="button" class="sv-w-confirm-cancel" id="svWidgetConfirmCancel">Cancel</button>
+      <button type="button" class="sv-w-confirm-ok"     id="svWidgetConfirmOk">OK</button>
+    </div>
+  </div>
+</div>
+HTML;
+
 $tile['content'] = '<div class="sv-widget-wrap' . $lightClass . '">'
     . ($isResponsiveWebgui
         ? ($header_responsive . $panel_html . $config_html)
         : ($header_legacy     . $panel_html . $config_html))
-    . '</div>';
+    . '</div>'
+    . '<div class="sv-w-modal-host' . $lightClass . '">' . $confirm_modal_html . '</div>';
 
 $fallback_markup = $render_fallback_tbody(
     $tile_title,
     $isResponsiveWebgui ? $header_responsive : $header_legacy,
     $panel_html,
     $config_html,
-    trim($lightClass)
+    trim($lightClass),
+    $confirm_modal_html
 );
 
 // ── Register or fall back ──────────────────────────────────────────────────

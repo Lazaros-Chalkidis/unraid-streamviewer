@@ -230,7 +230,8 @@ if ($plugin_version === 'dev') {
 // ── Theme detection (light/dark) ──────────────────────────────────────────
 $dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
 $unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
-$sv_light     = in_array($unraid_theme, ['white', 'azure'], true);
+// Light themes are white and gray; black and azure are dark.
+$sv_light     = in_array($unraid_theme, ['white', 'gray'], true);
 $lightClass   = $sv_light ? ' sv-light' : '';
 ?>
 
@@ -534,6 +535,9 @@ $lightClass   = $sv_light ? ' sv-light' : '';
          ════════════════════════════════════════════════════════════════ -->
     <div id="svPlexPanel" style="<?= $active_tab !== 'plex' ? 'display:none;' : '' ?>">
 
+      <!-- ── Local Plex container mismatch banner (populated by JS on load) -->
+      <div id="svLocalMismatchBanner" class="sv-mismatch-banner" style="display:none;"></div>
+
       <!-- ── Add Plex Servers card (with Connect button on right + accordion) -->
       <div class="sv-card">
         <div class="sv-card-hd">
@@ -546,9 +550,9 @@ $lightClass   = $sv_light ? ' sv-light' : '';
               <div class="sv-label">Sign in with Plex</div>
               <div class="sv-desc">
                 Click the button below to sign in securely via plex.tv.
-                A new tab will open — log in and authorize Stream Viewer.
+                A new tab will open, where you log in and authorize Stream Viewer.
                 Your Plex servers will be discovered automatically.<br>
-                <strong>No token is ever stored</strong> — only the per-server access keys
+                <strong>No token is ever stored.</strong> Only the per-server access keys
                 retrieved during discovery are saved.
               </div>
             </div>
@@ -733,22 +737,61 @@ $lightClass   = $sv_light ? ' sv-light' : '';
 
   <!-- ── Credits modal ──────────────────────────────────────────────── -->
   <div id="svCreditsModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
-    <div class="sv-credits-modal-box">
-      <div style="padding:2.2rem 2.5rem 1.5rem;text-align:center;flex:1;display:flex;flex-direction:column;justify-content:center;">
-        <div style="margin-bottom:1.1rem;"><img src="/plugins/streamviewer/img/streamviewer.png" alt="StreamViewer" style="width:46px;height:46px;"></div>
-        <div class="sv-credits-title">Stream Viewer</div>
-        <table style="width:auto;margin:0 auto 1.5rem;border-collapse:collapse;font-size:0.95em;">
-          <tr>
-            <td style="padding:0.4rem 1rem 0.4rem 0;vertical-align:middle;"><img src="/plugins/streamviewer/img/avatar.png" alt="" style="width:42px;height:42px;border-radius:50%;object-fit:cover;display:block;"></td>
-            <td style="padding:0.4rem 2rem 0.4rem 0;font-weight:600;text-align:left;vertical-align:middle;">Lazaros Chalkidis</td>
-            <td style="padding:0.4rem 0;opacity:0.6;text-align:left;vertical-align:middle;">Development</td>
-          </tr>
-        </table>
-        <div class="sv-credits-copy">Copyright © 2026 Stream Viewer Plugin</div>
-        <div style="margin-bottom:1.1rem;"><a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" target="_blank" rel="noopener" style="color:#4a90e2;text-decoration:none;font-size:0.9em;">Plugin Support Thread</a></div>
+    <div class="sv-credits-modal-box sv-credits-modal-v2">
+      <div class="sv-credits-grid">
+        <!-- Left: avatar column -->
+        <div class="sv-credits-left">
+          <span class="sv-credits-accent-stripe"></span>
+          <div class="sv-credits-avatar-wrap">
+            <img src="/plugins/streamviewer/img/avatar.png" alt="Lazaros Chalkidis" class="sv-credits-avatar">
+          </div>
+          <div class="sv-credits-name">Lazaros Chalkidis</div>
+          <div class="sv-credits-role">Developer</div>
+        </div>
+        <!-- Right: info + links -->
+        <div class="sv-credits-right">
+          <div class="sv-credits-title-row">
+            <span class="sv-credits-title">Stream Viewer</span>
+            <span class="sv-credits-version">v<?php
+              $_svPluginVer = '';
+              $_svPkgs = @glob('/var/log/packages/streamviewer-*');
+              if (is_array($_svPkgs) && !empty($_svPkgs)) {
+                $_svBase = basename($_svPkgs[0]);
+                if (preg_match('/^streamviewer-([^-]+(?:-[^-]+)?)/', $_svBase, $_svM)) $_svPluginVer = $_svM[1];
+              }
+              echo htmlspecialchars($_svPluginVer ?: '');
+            ?></span>
+          </div>
+          <div class="sv-credits-desc">Real-time media stream monitor and statistics tracker for Plex, Jellyfin and Emby.</div>
+          <div class="sv-credits-links">
+            <a href="https://github.com/Lazaros-Chalkidis" target="_blank" rel="noopener" class="sv-credits-link">
+              <i class="fa fa-github"></i><span>Github profile</span><i class="fa fa-external-link sv-credits-link-ext"></i>
+            </a>
+            <a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" target="_blank" rel="noopener" class="sv-credits-link">
+              <i class="fa fa-comments-o"></i><span>Plugin Support Thread</span><i class="fa fa-external-link sv-credits-link-ext"></i>
+            </a>
+          </div>
+        </div>
       </div>
       <div class="sv-credits-footer">
-        <button type="button" id="svCreditsOkBtn" style="background:#f47d42;border:1px solid #f47d42;color:#fff;padding:0.5rem 2.5rem;font-size:0.9em;font-weight:500;border-radius:4px;cursor:pointer;">OK</button>
+        <span class="sv-credits-copy">Copyright &copy; 2026 Stream Viewer - Lazaros Chalkidis</span>
+        <button type="button" id="svCreditsOkBtn" class="sv-credits-ok-btn">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Reset success modal (shown after Reset to defaults) ──────────── -->
+  <div id="svResetModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
+    <div class="sv-reset-modal-box">
+      <div class="sv-reset-body">
+        <div class="sv-reset-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#52b54b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div class="sv-reset-title">Settings reset</div>
+        <div class="sv-reset-msg">All settings have been restored to their default values. Click <span class="sv-reset-accent">Apply</span> to save.</div>
+      </div>
+      <div class="sv-reset-footer">
+        <button type="button" id="svResetOkBtn" class="sv-reset-ok-btn">OK</button>
       </div>
     </div>
   </div>
@@ -956,14 +999,44 @@ function showDiscoveryError(msg) {
     el.style.display = '';
 }
 
-function classifyConnection(conn) {
-    if (conn.relay) {
-        return { label: 'Relay — via plex.tv (recommended)', priority: 1, tag: 'relay' };
+function classifyConnection(conn, hasLocalContainer) {
+    hasLocalContainer = !!hasLocalContainer;
+    if (conn.container_detected) {
+        return {
+            label:    'Local Container: ' + conn.address + ':' + conn.port + ' (recommended)',
+            priority: 0,
+            tag:      'local-container',
+            help:     'Direct LAN path to your Plex container on this Unraid. Fastest and most reliable for typical setups.'
+        };
     }
-    if (!conn.local) {
-        return { label: 'Remote — ' + conn.address + ':' + conn.port, priority: 2, tag: 'remote' };
+    if (!conn.relay && conn.local) {
+        return {
+            label:    'Local: ' + conn.address + ':' + conn.port + ' (plex.direct)' + (hasLocalContainer ? '' : ' (recommended)'),
+            priority: 1,
+            tag:      'local',
+            help:     hasLocalContainer
+                ? 'Alternative local path that routes through Plex DNS. Works if the address above is correct, but may go stale if your Plex container moves.'
+                : 'Direct LAN path to this Plex server via plex.direct. Fastest and most reliable when Stream Viewer and Plex are on the same network.'
+        };
     }
-    return { label: 'Local — ' + conn.address + ':' + conn.port, priority: 3, tag: 'local' };
+    if (!conn.local && !conn.relay) {
+        return {
+            label:    'Remote: ' + conn.address + ':' + conn.port + (hasLocalContainer ? ' (not optimal here)' : ' (use only if Plex is off-LAN)'),
+            priority: 2,
+            tag:      'remote',
+            help:     hasLocalContainer
+                ? 'Routes through your router back to the same Unraid. Subject to NAT loopback failures under load. Pick only if you specifically need it.'
+                : 'Routes through the public IP and port-forward. Slower than a direct LAN connection and depends on the port forward staying open. Pick only if Plex is actually on a different network.'
+        };
+    }
+    return {
+        label:    'Relay (via plex.tv)' + (hasLocalContainer ? ' (slow fallback)' : ' (fallback)'),
+        priority: 3,
+        tag:      'relay',
+        help:     hasLocalContainer
+            ? 'Tunnels through plex.tv servers. Slowest option. Use only if the local connection above does not work.'
+            : 'Tunnels through plex.tv servers. Use only if direct local or remote connections do not work.'
+    };
 }
 
 /**
@@ -992,6 +1065,17 @@ function renderDiscoveryResults(servers) {
         });
     });
 
+    // Bind selection change so the help line below each dropdown follows the choice
+    listEl.querySelectorAll('.sv-disc-conn-select').forEach(function(sel) {
+        sel.addEventListener('change', function() {
+            var opt  = sel.options[sel.selectedIndex];
+            var help = (opt && opt.dataset && opt.dataset.help) ? opt.dataset.help : '';
+            var card = sel.closest('.sv-disc-card');
+            var helpEl = card ? card.querySelector('.sv-disc-conn-help') : null;
+            if (helpEl) helpEl.textContent = help;
+        });
+    });
+
     resultsEl.style.display = '';
 }
 
@@ -1004,16 +1088,23 @@ function buildDiscoveryCard(srv, idx) {
             + '</div>';
     }
 
-    // Sort connections: relay first, then remote, then local
+    var hasLocalContainer = connections.some(function(c) { return c.container_detected; });
+
+    // Sort connections: container-detected first (priority 0), then original order
+    // (relay 1, remote 2, local plex.direct 3). Preserves original behavior when
+    // no local container is detected, and elevates the detected one when it is.
     var sorted = connections.slice().sort(function(a, b) {
-        return classifyConnection(a).priority - classifyConnection(b).priority;
+        return classifyConnection(a, hasLocalContainer).priority - classifyConnection(b, hasLocalContainer).priority;
     });
 
     var options = sorted.map(function(conn, i) {
-        var cls = classifyConnection(conn);
-        return '<option value="' + escHtml(conn.uri) + '"' + (i === 0 ? ' selected' : '') + '>'
+        var cls = classifyConnection(conn, hasLocalContainer);
+        return '<option value="' + escHtml(conn.uri) + '" data-help="' + escHtml(cls.help) + '"'
+            + (i === 0 ? ' selected' : '') + '>'
             + escHtml(cls.label) + '</option>';
     }).join('');
+
+    var firstHelp = classifyConnection(sorted[0], hasLocalContainer).help;
 
     var isOwned  = srv.owned ? '' : ' <span class="sv-disc-shared">(shared)</span>';
     var alreadyAdded = cards.some(function(c) {
@@ -1025,10 +1116,11 @@ function buildDiscoveryCard(srv, idx) {
         +   '<span class="sv-disc-name">' + escHtml(srv.name) + isOwned + '</span>'
         +   (alreadyAdded ? '<span class="sv-disc-already">✓ added</span>' : '')
         + '</div>'
-        + '<div class="sv-disc-card-bottom">'
-        +   '<select class="form-control sv-disc-conn-select" data-srv-idx="' + idx + '" data-srv-token="' + escHtml(srv.accessToken || '') + '" data-srv-name="' + escHtml(srv.name) + '">'
-        +     options
-        +   '</select>'
+        + '<select class="form-control sv-disc-conn-select" data-srv-idx="' + idx + '" data-srv-token="' + escHtml(srv.accessToken || '') + '" data-srv-name="' + escHtml(srv.name) + '">'
+        +   options
+        + '</select>'
+        + '<div class="sv-disc-conn-help" data-srv-idx="' + idx + '">' + escHtml(firstHelp) + '</div>'
+        + '<div class="sv-disc-add-row">'
         +   '<button type="button" class="sv-disc-add-btn sv-add-btn" data-srv-idx="' + idx + '"'
         +     (alreadyAdded ? ' disabled' : '') + '>'
         +     '<i class="fa fa-plus"></i> Add'
@@ -1079,6 +1171,108 @@ function addDiscoveredServer(btn, servers) {
     }
 
     markDirty();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LOCAL PLEX CONTAINER MISMATCH BANNER
+// ──────────────────────────────────────────────────────────────────────────────
+// Detects when a saved Plex server is configured with a non-local URL while a
+// Plex container is actually running on this same Unraid host. Surfaces a
+// persistent banner with a one-click "Switch to local" action that rewrites the
+// SERVERn_URL line in the config to the container's LAN address.
+// ══════════════════════════════════════════════════════════════════════════════
+
+function checkLocalPlexMismatch() {
+    var banner = document.getElementById('svLocalMismatchBanner');
+    if (!banner) return;
+
+    $.ajax({
+        type:     'GET',
+        url:      SV_API,
+        headers:  { 'X-Requested-With': 'XMLHttpRequest' },
+        data:     { action: 'check_local_mismatch', _svt: window.svToken || '' },
+        dataType: 'json',
+        timeout:  8000,
+        success: function(data) {
+            if (!data || !data.ok || !Array.isArray(data.mismatches) || data.mismatches.length === 0) {
+                banner.style.display = 'none';
+                banner.innerHTML = '';
+                return;
+            }
+            renderLocalMismatchBanner(banner, data.mismatches);
+        },
+        error: function() {
+            // Silent fail: a missing Docker socket, permission issue, or network blip
+            // should not block the settings page. The user can still operate normally.
+            banner.style.display = 'none';
+        },
+    });
+}
+
+function renderLocalMismatchBanner(banner, mismatches) {
+    var rows = mismatches.map(function(m) {
+        return ''
+            + '<div class="sv-mismatch-banner__row">'
+            +   '<div class="sv-mismatch-banner__info">'
+            +     '<div class="sv-mismatch-banner__name">' + escHtml(m.name) + '</div>'
+            +     '<div class="sv-mismatch-banner__urls">'
+            +       'Current: <code>' + escHtml(m.current_url) + '</code><br>'
+            +       'Suggested: <code>' + escHtml(m.suggested_url) + '</code>'
+            +     '</div>'
+            +   '</div>'
+            +   '<button type="button" class="sv-mismatch-banner__btn" '
+            +           'data-mismatch-index="' + m.index + '">'
+            +     'Switch to local'
+            +   '</button>'
+            + '</div>';
+    }).join('');
+
+    banner.innerHTML = ''
+        + '<div class="sv-mismatch-banner__hd">'
+        +   '<i class="fa fa-exclamation-triangle"></i> '
+        +   'Local Plex container detected'
+        + '</div>'
+        + '<div class="sv-mismatch-banner__body">'
+        +   'A Plex container is running on this Unraid host, but Stream Viewer is reaching '
+        +   'it via a non-local URL. This can cause reliability issues '
+        +   '(NAT loopback drops, slower polls, unnecessary WAN traffic). Switch to the '
+        +   'local connection for a direct LAN path.'
+        + '</div>'
+        + rows;
+
+    banner.querySelectorAll('.sv-mismatch-banner__btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            applyLocalUrl(parseInt(btn.dataset.mismatchIndex, 10), btn);
+        });
+    });
+    banner.style.display = '';
+}
+
+function applyLocalUrl(index, btn) {
+    if (!index || index < 1) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Switching…'; }
+
+    $.ajax({
+        type:     'POST',
+        url:      SV_API,
+        headers:  { 'X-Requested-With': 'XMLHttpRequest' },
+        data:     { action: 'apply_local_url', index: index, _svt: window.svToken || '' },
+        dataType: 'json',
+        timeout:  8000,
+        success: function(data) {
+            if (data && data.ok) {
+                // Re-check: this server's row disappears, banner hides if it was the last one
+                checkLocalPlexMismatch();
+            } else {
+                if (btn) { btn.disabled = false; btn.textContent = 'Switch to local'; }
+                alert((data && data.error) ? data.error : 'Failed to apply local URL.');
+            }
+        },
+        error: function() {
+            if (btn) { btn.disabled = false; btn.textContent = 'Switch to local'; }
+            alert('Failed to apply local URL. Please try again.');
+        },
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1486,6 +1680,11 @@ function setTab(which) {
 // RESET TO DEFAULTS
 // ══════════════════════════════════════════════════════════════════════════════
 
+function svShowResetModal() {
+    var m = document.getElementById('svResetModal');
+    if (m) m.style.display = 'flex';
+}
+
 function resetDefaults() {
     var form = document.querySelector('form[name="streamviewer_settings"]');
     if (!form) return;
@@ -1531,7 +1730,7 @@ function resetDefaults() {
             r.closest('.sv-badge-theme-opt').classList.toggle('sv-badge-theme-opt--sel', r.checked);
         });
         markDirty();
-        alert('Settings reset to defaults. Click "Apply" to save.');
+        svShowResetModal();
         return;
     }
 
@@ -1600,6 +1799,9 @@ function resetDefaults() {
 
     var plexCancelBtn = document.getElementById('svPlexCancelBtn');
     if (plexCancelBtn) plexCancelBtn.addEventListener('click', cancelPlexOauth);
+
+    // ── Local Plex container mismatch detection (persistent banner) ───────
+    checkLocalPlexMismatch();
 
 
     // ── Jellyfin buttons ────────────────────────────────────────────────────
@@ -1767,6 +1969,15 @@ function resetDefaults() {
     if (modal) {
         modal.addEventListener('click', function(e) { if (e.target === modal) modal.style.display = 'none'; });
         document.addEventListener('keydown', function(e) { if (e.key === 'Escape') modal.style.display = 'none'; });
+    }
+
+    // ── Reset success modal ─────────────────────────────────────────────────
+    var resetModal = document.getElementById('svResetModal');
+    var resetOk    = document.getElementById('svResetOkBtn');
+    if (resetOk && resetModal) resetOk.addEventListener('click', function() { resetModal.style.display = 'none'; });
+    if (resetModal) {
+        resetModal.addEventListener('click', function(e) { if (e.target === resetModal) resetModal.style.display = 'none'; });
+        document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && resetModal.style.display !== 'none') resetModal.style.display = 'none'; });
     }
 
     // ── Restore active tab ───────────────────────────────────────────────────

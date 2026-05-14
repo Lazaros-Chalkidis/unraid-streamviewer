@@ -687,3 +687,158 @@
   .sv-stream__server-type { font-size: .55em; }
   .sv-stream__time { font-size: .65em; }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STOP STREAM CONFIRM MODAL (replaces native browser confirm dialog).
+   Rendered as a sibling of .sv-widget-wrap (in a .sv-w-modal-host container)
+   so the wrap's overflow:hidden does not clip the modal or its text.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.sv-w-modal-host {
+  /* Host is invisible by default; only the modal inside it shows itself. */
+  position: static;
+}
+
+.sv-w-confirm-modal {
+  position: fixed; inset: 0;
+  z-index: 9999;
+  background: rgba(0,0,0,0.72);
+  align-items: center;
+  justify-content: center;
+}
+.sv-w-confirm-modal[style*="display: flex"],
+.sv-w-confirm-modal[style*="display:flex"] { display: flex !important; }
+
+.sv-w-confirm-box {
+  width: 380px;
+  max-width: 94vw;
+  background: #1c1c1c;
+  color: rgba(255,255,255,.87);
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 8px;
+  overflow: visible;
+  box-shadow: 0 8px 40px rgba(0,0,0,.65);
+}
+.sv-w-confirm-body {
+  padding: 1.6rem 1.6rem 1.1rem;
+  text-align: center;
+}
+.sv-w-confirm-icon {
+  width: 48px; height: 48px; border-radius: 50%;
+  background: rgba(229,160,13,0.12);
+  border: 1.5px solid rgba(229,160,13,0.30);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto .85rem;
+}
+.sv-w-confirm-title {
+  font-size: 15px; font-weight: 600;
+  margin-bottom: .5rem;
+  color: rgba(255,255,255,.92);
+}
+.sv-w-confirm-msg {
+  font-size: 12.5px !important;
+  line-height: 1.5 !important;
+  color: rgba(255,255,255,.62) !important;
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  text-overflow: clip !important;
+  overflow: visible !important;
+  display: block !important;
+  width: auto !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+.sv-w-confirm-footer {
+  padding: .75rem .9rem;
+  background: #181818;
+  border-top: 1px solid rgba(255,255,255,.10);
+  display: flex; gap: .6rem;
+  justify-content: center;
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+
+/* Button base. High specificity + !important is required because Unraid's
+ * global dashboard CSS heavily styles bare <button> elements with an orange
+ * theme that otherwise bleeds through onto Cancel. */
+.sv-w-modal-host .sv-w-confirm-cancel,
+.sv-w-modal-host .sv-w-confirm-ok {
+  padding: .35rem 1.3rem !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  transition: background-color .15s, border-color .15s, color .15s !important;
+  outline: none !important;
+  min-width: 80px !important;
+  line-height: 1.4 !important;
+}
+
+/* Cancel: neutral / outline. Hard overrides on every color-related property
+ * so the global orange .btn-like rules cannot leak through. */
+.sv-w-modal-host .sv-w-confirm-cancel,
+.sv-w-modal-host button.sv-w-confirm-cancel,
+.sv-w-modal-host .sv-w-confirm-cancel:link,
+.sv-w-modal-host .sv-w-confirm-cancel:visited {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  border: 1px solid rgba(255,255,255,.25) !important;
+  color: rgba(255,255,255,.78) !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+.sv-w-modal-host .sv-w-confirm-cancel:hover,
+.sv-w-modal-host .sv-w-confirm-cancel:focus {
+  background: rgba(255,255,255,.08) !important;
+  background-color: rgba(255,255,255,.08) !important;
+  border-color: rgba(255,255,255,.40) !important;
+  color: rgba(255,255,255,.95) !important;
+}
+
+/* OK / Stop: filled orange (the destructive action). */
+.sv-w-modal-host .sv-w-confirm-ok,
+.sv-w-modal-host button.sv-w-confirm-ok {
+  background: #f47d42 !important;
+  background-color: #f47d42 !important;
+  background-image: none !important;
+  border: 1px solid #f47d42 !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+.sv-w-modal-host .sv-w-confirm-ok:hover,
+.sv-w-modal-host .sv-w-confirm-ok:focus {
+  background: #d56a35 !important;
+  background-color: #d56a35 !important;
+  border-color: #d56a35 !important;
+  color: #fff !important;
+}
+
+/* Light theme */
+.sv-w-modal-host.sv-light .sv-w-confirm-box {
+  background: #fff;
+  color: rgba(0,0,0,.85);
+  border-color: rgba(0,0,0,.10);
+}
+.sv-w-modal-host.sv-light .sv-w-confirm-title { color: rgba(0,0,0,.88); }
+.sv-w-modal-host.sv-light .sv-w-confirm-msg   { color: rgba(0,0,0,.55) !important; }
+.sv-w-modal-host.sv-light .sv-w-confirm-footer {
+  background: #f4f5f7;
+  border-top-color: rgba(0,0,0,.10);
+}
+.sv-w-modal-host.sv-light .sv-w-confirm-cancel,
+.sv-w-modal-host.sv-light button.sv-w-confirm-cancel {
+  border-color: rgba(0,0,0,.22) !important;
+  color: rgba(0,0,0,.72) !important;
+}
+.sv-w-modal-host.sv-light .sv-w-confirm-cancel:hover,
+.sv-w-modal-host.sv-light .sv-w-confirm-cancel:focus {
+  background: rgba(0,0,0,.04) !important;
+  background-color: rgba(0,0,0,.04) !important;
+  color: rgba(0,0,0,.90) !important;
+}
