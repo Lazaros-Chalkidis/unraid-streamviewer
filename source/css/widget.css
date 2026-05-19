@@ -181,7 +181,7 @@
 .sv-stream {
   display: grid;
   grid-template-columns: 10px 1fr;
-  grid-template-rows: auto auto auto auto auto;
+  grid-template-rows: auto auto auto auto auto auto;
   column-gap: .55rem;
   row-gap: .32rem;
   padding: .5rem .35rem .5rem .2rem;
@@ -201,7 +201,7 @@
 
 /* ── Play-type indicator bar (left edge) ──────────────────────────────────── */
 .sv-stream__bar {
-  grid-row: 1 / 6;
+  grid-row: 1 / 7;
   grid-column: 1;
   width: 3px;
   border-radius: 2px;
@@ -234,11 +234,11 @@
   margin-bottom: .25rem;
 }
 .sv-stream__badges-left {
-  display: flex; align-items: center; gap: .25rem;
+  display: flex; align-items: center; gap: .5rem;
   flex-wrap: wrap; min-width: 0;
 }
 .sv-stream__badges-right {
-  display: flex; align-items: center; gap: .25rem;
+  display: flex; align-items: center; gap: .5rem;
   flex-wrap: wrap; justify-content: flex-end; min-width: 0;
 }
 
@@ -392,7 +392,7 @@
 
 /* ── Row 3: server type + badges ──────────────────────────────────────────── */
 .sv-stream__row3 {
-  grid-row: 5; grid-column: 2;
+  grid-row: 6; grid-column: 2;
   min-width: 0; overflow: hidden;
 }
 
@@ -487,7 +487,8 @@
 
 /* Docker resource stats in footer (micro-bar design) */
 .sv-docker-stats {
-  display: inline-flex; align-items: center; gap: .6rem;
+  display: flex; align-items: center; justify-content: flex-start;
+  gap: 1.5rem;
   font-size: .85em; color: var(--sv-c-text-muted);
 }
 .sv-docker-stats:empty { display: none; }
@@ -507,6 +508,7 @@
 }
 .sv-docker-stat__fill--cpu { background: #a3a3a3; }
 .sv-docker-stat__fill--ram { background: #85B7EB; }
+.sv-docker-stat__fill--bw  { background: #4a90e2; }
 .sv-docker-stat__val { font-weight: 600; color: var(--sv-c-text-mid); min-width: 28px; }
 
 /* Badge in footer (stream count) */
@@ -684,6 +686,7 @@
   .sv-stream__desc { font-size: .68em; border-right: none; padding: .2rem 0 .2rem .4rem; }
   .sv-stream__badges-row { gap: .12rem; }
   .sv-stream__badges-right { gap: .15rem; }
+  .sv-stream__badges-left  { gap: .15rem; }
   .sv-stream__server-type { font-size: .55em; }
   .sv-stream__time { font-size: .65em; }
 }
@@ -841,4 +844,84 @@
   background: rgba(0,0,0,.04) !important;
   background-color: rgba(0,0,0,.04) !important;
   color: rgba(0,0,0,.90) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   BANDWIDTH CHART (widget mode)
+   Lives in a compact row between the technical details and the synopsis.
+   Shares the .sv-chart HTML markup with the Active Stream/s tab so the JS
+   code stays uniform across both views.
+   ────────────────────────────────────────────────────────────────────────── */
+.sv-stream__chart-row {
+  grid-row: 5; grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin: .35rem 0 .3rem;
+  padding: .25rem 0;
+  font-size: .68em;
+  color: var(--sv-c-text-muted);
+  min-width: 0;
+  width: 100%;
+}
+
+.sv-stream__chart-row-label {
+  font-size: .9em;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  opacity: .55;
+  flex-shrink: 0;
+}
+
+.sv-stream__chart-row .sv-chart {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  position: relative;       /* anchor for the absolutely-positioned unit */
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.sv-stream__chart-row .sv-chart__yaxis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0;
+  font-size: 8px;
+  line-height: 1;
+  color: rgba(255,255,255,.45);
+  min-width: 20px;
+  text-align: right;
+}
+
+.sv-stream__chart-row .sv-chart__plot {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: block;
+}
+
+.sv-stream__chart-row .sv-chart__plot .sv-spark-grid     { stroke: rgba(255,255,255,.08); }
+.sv-stream__chart-row .sv-chart__plot .sv-spark-baseline { stroke: rgba(255,255,255,.15); }
+
+.sv-stream__chart-row .sv-stream__bandwidth-now {
+  font-size: .9em;
+  font-weight: 600;
+  color: var(--sv-c-text);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Light theme tweaks for the widget chart row */
+.sv-light .sv-stream__chart-row .sv-chart__yaxis            { color: rgba(0,0,0,.55); }
+.sv-light .sv-stream__chart-row .sv-chart__yaxis .sv-chart__unit { color: rgba(0,0,0,.40); }
+.sv-light .sv-stream__chart-row .sv-chart__plot .sv-spark-grid     { stroke: rgba(0,0,0,.10); }
+.sv-light .sv-stream__chart-row .sv-chart__plot .sv-spark-baseline { stroke: rgba(0,0,0,.18); }
+
+/* Narrow tile mode: collapse a bit so it stays usable */
+@media (max-width: 480px) {
+  .sv-stream__chart-row .sv-chart { height: 29px; }
+  .sv-stream__chart-row .sv-chart__yaxis { min-width: 18px; font-size: 7px; }
 }

@@ -1,6 +1,22 @@
 
 # Stream Viewer
 
+## v2026.05.20
+
+### Bug Fixes
+- Statistics page was being constrained by Unraid's main content container width, leaving large gutters on 2K and 4K monitors.
+
+### New Features
+- New Active Stream/s tab in statistic page 
+- Bandwidth chart per stream card.
+- New "Network bandwidth capacity" setting in Widget settings controls the ceiling of the Total BW bar in the footer
+- Statistics retention dropdown gains an "Unlimited" option (sentinel value 0) that disables the daily prune entirely
+- New "Erase data on uninstall" toggle in Statistics settings (default off).
+- New "Wipe statistics database" button in Statistics settings
+
+### Improvements
+- "Show Docker stats" description changed from "CPU/RAM in footer" to "CPU/RAM/Total BW in footer"
+
 ## v2026.05.14
 
 ### Bug Fixes

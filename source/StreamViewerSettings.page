@@ -117,7 +117,11 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['WIDGET_SHOW_DEVICE']   = $yn($_POST['WIDGET_SHOW_DEVICE']   ?? '1', '1');
     $new_cfg['WIDGET_DETAILS_OPEN']  = $yn($_POST['WIDGET_DETAILS_OPEN']  ?? '0', '0');
     $new_cfg['WIDGET_SHOW_SUMMARY']  = $yn($_POST['WIDGET_SHOW_SUMMARY']  ?? '1', '1');
+    $new_cfg['WIDGET_SHOW_CHART']    = $yn($_POST['WIDGET_SHOW_CHART']    ?? '1', '1');
     $new_cfg['WIDGET_SHOW_DOCKER']   = $yn($_POST['WIDGET_SHOW_DOCKER']   ?? '1', '1');
+    $validBwCap = ['50','100','200','500','1000'];
+    $wbwCap = (string)($_POST['WIDGET_BW_CAPACITY'] ?? '1000');
+    $new_cfg['WIDGET_BW_CAPACITY']   = in_array($wbwCap, $validBwCap, true) ? $wbwCap : '1000';
     $new_cfg['HEADER_SHOW_BADGE']    = $yn($_POST['HEADER_SHOW_BADGE']    ?? '1', '1');
     $new_cfg['WIDGET_SUMMARY_OPEN']  = $yn($_POST['WIDGET_SUMMARY_OPEN']  ?? '0', '0');
     $new_cfg['LIB_SECTIONS_OPEN']    = $yn($_POST['LIB_SECTIONS_OPEN']    ?? '0', '0');
@@ -133,14 +137,33 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['TOOL_ALLOW_KILL']       = $yn($_POST['TOOL_ALLOW_KILL']       ?? '0', '0');
     $new_cfg['VERIFY_SSL']            = $yn($_POST['VERIFY_SSL']            ?? '0', '0');
 
+    // ── Live tab settings (Statistics page > Live) ──
+    // Independent of Widget settings so users can configure the dashboard widget
+    // and the Statistics Live tab separately.
+    $new_cfg['LIVE_REFRESH_ENABLED']  = $yn($_POST['LIVE_REFRESH_ENABLED']  ?? '1', '1');
+    $new_cfg['LIVE_REFRESH_INTERVAL'] = $clamp_interval($_POST['LIVE_REFRESH_INTERVAL'] ?? 5);
+    $new_cfg['LIVE_MAX_STREAMS']      = $clamp_max_streams($_POST['LIVE_MAX_STREAMS'] ?? '0');
+    $new_cfg['LIVE_ALLOW_KILL']       = $yn($_POST['LIVE_ALLOW_KILL']       ?? '0', '0');
+    $new_cfg['LIVE_SHOW_DEVICE']      = $yn($_POST['LIVE_SHOW_DEVICE']      ?? '1', '1');
+    $new_cfg['LIVE_SHOW_IP']          = $yn($_POST['LIVE_SHOW_IP']          ?? '1', '1');
+    $new_cfg['LIVE_SHOW_PROGRESS']    = $yn($_POST['LIVE_SHOW_PROGRESS']    ?? '1', '1');
+    $new_cfg['LIVE_SHOW_QUALITY']     = $yn($_POST['LIVE_SHOW_QUALITY']     ?? '1', '1');
+    $new_cfg['LIVE_SHOW_TRANSCODE']   = $yn($_POST['LIVE_SHOW_TRANSCODE']   ?? '1', '1');
+    $new_cfg['LIVE_SHOW_DETAILS']     = $yn($_POST['LIVE_SHOW_DETAILS']     ?? '1', '1');
+    $new_cfg['LIVE_SHOW_SUMMARY']     = $yn($_POST['LIVE_SHOW_SUMMARY']     ?? '1', '1');
+    $new_cfg['LIVE_SHOW_CHART']       = $yn($_POST['LIVE_SHOW_CHART']       ?? '1', '1');
+
     // ── Badge theme ──
     $validThemes = ['default', 'blue', 'lime', 'green', 'purple', 'unraid', 'red', 'cyan', 'pink', 'gold', 'teal', 'mono'];
     $bt = (string)($_POST['BADGE_THEME'] ?? 'default');
     $new_cfg['BADGE_THEME'] = in_array($bt, $validThemes, true) ? $bt : 'default';
+    $lbt = (string)($_POST['LIVE_BADGE_THEME'] ?? 'default');
+    $new_cfg['LIVE_BADGE_THEME'] = in_array($lbt, $validThemes, true) ? $lbt : 'default';
 
     // ── Stats settings ──
     $new_cfg['STATS_ENABLED']        = $yn($_POST['STATS_ENABLED'] ?? '0', '0');
     $new_cfg['STATS_ANONYMIZE_IP']   = $yn($_POST['STATS_ANONYMIZE_IP'] ?? '0', '0');
+    $new_cfg['ERASE_ON_UNINSTALL']   = $yn($_POST['ERASE_ON_UNINSTALL'] ?? '0', '0');
 
     $statsPath = trim((string)($_POST['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer'));
     if ($statsPath === '') $statsPath = '/mnt/user/appdata/Stream-Viewer';
@@ -149,8 +172,11 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['STATS_DB_PATH'] = rtrim($statsPath, '/');
 
     $retDays = (int)($_POST['STATS_RETENTION_DAYS'] ?? 90);
-    if ($retDays < 7)   $retDays = 7;
-    if ($retDays > 365) $retDays = 365;
+    // 0 is the sentinel for "Forever - never delete"; otherwise clamp 7..365.
+    if ($retDays !== 0) {
+        if ($retDays < 7)   $retDays = 7;
+        if ($retDays > 365) $retDays = 365;
+    }
     $new_cfg['STATS_RETENTION_DAYS'] = (string)$retDays;
 
     $tab = $_POST['sv_active_tab'] ?? 'widget';
@@ -401,10 +427,30 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
           </div>
           <div class="sv-r">
+            <div class="sv-r-label">Show bandwidth chart</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('WIDGET_SHOW_CHART', $cfg['WIDGET_SHOW_CHART'] ?? '1') ?>
+              <span class="sv-r-desc">Mini chart inside each stream</span>
+            </div>
+          </div>
+          <div class="sv-r">
             <div class="sv-r-label">Show Docker stats</div>
             <div class="sv-r-field">
               <?= $toggleShow('WIDGET_SHOW_DOCKER', $cfg['WIDGET_SHOW_DOCKER'] ?? '1') ?>
-              <span class="sv-r-desc">CPU/RAM in footer</span>
+              <span class="sv-r-desc">CPU/RAM/Total BW in footer</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Network bandwidth capacity</div>
+            <div class="sv-r-field">
+              <select name="WIDGET_BW_CAPACITY" class="sv-select">
+                <?= mk_option($cfg['WIDGET_BW_CAPACITY'] ?? '1000', '50',   _('50 Mbps')) ?>
+                <?= mk_option($cfg['WIDGET_BW_CAPACITY'] ?? '1000', '100',  _('100 Mbps')) ?>
+                <?= mk_option($cfg['WIDGET_BW_CAPACITY'] ?? '1000', '200',  _('200 Mbps')) ?>
+                <?= mk_option($cfg['WIDGET_BW_CAPACITY'] ?? '1000', '500',  _('500 Mbps')) ?>
+                <?= mk_option($cfg['WIDGET_BW_CAPACITY'] ?? '1000', '1000', _('1000 Mbps - Default')) ?>
+              </select>
+              <span class="sv-r-desc">Ceiling for the TOTAL BW bar in the footer</span>
             </div>
           </div>
           <div class="sv-r">
@@ -450,7 +496,148 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         </div>
       </div>
 
-      <!-- ── Section 2: Statistics Settings ── -->
+      <!-- ── Section 2: Live Settings ── -->
+      <!--
+        Mirrors the Widget Settings section above but with a LIVE_* prefix so the
+        Statistics page Live tab can be configured independently of the Dashboard
+        widget. Header stream badge and Badge color theme remain global (declared
+        once in Widget Settings) since they are not per-view.
+      -->
+      <div class="sv-sec closed" id="svSecLive">
+        <div class="sv-sec-hd">
+          <span>Active Stream/s</span>
+          <span class="sv-pill">Active Stream/s tab on Statistics page</span>
+          <span class="sv-sec-arrow">&#9650;</span>
+        </div>
+        <div class="sv-sec-bd">
+          <div class="sv-r">
+            <div class="sv-r-label">Automatic refresh</div>
+            <div class="sv-r-field">
+              <?= $toggle('LIVE_REFRESH_ENABLED', $cfg['LIVE_REFRESH_ENABLED'] ?? '1', '1') ?>
+              <span class="sv-r-desc">Poll servers for new stream data</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Refresh interval</div>
+            <div class="sv-r-field">
+              <select name="LIVE_REFRESH_INTERVAL" class="sv-select">
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '5',   _('5s - Default')) ?>
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '10',  _('10s')) ?>
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '20',  _('20s')) ?>
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '30',  _('30s')) ?>
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '50',  _('50s')) ?>
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '80',  _('80s')) ?>
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '100', _('100s')) ?>
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '150', _('150s')) ?>
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '200', _('200s')) ?>
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '250', _('250s')) ?>
+                <?= mk_option($cfg['LIVE_REFRESH_INTERVAL'] ?? '5', '300', _('300s')) ?>
+              </select>
+              <span class="sv-r-desc">How often to poll</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Max streams shown</div>
+            <div class="sv-r-field">
+              <select name="LIVE_MAX_STREAMS" class="sv-select">
+                <?= mk_option($cfg['LIVE_MAX_STREAMS'] ?? '0', '0',  _('All - Default')) ?>
+                <?= mk_option($cfg['LIVE_MAX_STREAMS'] ?? '0', '5',  _('5')) ?>
+                <?= mk_option($cfg['LIVE_MAX_STREAMS'] ?? '0', '10', _('10')) ?>
+                <?= mk_option($cfg['LIVE_MAX_STREAMS'] ?? '0', '20', _('20')) ?>
+                <?= mk_option($cfg['LIVE_MAX_STREAMS'] ?? '0', '50', _('50')) ?>
+              </select>
+              <span class="sv-r-desc">All = Unlimited</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Allow killing sessions</div>
+            <div class="sv-r-field">
+              <?= $toggle('LIVE_ALLOW_KILL', $cfg['LIVE_ALLOW_KILL'] ?? '0', '0') ?>
+              <span class="sv-r-warn">Forcibly disconnects users</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show device</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('LIVE_SHOW_DEVICE', $cfg['LIVE_SHOW_DEVICE'] ?? '1') ?>
+              <span class="sv-r-desc">Client device name</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show IP address</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('LIVE_SHOW_IP', $cfg['LIVE_SHOW_IP'] ?? '1') ?>
+              <span class="sv-r-desc">Disable for privacy on shared screens</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show progress bar</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('LIVE_SHOW_PROGRESS', $cfg['LIVE_SHOW_PROGRESS'] ?? '1') ?>
+              <span class="sv-r-desc">Playback position bar</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show quality / bitrate</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('LIVE_SHOW_QUALITY', $cfg['LIVE_SHOW_QUALITY'] ?? '1') ?>
+              <span class="sv-r-desc">Resolution and live bitrate</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show transcode info</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('LIVE_SHOW_TRANSCODE', $cfg['LIVE_SHOW_TRANSCODE'] ?? '1') ?>
+              <span class="sv-r-desc">Transcode speed and type</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show technical details</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('LIVE_SHOW_DETAILS', $cfg['LIVE_SHOW_DETAILS'] ?? '1') ?>
+              <span class="sv-r-desc">Codec, audio, container, subs, HW</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show media summary</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('LIVE_SHOW_SUMMARY', $cfg['LIVE_SHOW_SUMMARY'] ?? '1') ?>
+              <span class="sv-r-desc">Thumbnail and description</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Show bandwidth chart</div>
+            <div class="sv-r-field">
+              <?= $toggleShow('LIVE_SHOW_CHART', $cfg['LIVE_SHOW_CHART'] ?? '1') ?>
+              <span class="sv-r-desc">Mini chart at the bottom of each stream card</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Badge color theme<span class="sv-r-label-desc">Server name badge colors</span></div>
+            <div class="sv-r-field" style="padding:6px 16px;">
+              <?php
+              // Reuse the same palette declared in the Widget settings section so
+              // the two stay visually consistent. Stored under LIVE_BADGE_THEME
+              // so the Live tab can pick a different theme than the widget.
+              $liveBadgeTheme = (string)($cfg['LIVE_BADGE_THEME'] ?? 'default');
+              ?>
+              <input type="hidden" name="LIVE_BADGE_THEME" value="<?= htmlspecialchars($liveBadgeTheme) ?>">
+              <div class="sv-badge-themes" data-sv-badge-group="live">
+                <?php foreach ($themes as $key => $t): $sel = ($key === $liveBadgeTheme); ?>
+                <label class="sv-badge-theme-opt<?= $sel ? ' sv-badge-theme-opt--sel' : '' ?>" data-theme="<?= $key ?>">
+                  <input type="radio" name="_sv_live_badge_theme" value="<?= $key ?>"<?= $sel ? ' checked' : '' ?>>
+                  <span class="sv-badge-theme-radio"></span>
+                  <span class="sv-badge-theme-b" style="background:<?= $t['bg'] ?>;color:<?= $t['c'] ?>;border:<?= $t['br'] ?>;">NAME</span>
+                  <span class="sv-badge-theme-name"><?= $t['label'] ?></span>
+                </label>
+                <?php endforeach; ?>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Section 3: Statistics Settings ── -->
       <div class="sv-sec closed" id="svSecStats">
         <div class="sv-sec-hd">
           <span>Statistics settings</span>
@@ -485,15 +672,9 @@ $lightClass   = $sv_light ? ' sv-light' : '';
                 <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '90', _('90 days - Default')) ?>
                 <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '180', _('180 days')) ?>
                 <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '365', _('365 days')) ?>
+                <?= mk_option($cfg['STATS_RETENTION_DAYS'] ?? '90', '0', _('Unlimited')) ?>
               </select>
               <span class="sv-r-desc">Auto-prune older records</span>
-            </div>
-          </div>
-          <div class="sv-r">
-            <div class="sv-r-label">Anonymize IPs</div>
-            <div class="sv-r-field">
-              <?= $toggle('STATS_ANONYMIZE_IP', $cfg['STATS_ANONYMIZE_IP'] ?? '0', '0') ?>
-              <span class="sv-r-desc">Zero last IPv4 octet</span>
             </div>
           </div>
           <div class="sv-r">
@@ -504,6 +685,29 @@ $lightClass   = $sv_light ? ' sv-light' : '';
                 <?= mk_option($cfg['LIB_SECTIONS_OPEN'] ?? '0', '1', _('Expanded')) ?>
               </select>
               <span class="sv-r-desc">Libraries tab default</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Anonymize IPs</div>
+            <div class="sv-r-field">
+              <?= $toggle('STATS_ANONYMIZE_IP', $cfg['STATS_ANONYMIZE_IP'] ?? '0', '0') ?>
+              <span class="sv-r-desc">Zero last IPv4 octet</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Erase data on uninstall</div>
+            <div class="sv-r-field">
+              <?= $toggle('ERASE_ON_UNINSTALL', $cfg['ERASE_ON_UNINSTALL'] ?? '0', '0') ?>
+              <span class="sv-r-desc">Delete database and settings when the plugin is removed</span>
+            </div>
+          </div>
+          <div class="sv-r">
+            <div class="sv-r-label">Wipe statistics database</div>
+            <div class="sv-r-field">
+              <button type="button" id="sv-wipe-db-btn" class="sv-action-btn sv-action-btn--danger">
+                <i class="fa fa-trash" aria-hidden="true"></i> Wipe now
+              </button>
+              <span class="sv-r-desc">Permanently delete all collected history</span>
             </div>
           </div>
         </div>
@@ -1697,16 +1901,26 @@ function resetDefaults() {
             WIDGET_SHOW_QUALITY:'1', WIDGET_SHOW_TRANSCODE:'1', WIDGET_SHOW_DETAILS:'1',
             WIDGET_DETAILS_OPEN:'0',
             WIDGET_SHOW_SUMMARY:'1', WIDGET_SUMMARY_OPEN:'0',
+            WIDGET_SHOW_CHART:'1',
             WIDGET_SHOW_DOCKER:'1',
+            WIDGET_BW_CAPACITY:'1000',
             HEADER_SHOW_BADGE:'1',
             LIB_SECTIONS_OPEN:'0',
             TOOL_ALLOW_KILL:'0',
             VERIFY_SSL:'0',
+            // Live tab (Statistics page) settings, independent from Widget
+            LIVE_REFRESH_ENABLED:'1', LIVE_REFRESH_INTERVAL:'5', LIVE_MAX_STREAMS:'0',
+            LIVE_ALLOW_KILL:'0',
+            LIVE_SHOW_DEVICE:'1', LIVE_SHOW_IP:'1', LIVE_SHOW_PROGRESS:'1',
+            LIVE_SHOW_QUALITY:'1', LIVE_SHOW_TRANSCODE:'1', LIVE_SHOW_DETAILS:'1',
+            LIVE_SHOW_SUMMARY:'1', LIVE_SHOW_CHART:'1',
             STATS_ENABLED:'0',
             STATS_DB_PATH:'/mnt/user/appdata/Stream-Viewer',
             STATS_RETENTION_DAYS:'90',
             STATS_ANONYMIZE_IP:'0',
-            BADGE_THEME:'default'
+            ERASE_ON_UNINSTALL:'0',
+            BADGE_THEME:'default',
+            LIVE_BADGE_THEME:'default'
         };
         Object.keys(defaults).forEach(function(k) {
             var el = form.querySelector('[name="' + k + '"]');
@@ -1850,13 +2064,26 @@ function resetDefaults() {
         });
     });
 
-    // ── Badge theme radio buttons ───────────────────────────────────────────
+    // ── Badge theme radio buttons ──────────────────────────────────────────
+    // There are now two independent badge theme groups: the Widget (radio
+    // name="_sv_badge_theme", hidden input "BADGE_THEME") and the Live tab
+    // (radio name="_sv_live_badge_theme", hidden input "LIVE_BADGE_THEME").
+    // The handler dispatches by radio name and only updates the matching
+    // hidden input and the selected-state of options within the same group.
+    var BADGE_GROUPS = {
+        '_sv_badge_theme':      'BADGE_THEME',
+        '_sv_live_badge_theme': 'LIVE_BADGE_THEME',
+    };
     document.querySelectorAll('.sv-badge-theme-opt input[type="radio"]').forEach(function(radio) {
         radio.addEventListener('change', function() {
-            var hidden = document.querySelector('input[type="hidden"][name="BADGE_THEME"]');
+            var groupName = this.name;
+            var hiddenName = BADGE_GROUPS[groupName];
+            if (!hiddenName) return;
+            var hidden = document.querySelector('input[type="hidden"][name="' + hiddenName + '"]');
             if (hidden) hidden.value = this.value;
-            document.querySelectorAll('.sv-badge-theme-opt').forEach(function(r) {
-                r.classList.toggle('sv-badge-theme-opt--sel', r.querySelector('input[type="radio"]').checked);
+            // Toggle "selected" class only on options inside the same group
+            document.querySelectorAll('.sv-badge-theme-opt input[name="' + groupName + '"]').forEach(function(r) {
+                r.closest('.sv-badge-theme-opt').classList.toggle('sv-badge-theme-opt--sel', r.checked);
             });
             markDirty();
         });
@@ -1994,6 +2221,125 @@ function resetDefaults() {
     var c = document.querySelector('.sv-credits-top');
     if (s) s.style.visibility = '';
     if (c) c.style.visibility = '';
+})();
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DANGER ZONE: Erase-on-uninstall toggle + Wipe statistics DB button
+// Both gated by a confirm modal so the user can't enable/trigger by mistake.
+// ══════════════════════════════════════════════════════════════════════════════
+(function () {
+    function showWarn(opts) {
+        // opts: { title, msg, confirmText, onConfirm, onCancel }
+        var overlay = document.createElement('div');
+        overlay.className = 'sv-warn-modal';
+        overlay.innerHTML =
+            '<div class="sv-warn-modal__box" role="dialog" aria-modal="true">' +
+              '<div class="sv-warn-modal__head">' +
+                '<span class="sv-warn-modal__icon"><i class="fa fa-exclamation-triangle"></i></span>' +
+                '<span class="sv-warn-modal__title"></span>' +
+              '</div>' +
+              '<div class="sv-warn-modal__msg"></div>' +
+              '<div class="sv-warn-modal__actions">' +
+                '<button type="button" class="sv-warn-modal__btn sv-warn-modal__btn--cancel">Cancel</button>' +
+                '<button type="button" class="sv-warn-modal__btn sv-warn-modal__btn--confirm"></button>' +
+              '</div>' +
+            '</div>';
+        overlay.querySelector('.sv-warn-modal__title').textContent = opts.title || 'Are you sure?';
+        overlay.querySelector('.sv-warn-modal__msg').innerHTML = opts.msg || '';
+        overlay.querySelector('.sv-warn-modal__btn--confirm').textContent = opts.confirmText || 'Confirm';
+
+        function close() {
+            if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            document.removeEventListener('keydown', onKey);
+        }
+        function onKey(e) {
+            if (e.key === 'Escape') { close(); if (opts.onCancel) opts.onCancel(); }
+        }
+        overlay.querySelector('.sv-warn-modal__btn--cancel').addEventListener('click', function() {
+            close();
+            if (opts.onCancel) opts.onCancel();
+        });
+        overlay.querySelector('.sv-warn-modal__btn--confirm').addEventListener('click', function() {
+            close();
+            if (opts.onConfirm) opts.onConfirm();
+        });
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) { close(); if (opts.onCancel) opts.onCancel(); }
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+    }
+
+    // ── Erase-on-uninstall toggle: gate the OFF→ON transition with a warning.
+    // We use a click capture on the wrapper to intercept the state change.
+    var eraseToggle = document.querySelector('input[name="ERASE_ON_UNINSTALL"]');
+    if (eraseToggle) {
+        eraseToggle.addEventListener('change', function(e) {
+            if (!eraseToggle.checked) return; // turning OFF is harmless, allow
+            // Turning ON — undo and ask first.
+            eraseToggle.checked = false;
+            showWarn({
+                title: 'Erase data on uninstall?',
+                msg:   'When this is enabled and you later remove the Stream Viewer plugin from Community Applications, the entire statistics database and all stored settings will be <strong>permanently deleted</strong>.<br><br>This action runs automatically at uninstall time and cannot be undone. Are you sure you want to enable this?',
+                confirmText: 'Yes, enable',
+                onConfirm: function() {
+                    eraseToggle.checked = true;
+                    eraseToggle.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+        }, true);
+    }
+
+    // ── Wipe DB button: confirm, then POST to the wipe endpoint.
+    var wipeBtn = document.getElementById('sv-wipe-db-btn');
+    if (wipeBtn) {
+        wipeBtn.addEventListener('click', function() {
+            showWarn({
+                title: 'Wipe statistics database?',
+                msg:   'This will <strong>permanently delete</strong> all collected watch history, server stats and cached data. Settings (server connections, refresh intervals, themes) are not affected.<br><br>The plugin will start collecting fresh data on the next poll cycle. This action cannot be undone.',
+                confirmText: 'Yes, wipe',
+                onConfirm: function() {
+                    wipeBtn.disabled = true;
+                    var orig = wipeBtn.innerHTML;
+                    wipeBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Wiping...';
+                    fetch('/plugins/streamviewer/include/streamviewer_api.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: 'action=wipe_stats'
+                    }).then(function(r) { return r.json(); })
+                      .then(function(data) {
+                        wipeBtn.disabled = false;
+                        wipeBtn.innerHTML = orig;
+                        if (data && data.ok) {
+                            showWarn({
+                                title: 'Database wiped',
+                                msg:   'All historical data has been removed. The plugin will start fresh on the next poll.',
+                                confirmText: 'OK',
+                                onConfirm: function() {}
+                            });
+                        } else {
+                            showWarn({
+                                title: 'Wipe failed',
+                                msg:   (data && data.error) ? String(data.error).replace(/[<>]/g, '') : 'Unknown error',
+                                confirmText: 'OK',
+                                onConfirm: function() {}
+                            });
+                        }
+                    }).catch(function(err) {
+                        wipeBtn.disabled = false;
+                        wipeBtn.innerHTML = orig;
+                        showWarn({
+                            title: 'Wipe failed',
+                            msg:   String(err).replace(/[<>]/g, ''),
+                            confirmText: 'OK',
+                            onConfirm: function() {}
+                        });
+                    });
+                }
+            });
+        });
+    }
 })();
 
 })();

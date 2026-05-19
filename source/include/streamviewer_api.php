@@ -545,6 +545,8 @@ final class StreamViewerEndpoint
     {
         $cfg  = $this->loadCfg();
         $days = (int)($cfg['STATS_RETENTION_DAYS'] ?? self::STATS_RETENTION_DAYS);
+        // 0 means "Forever - never delete": skip the prune entirely.
+        if ($days === 0) return;
         if ($days < 7)   $days = 7;
         if ($days > 365) $days = 365;
 
@@ -863,6 +865,8 @@ final class StreamViewerEndpoint
             'get_graph_data'     => fn() => $this->replyGetGraphData(),
             // Alert endpoints
             'get_alerts'         => fn() => $this->replyGetAlerts(),
+            // Admin maintenance
+            'wipe_stats'         => fn() => $this->replyWipeStats(),
             // Local Plex container detection (for mismatch banner & OAuth enrichment)
             'check_local_mismatch' => fn() => $this->replyCheckLocalMismatch(),
             'apply_local_url'      => fn() => $this->replyApplyLocalUrl(),
@@ -1200,6 +1204,13 @@ final class StreamViewerEndpoint
                   . urlencode($thumbPath) . '&X-Plex-Token=' . urlencode($srv['token'])
                 : '';
 
+            $playerState = strtolower((string)($player['state'] ?? 'playing'));
+            $sessionBandwidth = (int)($item['Session']['bandwidth'] ?? $media['bitrate'] ?? 0);
+            // When the user has paused playback we report 0 bandwidth, even if
+            // the Plex Session.bandwidth field still reflects buffer pre-fetch.
+            // Same intent for the chart, the bitrate badge, and the TOTAL BW.
+            if ($playerState === 'paused') $sessionBandwidth = 0;
+
             $sessions[] = $this->normalizeSession([
                 'server_name'           => $srv['name'],
                 'server_type'           => 'plex',
@@ -1212,11 +1223,14 @@ final class StreamViewerEndpoint
                 'client'                => (string)($player['product']                    ?? ''),
                 'platform'              => (string)($player['platform']                   ?? ''),
                 'ip_address'            => (string)($player['address']                    ?? ''),
-                'state'                 => strtolower((string)($player['state']           ?? 'playing')),
+                'state'                 => $playerState,
                 'play_type'             => $playType,
                 'progress_ms'           => (int)($item['viewOffset']                      ?? 0),
                 'duration_ms'           => (int)($item['duration']                        ?? 0),
-                'bandwidth_kbps'        => (int)($media['bitrate']                        ?? 0),
+                // Session.bandwidth is the live streaming bandwidth and updates each
+                // poll. Fall back to the static media.bitrate when the field is missing
+                // (older Plex versions, transcode sessions without a Session block).
+                'bandwidth_kbps'        => $sessionBandwidth,
                 'quality'               => $this->formatPlexQuality((string)($media['videoResolution'] ?? '')),
                 'stream_resolution'     => ($playType === 'transcode' && isset($item['TranscodeSession']))
                                             ? $this->heightToLabel((int)($item['TranscodeSession']['height'] ?? 0))
@@ -1269,11 +1283,6 @@ final class StreamViewerEndpoint
         if ($h <= 1080) return '1080';
         if ($h <= 1440) return '1440';
         return '4k';
-    }
-
-    private function resLabel(int $h): string
-    {
-        return $this->resLabelWH(0, $h);
     }
 
     private function resLabelWH(int $w, int $h): string
@@ -1458,7 +1467,10 @@ final class StreamViewerEndpoint
                 'play_type'             => $playType,
                 'progress_ms'           => $progressMs,
                 'duration_ms'           => $durationMs,
-                'bandwidth_kbps'        => $bitrate,
+                // Mirror the Plex behavior: when playback is paused report 0
+                // bandwidth (chart, bitrate badge, TOTAL BW should all reflect
+                // that nothing is currently streaming).
+                'bandwidth_kbps'        => ($state === 'paused') ? 0 : $bitrate,
                 'quality'               => $quality,
                 'stream_resolution'     => ($playType === 'transcode' && $transInfo !== null)
                                             ? $this->heightToLabel((int)($transInfo['Height'] ?? 0) ?: (int)$quality)
@@ -2688,6 +2700,61 @@ final class StreamViewerEndpoint
      * GET ?action=get_alerts&period=30d
      * Returns alerts: buffering warnings, inactive users, transcode ratio.
      */
+    /**
+     * Wipe all collected statistics: deletes the SQLite database and its WAL
+     * sidecars. Server connections, intervals, themes and other settings are
+     * left untouched (they live in the cfg file under /boot/config).
+     */
+    private function replyWipeStats(): void
+    {
+        $cfg = $this->loadCfg();
+        $dir = trim((string)($cfg['STATS_DB_PATH'] ?? self::STATS_DEFAULT_PATH));
+
+        // Security: path must be under /mnt/ and free of traversal.
+        if ($dir === '' || strncmp($dir, '/mnt/', 5) !== 0 || strpos($dir, '..') !== false) {
+            $this->json(['ok' => false, 'error' => 'Invalid database path'], 400);
+            return;
+        }
+
+        // Close the active SQLite handle before unlinking so the OS releases
+        // the file lock immediately.
+        if ($this->db !== null) {
+            @$this->db->close();
+            $this->db = null;
+        }
+
+        $base = rtrim($dir, '/') . '/' . self::STATS_DB_NAME;
+        $files = [$base, $base . '-shm', $base . '-wal', $base . '-journal'];
+        $removed = 0;
+        $errors  = [];
+        foreach ($files as $f) {
+            if (is_file($f)) {
+                if (@unlink($f)) {
+                    $removed++;
+                } else {
+                    $errors[] = basename($f);
+                }
+            }
+        }
+
+        if (!empty($errors)) {
+            $this->json(['ok' => false, 'error' => 'Could not remove: ' . implode(', ', $errors)], 500);
+            return;
+        }
+
+        // Also clear the in-memory caches so the response from a still-open
+        // tab doesn't show stale data.
+        $cache = self::CACHE_DIR;
+        if (is_dir($cache)) {
+            foreach (@scandir($cache) ?: [] as $f) {
+                if ($f === '.' || $f === '..') continue;
+                @unlink($cache . '/' . $f);
+            }
+        }
+
+        $this->json(['ok' => true, 'removed' => $removed]);
+    }
+
     private function replyGetAlerts(): void
     {
         $db = $this->openDb();
@@ -3964,18 +4031,6 @@ final class StreamViewerEndpoint
             }
         }
         return $found;
-    }
-
-    /**
-     * Backward-compatible single-container helper. Returns the first Plex
-     * container found, or null if none exist. Kept so internal callers that
-     * only need a single match (e.g. legacy code paths) do not need to change,
-     * but new logic should prefer detectLocalPlexContainers() for completeness.
-     */
-    private function detectLocalPlexContainer(): ?array
-    {
-        $all = $this->detectLocalPlexContainers();
-        return $all[0] ?? null;
     }
 
     /**

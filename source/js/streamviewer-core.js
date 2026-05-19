@@ -1,21 +1,35 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Stream Viewer  —  streamviewer.js
+   Stream Viewer  —  streamviewer-core.js
    Copyright (C) 2026 Lazaros Chalkidis
    License: GPLv3
-   Drives the dashboard widget.
 
-   Config is injected via window.streamviewerConfig.
+   Shared core used by both the dashboard widget (streamviewer-widget.js) and,
+   in a later batch, the Statistics page Live tab (streamviewer-live.js).
+
+   Exposed as window.SVCore with a single factory function:
+       var inst = window.SVCore.create({
+           config:              {...},     // resolved tile config from PHP
+           containerSelector:   '.sv-widget-wrap',
+           fallbackContainerId: 'db-streamviewer',
+       });
+       inst.start();    // begins polling and rendering
+       inst.stop();     // tears down timers
+       inst.refresh();  // forces a one-shot fetch
+       inst.reinit(c);  // restarts with a fresh config
+
+   Each create() returns its own closure state, so multiple instances can
+   coexist (e.g. widget on Dashboard vs. Live tab on Statistics page) without
+   stepping on each other's polling, sessions or DOM references.
 
    Depends on: jQuery (already present in Unraid webgui)
    ═══════════════════════════════════════════════════════════════════════════ */
 /* global $ */
 
-(function () {
+window.SVCore = (function () {
 'use strict';
 
-// ─── Guard against double-init ────────────────────────────────────────────────
-if (window.__svLoaded) return;
-window.__svLoaded = true;
+function create(_opts) {
+_opts = _opts || {};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 1. MODULE STATE
@@ -34,6 +48,16 @@ var _reloadScheduled = false; // true when 403 auto-reload is pending
 var _lastActiveStreams = 0;   // track active streams for docker stats mini-poll
 var _dockerPollTimer  = null; // independent docker stats polling timer
 var _emptyStateEl     = null; // preserved reference to empty state element
+
+// Bandwidth history per session — used by the Live tab to draw a small
+// chart at the bottom of each stream card. Keyed by session_id (or a stable
+// fingerprint when no session_id is available). Each entry is an array of
+// recent {t, kbps} samples capped at HISTORY_MAX. Updated on every fetch.
+// The chart Y-axis is derived from the peak inside the visible window, so the
+// scale follows current activity rather than locking to a sticky session-wide
+// peak.
+var _bandwidthHistory = {};
+var HISTORY_MAX = 30;
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -174,11 +198,41 @@ function getDominantColor(img) {
 
 function applyDominantColors(container) {
     if (!container) return;
+
+    // Widget layout — poster sits inside the collapsible row3-bd, alongside
+    // the synopsis description; tint both pieces.
     container.querySelectorAll('.sv-stream__thumb-img').forEach(function(img) {
         var row3bd = img.closest('.sv-stream__row3-bd');
-        if (!row3bd) return;
+        if (row3bd) {
+            var apply = function() {
+                var src = img.src || '';
+                var rgb = _colorCache[src];
+                if (!rgb) {
+                    rgb = getDominantColor(img);
+                    if (rgb) _colorCache[src] = rgb;
+                }
+                if (!rgb) return;
+                var desc = row3bd.querySelector('.sv-stream__desc');
+                var thumbCol = row3bd.querySelector('.sv-stream__thumb-col');
+                if (desc) {
+                    desc.style.background = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',.12)';
+                    desc.style.borderRightColor = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',.20)';
+                }
+                if (thumbCol) {
+                    thumbCol.style.borderRightColor = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',.20)';
+                }
+            };
+            if (img.complete && img.naturalWidth > 0) { apply(); }
+            else { img.addEventListener('load', apply, { once: true }); }
+            return; // already handled this image
+        }
 
-        var apply = function() {
+        // Live tab layout — poster lives in its own left column, synopsis is a
+        // sibling block in the main column. Find the row root, then the
+        // synopsis description, and tint its background.
+        var row = img.closest('.sv-stream--large');
+        if (!row) return;
+        var applyLarge = function() {
             var src = img.src || '';
             var rgb = _colorCache[src];
             if (!rgb) {
@@ -186,19 +240,13 @@ function applyDominantColors(container) {
                 if (rgb) _colorCache[src] = rgb;
             }
             if (!rgb) return;
-            var desc = row3bd.querySelector('.sv-stream__desc');
-            var thumbCol = row3bd.querySelector('.sv-stream__thumb-col');
+            var desc = row.querySelector('.sv-stream__synopsis .sv-stream__desc');
             if (desc) {
                 desc.style.background = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',.12)';
-                desc.style.borderRightColor = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',.20)';
-            }
-            if (thumbCol) {
-                thumbCol.style.borderRightColor = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',.20)';
             }
         };
-
-        if (img.complete && img.naturalWidth > 0) { apply(); }
-        else { img.addEventListener('load', apply, { once: true }); }
+        if (img.complete && img.naturalWidth > 0) { applyLarge(); }
+        else { img.addEventListener('load', applyLarge, { once: true }); }
     });
 }
 
@@ -226,6 +274,100 @@ function sortSessions(sessions) {
 // 5. RENDER — single stream row
 // ══════════════════════════════════════════════════════════════════════════════
 
+// Stable lookup key for a session's bandwidth history. Falls back to a
+// composite when session_id is missing (e.g. some Jellyfin variants).
+function bandwidthKey(s) {
+    if (!s) return '';
+    return s.session_id
+        || (s.server_name + '|' + (s.session_key || '') + '|' + (s.user || '') + '|' + (s.title || ''));
+}
+
+// Build a smoothed bandwidth chart from the rolling history of a session.
+// Layout (Option D):
+//   [0..30]    : left gutter, holds Y-axis labels (0, peak/2, peak in Mbps)
+//   [30..300]  : plot area
+//   chart height: 60px total
+// The Y-axis is anchored at 0 and topped by the slow-moving peak — that keeps
+// a steady direct-play stream as a flat low line, while preventing tiny
+// transcode fluctuations from looking like an earthquake.
+function buildSparkline(history) {
+    if (!Array.isArray(history) || history.length < 2) return '';
+
+    // Layout splits between two pieces:
+    //   - HTML labels (Y-axis ticks + unit) live on the left and keep their
+    //     pixel size regardless of how wide the chart stretches
+    //   - SVG plot area (grid lines, area, line) scales horizontally
+    var W = 300, H = 60;
+    var padT = 2, padB = 2;
+    var plotH = H - padT - padB;
+
+    // Y-axis ceiling = peak inside the visible rolling buffer (the same
+    // samples being drawn). When the stream pauses or drops to a lower
+    // bitrate, the ceiling shrinks with it after old high samples roll out
+    // of the window, so the chart always reflects current real values.
+    var windowPeak = 0;
+    for (var pi = 0; pi < history.length; pi++) {
+        if (history[pi].kbps > windowPeak) windowPeak = history[pi].kbps;
+    }
+    var ceiling = Math.max(windowPeak, 100) * 1.05;
+    var mid = ceiling / 2;
+
+    // Map data → pixel coordinates inside the plot area (SVG viewBox)
+    var points = [];
+    var stepX = W / (history.length - 1);
+    for (var i = 0; i < history.length; i++) {
+        var x = i * stepX;
+        var y = padT + plotH - (Math.max(0, history[i].kbps) / ceiling) * plotH;
+        points.push({ x: x, y: y });
+    }
+
+    // Catmull-Rom-ish cubic smoothing between consecutive points.
+    var tension = 0.20;
+    var linePath = 'M' + points[0].x.toFixed(1) + ',' + points[0].y.toFixed(1);
+    for (var j = 0; j < points.length - 1; j++) {
+        var p0 = points[j - 1] || points[j];
+        var p1 = points[j];
+        var p2 = points[j + 1];
+        var p3 = points[j + 2] || points[j + 1];
+        var c1x = p1.x + (p2.x - p0.x) * tension;
+        var c1y = p1.y + (p2.y - p0.y) * tension;
+        var c2x = p2.x - (p3.x - p1.x) * tension;
+        var c2y = p2.y - (p3.y - p1.y) * tension;
+        linePath += ' C' + c1x.toFixed(1) + ',' + c1y.toFixed(1)
+                +  ' ' + c2x.toFixed(1) + ',' + c2y.toFixed(1)
+                +  ' ' + p2.x.toFixed(1) + ',' + p2.y.toFixed(1);
+    }
+    // Area path = same curve + close at baseline
+    var baseline = padT + plotH;
+    var areaPath = linePath
+                 + ' L' + points[points.length - 1].x.toFixed(1) + ',' + baseline.toFixed(1)
+                 + ' L' + points[0].x.toFixed(1) + ',' + baseline.toFixed(1) + ' Z';
+
+    // Axis labels in Mbps (HTML — keep fixed pixel size)
+    function fmtAxis(kbps) {
+        if (kbps >= 1000) return (kbps / 1000).toFixed(1);
+        return Math.round(kbps).toString();
+    }
+
+    return '<div class="sv-chart">'
+        + '<div class="sv-chart__yaxis">'
+        +   '<span>' + fmtAxis(ceiling / 1.05) + '</span>'
+        +   '<span>' + fmtAxis(mid)            + '</span>'
+        +   '<span>0</span>'
+        + '</div>'
+        + '<svg class="sv-chart__plot" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">'
+        // Grid lines across plot area
+        +   '<g class="sv-spark-grid" stroke-width="1" vector-effect="non-scaling-stroke">'
+        +     '<line x1="0" y1="' + padT.toFixed(1) + '" x2="' + W + '" y2="' + padT.toFixed(1) + '"/>'
+        +     '<line x1="0" y1="' + (padT + plotH / 2).toFixed(1) + '" x2="' + W + '" y2="' + (padT + plotH / 2).toFixed(1) + '"/>'
+        +   '</g>'
+        +   '<line class="sv-spark-baseline" x1="0" y1="' + baseline.toFixed(1) + '" x2="' + W + '" y2="' + baseline.toFixed(1) + '" stroke-width="1" vector-effect="non-scaling-stroke"/>'
+        +   '<path d="' + areaPath + '" fill="rgba(74,144,226,0.30)"/>'
+        +   '<path d="' + linePath + '" fill="none" stroke="#4a90e2" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'
+        + '</svg>'
+        + '</div>';
+}
+
 // ── Stream Rendering ──────────────────────────────────────────────────────
 function renderRow(s) {
     var cfg      = _cfg;
@@ -237,6 +379,7 @@ function renderRow(s) {
     var rowClass = 'sv-stream';
     if (isPaused)           rowClass += ' sv-stream--paused';
     else if (ptm.bar === 'trans') rowClass += ' sv-stream--transcode';
+    if (cfg.largeView)      rowClass += ' sv-stream--large';
 
     // Left indicator bar
     var barHtml = '<div class="sv-stream__bar sv-stream__bar--' + esc(barMod) + '" aria-hidden="true"></div>';
@@ -428,7 +571,35 @@ function renderRow(s) {
         + ' data-bandwidth="'   + (s.bandwidth_kbps > 0 ? '1' : '0') + '"'
         + ' data-res-label="'   + esc(s.resolution_label || '') + '"'
         + '>'
-        + barHtml + badgesRowHtml + titleHtml + subHtml + detailsHtml + badgesHtml
+        + (cfg.largeView
+            ? (barHtml
+                + '<div class="sv-stream__poster-col">' + thumbHtml + '</div>'
+                + '<div class="sv-stream__main-col">'
+                +   badgesRowHtml + titleHtml + subHtml + detailsHtml
+                +   (cfg.showSummary && s.summary
+                        ? '<div class="sv-stream__synopsis"><p class="sv-stream__desc">' + esc(s.summary) + '</p></div>'
+                        : '')
+                +   (cfg.showChart
+                        ? ('<div class="sv-stream__card-footer">'
+                +           '<span class="sv-stream__sparkline-label">Bandwidth</span>'
+                +           buildSparkline(_bandwidthHistory[bandwidthKey(s)] || [])
+                +           '<span class="sv-stream__bandwidth-now">'
+                +             (s.bandwidth_kbps > 0 ? esc(fmtBitrate(s.bandwidth_kbps)) : '0 kbps')
+                +           '</span>'
+                +         '</div>')
+                        : '')
+                + '</div>')
+            : (barHtml + badgesRowHtml + titleHtml + subHtml + detailsHtml
+                + (cfg.showChart
+                    ? ('<div class="sv-stream__chart-row">'
+                +       '<span class="sv-stream__chart-row-label">BW</span>'
+                +       buildSparkline(_bandwidthHistory[bandwidthKey(s)] || [])
+                +       '<span class="sv-stream__bandwidth-now">'
+                +         (s.bandwidth_kbps > 0 ? esc(fmtBitrate(s.bandwidth_kbps)) : '0 kbps')
+                +       '</span>'
+                +     '</div>')
+                    : '')
+                + badgesHtml))
         + '</div>';
 }
 
@@ -476,7 +647,40 @@ function patchRow(el, s) {
     var wantClass = 'sv-stream';
     if (isPaused)              wantClass += ' sv-stream--paused';
     else if (ptm.bar === 'trans') wantClass += ' sv-stream--transcode';
+    if (_cfg.largeView)        wantClass += ' sv-stream--large';
     if (el.className !== wantClass) el.className = wantClass;
+
+    // Refresh the bandwidth chart on each tick (widget + Live tab, when enabled)
+    if (_cfg.showChart) {
+        var chartEl = el.querySelector('.sv-chart');
+        var newChart = buildSparkline(_bandwidthHistory[bandwidthKey(s)] || []);
+        if (chartEl) {
+            if (newChart) {
+                var tmp = document.createElement('div');
+                tmp.innerHTML = newChart;
+                var newNode = tmp.firstChild;
+                if (newNode) chartEl.parentNode.replaceChild(newNode, chartEl);
+            } else {
+                chartEl.parentNode.removeChild(chartEl);
+            }
+        } else if (newChart) {
+            // Chart absent from this row (e.g. just toggled on). Find the
+            // anchor block (card-footer in largeView, chart-row in widget)
+            // and inject the chart after its leading label.
+            var anchor = el.querySelector('.sv-stream__card-footer, .sv-stream__chart-row');
+            var lbl    = anchor ? anchor.querySelector('.sv-stream__sparkline-label, .sv-stream__chart-row-label') : null;
+            if (anchor && lbl) {
+                var holder = document.createElement('div');
+                holder.innerHTML = newChart;
+                if (holder.firstChild) lbl.parentNode.insertBefore(holder.firstChild, lbl.nextSibling);
+            }
+        }
+        var bwNow = el.querySelector('.sv-stream__bandwidth-now');
+        if (bwNow) {
+            var bwTxt = s.bandwidth_kbps > 0 ? fmtBitrate(s.bandwidth_kbps) : '0 kbps';
+            if (bwNow.textContent !== bwTxt) bwNow.textContent = bwTxt;
+        }
+    }
 
     // Left indicator bar
     var bar = el.querySelector('.sv-stream__bar');
@@ -910,9 +1114,33 @@ function updateDockerStats(stats, activeStreams) {
         + '<span class="sv-docker-stat__label">RAM</span>'
         + '<span class="sv-docker-stat__bar"><span class="sv-docker-stat__fill sv-docker-stat__fill--ram" style="width:' + memPct.toFixed(1) + '%;"></span></span>'
         + '<span class="sv-docker-stat__val">' + memStr + '</span>'
-        + '</span>';
+        + '</span>'
+        + buildBandwidthStat();
 
     applyDockerHtml();
+}
+
+// Aggregate the bitrate of every active session and render it as a third
+// docker-style stat (alongside CPU/RAM) in the footer of the Live tab. The
+// widget renders this too, but harmlessly: when there is nothing playing the
+// helper returns an empty string.
+function buildBandwidthStat() {
+    var total = 0;
+    for (var i = 0; i < _sessions.length; i++) {
+        if (_sessions[i].bandwidth_kbps > 0) total += _sessions[i].bandwidth_kbps;
+    }
+    if (total <= 0) return '';
+    // Ceiling comes from the user-configured network capacity (WIDGET_BW_CAPACITY,
+    // 50/100/200/500/1000 Mbps). The bar fills proportionally to that, which
+    // gives a stable visual that does not "lock" at 100% on a steady stream.
+    // (The Active Stream/s tab no longer renders a docker-stats footer.)
+    var ceiling = _cfg.bwCapacityKbps > 0 ? _cfg.bwCapacityKbps : 1000000; // 1 Gbps fallback
+    var pct = Math.min(100, (total / ceiling) * 100);
+    return '<span class="sv-docker-stat sv-docker-stat--bw">'
+        + '<span class="sv-docker-stat__label">TOTAL BW</span>'
+        + '<span class="sv-docker-stat__bar"><span class="sv-docker-stat__fill sv-docker-stat__fill--bw" style="width:' + pct.toFixed(1) + '%;"></span></span>'
+        + '<span class="sv-docker-stat__val">' + fmtBitrate(total) + '</span>'
+        + '</span>';
 }
 
 function applyDockerHtml() {
@@ -947,10 +1175,98 @@ function fetchDockerStats() {
         dataType: 'json',
         success: function(data) {
             updateDockerStats(data.docker_stats || [], _lastActiveStreams);
+            updateLiveOverview(data.docker_stats || []);
         },
         error: function() {},
         complete: function() { _dockerFetching = false; }
     });
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Live overview (Statistics page Live tab only)
+//
+// The Live tab markup includes a 5-card overview row (Total Stream/s Live,
+// Total CPU, Total RAM, Total Bandwidth, Unique Users) and a play-type
+// breakdown row (Direct play / Direct stream / Transcode / Remote). This
+// helper rewrites those nodes on every fetch + docker mini-poll so they tick
+// in lockstep with the rest of the page. It silently noops when the DOM
+// elements are absent (i.e. in the Dashboard widget).
+// ──────────────────────────────────────────────────────────────────────────
+function updateLiveOverview(dockerStats) {
+    var totalEl = document.getElementById('svll-total-streams');
+    if (!totalEl) return; // overview row not present (widget tile, not Live tab)
+
+    var sessions = _sessions || [];
+    var totalStreams = sessions.length;
+
+    // Aggregate docker CPU/RAM. Note: docker_stats.mem_used is reported in
+    // bytes (same field used by updateDockerStats for the footer indicator).
+    var cpuPct = 0, memBytes = 0;
+    if (Array.isArray(dockerStats)) {
+        for (var d = 0; d < dockerStats.length; d++) {
+            cpuPct   += +(dockerStats[d].cpu_pct  || 0);
+            memBytes += +(dockerStats[d].mem_used || 0);
+        }
+    }
+
+    // Aggregate live bandwidth (sum of real per-stream values) and average
+    var totalKbps = 0;
+    var streamsWithFlow = 0;
+    var bufferingCount = 0;
+    var unique = {};
+    var typeCounts = { direct: 0, stream: 0, transcode: 0, remote: 0 };
+    for (var i = 0; i < sessions.length; i++) {
+        var s = sessions[i];
+        if (s.bandwidth_kbps > 0) {
+            totalKbps += s.bandwidth_kbps;
+            streamsWithFlow++;
+        }
+        if ((s.state || '').toLowerCase() === 'buffering') bufferingCount++;
+        if (s.user) unique[s.user] = true;
+        var pt = (s.play_type || '').toLowerCase();
+        if      (pt === 'direct_play'   || pt === 'direct play')   typeCounts.direct++;
+        else if (pt === 'direct_stream' || pt === 'direct stream') typeCounts.stream++;
+        else if (pt === 'transcode')                               typeCounts.transcode++;
+        if (s.is_remote || s.is_relay) typeCounts.remote++;
+    }
+    var uniqueCount = Object.keys(unique).length;
+    // Average is computed over streams that are actually transmitting (>0),
+    // so a paused stream doesn't drag the average towards zero.
+    var avgKbps = streamsWithFlow > 0 ? Math.round(totalKbps / streamsWithFlow) : 0;
+
+    // 7 stat cards
+    totalEl.textContent = totalStreams.toString();
+    setText('svll-unique-users', uniqueCount.toString());
+    setText('svll-avg-bitrate', avgKbps > 0 ? fmtBitrate(avgKbps) : '0 kbps');
+    setText('svll-buffering', bufferingCount.toString());
+    setText('svll-total-cpu', cpuPct.toFixed(1) + '%');
+    setText('svll-total-ram', memBytes >= 1073741824
+        ? (memBytes / 1073741824).toFixed(1) + ' GB'
+        : Math.round(memBytes / 1048576) + ' MB');
+    setText('svll-total-bw', totalKbps > 0 ? fmtBitrate(totalKbps) : '0 kbps');
+
+    // Play-type breakdown bars (percent of active streams)
+    var base = Math.max(1, totalStreams);
+    var pctDirect    = (typeCounts.direct    / base) * 100;
+    var pctStream    = (typeCounts.stream    / base) * 100;
+    var pctTranscode = (typeCounts.transcode / base) * 100;
+    var pctRemote    = (typeCounts.remote    / base) * 100;
+    setPct('svll-bar-direct',    'svll-pct-direct',    pctDirect);
+    setPct('svll-bar-stream',    'svll-pct-stream',    pctStream);
+    setPct('svll-bar-transcode', 'svll-pct-transcode', pctTranscode);
+    setPct('svll-bar-remote',    'svll-pct-remote',    pctRemote);
+}
+
+function setText(id, txt) {
+    var el = document.getElementById(id);
+    if (el && el.textContent !== txt) el.textContent = txt;
+}
+
+function setPct(barId, pctId, pct) {
+    var bar = document.getElementById(barId);
+    var lbl = document.getElementById(pctId);
+    if (bar) bar.style.width = pct.toFixed(0) + '%';
+    if (lbl) lbl.textContent = Math.round(pct) + '%';
 }
 
 function startDockerPoll() {
@@ -1006,6 +1322,32 @@ function fetchSessions(onDone) {
             _sessions    = Array.isArray(data.sessions) ? data.sessions : [];
             _serverStats = Array.isArray(data.servers)  ? data.servers  : [];
 
+            // Track bandwidth history per active session for the Live tab
+            // chart. We keep a small rolling buffer (HISTORY_MAX points).
+            // Real bandwidth values are pushed verbatim — when a stream pauses
+            // and the server reports 0, the chart drops to 0. The Y-axis
+            // ceiling is computed on-the-fly inside buildSparkline() from the
+            // peak of these visible samples.
+            var now = Date.now();
+            var activeKeys = {};
+            for (var bi = 0; bi < _sessions.length; bi++) {
+                var s = _sessions[bi];
+                var key = bandwidthKey(s);
+                if (!key) continue;
+                activeKeys[key] = true;
+                if (!_bandwidthHistory[key]) _bandwidthHistory[key] = [];
+                var hist = _bandwidthHistory[key];
+                var kbps = s.bandwidth_kbps > 0 ? s.bandwidth_kbps : 0;
+                hist.push({ t: now, kbps: kbps });
+                if (hist.length > HISTORY_MAX) hist.splice(0, hist.length - HISTORY_MAX);
+            }
+            // Drop history for sessions that have ended
+            for (var hk in _bandwidthHistory) {
+                if (Object.prototype.hasOwnProperty.call(_bandwidthHistory, hk) && !activeKeys[hk]) {
+                    delete _bandwidthHistory[hk];
+                }
+            }
+
             renderStreams(_sessions, data.last_activity || null);
             updateBadge(data.total_sessions || 0);
             _lastActiveStreams = data.total_sessions || 0;
@@ -1013,6 +1355,7 @@ function fetchSessions(onDone) {
             flashPulse();
             updateErrorIndicator(_serverStats);
             updateDockerStats(data.docker_stats || [], data.total_sessions || 0);
+            updateLiveOverview(data.docker_stats || []);
             if (_lastActiveStreams > 0) startDockerPoll(); else stopDockerPoll();
 
             _initialized = true;
@@ -1176,7 +1519,7 @@ function renderNoServers() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function resolveConfig() {
-    var raw = window.streamviewerConfig || {};
+    var raw = _opts.config || {};
 
     // refreshInterval comes from PHP already in ms (seconds * 1000)
     var ri = parseInt(raw.refreshInterval, 10) || 30000;
@@ -1194,6 +1537,8 @@ function resolveConfig() {
         showTranscode:       raw.showTranscode !== false,
         showDetails:         raw.showDetails  !== false,
         showSummary:         raw.showSummary  !== false,
+        showChart:           raw.showChart    !== false,
+        bwCapacityKbps:      (typeof raw.bwCapacityKbps === 'number' && raw.bwCapacityKbps > 0) ? raw.bwCapacityKbps : 0,
         summaryOpen:         raw.summaryOpen  === true,
         allowKill:           raw.allowKill    === true,
         showDocker:          raw.showDocker   !== false,
@@ -1201,6 +1546,7 @@ function resolveConfig() {
         noServersConfigured: raw.noServersConfigured === true,
         isResponsive:        raw.isResponsive !== false,
         badgeTheme:          String(raw.badgeTheme || 'default'),
+        largeView:           raw.largeView === true,
     };
 }
 
@@ -1216,7 +1562,9 @@ function detectTheme() {
     if (!m) return;
     var luminance = ((+m[1]) * 299 + (+m[2]) * 587 + (+m[3]) * 114) / 1000;
     var isLight = luminance > 128;
-    var wrap = document.querySelector('.sv-widget-wrap') || document.getElementById('db-streamviewer');
+    var sel = _opts.containerSelector || '.sv-widget-wrap';
+    var fallbackId = _opts.fallbackContainerId || 'db-streamviewer';
+    var wrap = document.querySelector(sel) || document.getElementById(fallbackId);
     if (wrap) wrap.classList.toggle('sv-light', isLight);
 }
 
@@ -1246,36 +1594,40 @@ function init() {
     fetchSessions(function() { startPolling(); });
 }
 
-function boot() {
-    if (typeof $ === 'undefined') { setTimeout(boot, 60); return; }
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
-}
-
-boot();
-
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 16. PUBLIC API
+// 15. PUBLIC INSTANCE API
 // ══════════════════════════════════════════════════════════════════════════════
 
-window.StreamViewer = {
+return {
+    start: function start() {
+        if (typeof $ === 'undefined') { setTimeout(start, 60); return; }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    },
+    stop: function() {
+        stopPolling();
+    },
+    refresh: function() {
+        _backoffUntil = 0;
+        fetchSessions();
+    },
     reinit: function(newConfig) {
         stopPolling();
         _initialized = false;
         _sessions    = [];
         _serverStats = [];
         _backoffUntil = 0;
-        if (newConfig) window.streamviewerConfig = newConfig;
+        if (newConfig) _opts.config = newConfig;
         init();
     },
-    refresh: function() { _backoffUntil = 0; fetchSessions(); },
     getSessions: function() { return _sessions.slice(); },
 };
 
-window.streamviewerInit = window.StreamViewer.reinit;
+} // ── end of create() ──
 
+return { create: create };
 })();

@@ -50,6 +50,8 @@ $tile_config = [
     'showSummary'       => ($cfg['WIDGET_SHOW_SUMMARY']  ?? '1') === '1',
     'summaryOpen'       => ($cfg['WIDGET_SUMMARY_OPEN']  ?? '0') === '1',
     'showDocker'        => ($cfg['WIDGET_SHOW_DOCKER']   ?? '1') === '1',
+    'showChart'         => ($cfg['WIDGET_SHOW_CHART']    ?? '1') === '1',
+    'bwCapacityKbps'    => max(1, (int)($cfg['WIDGET_BW_CAPACITY'] ?? 1000)) * 1000,
     'servers'           => $enabled_servers,
     'isResponsive'      => $isResponsiveWebgui,
     'noServersConfigured' => empty($enabled_servers),
@@ -75,7 +77,7 @@ $render_controls = static function(bool $responsive): string {
 <a id="sv-manual-refresh" href="#" title="Refresh streams" aria-label="Refresh streams">
     <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
 </a>
-<a id="sv-stats-icon" href="/Tools/StreamViewerTool" title="Stream Viewer Statistics" aria-label="Stream Viewer Statistics">
+<a id="sv-stats-icon" href="/Tools/StreamViewerTool" title="Stream Viewer Statistics and Active Stream/s" aria-label="Stream Viewer Statistics and Active Stream/s">
     <i class="fa fa-fw fa-bar-chart control" aria-hidden="true"></i>
 </a>
 <a id="sv-settings-icon" href="/Settings/StreamViewerSettings" title="Stream Viewer Settings" aria-label="Stream Viewer Settings">
@@ -207,7 +209,8 @@ $render_fallback_tbody = static function(
     </tr>
 </tbody>
 {$config_html}
-<script defer src="/plugins/streamviewer/js/streamviewer.js"></script>
+<script defer src="/plugins/streamviewer/js/streamviewer-core.js"></script>
+<script defer src="/plugins/streamviewer/js/streamviewer-widget.js"></script>
 HTML;
 };
 
@@ -234,7 +237,10 @@ $tile = [
     'small'   => 1,
     'medium'  => 1,
     'large'   => 2,
-    'script'  => '/plugins/streamviewer/js/streamviewer.js',
+    'script'  => [
+        '/plugins/streamviewer/js/streamviewer-core.js',
+        '/plugins/streamviewer/js/streamviewer-widget.js',
+    ],
     'style'   => '/plugins/streamviewer/css/widget.css',
 ];
 

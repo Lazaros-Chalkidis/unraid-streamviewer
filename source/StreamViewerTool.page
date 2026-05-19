@@ -1,9 +1,9 @@
 Menu="SystemInformation"
-Name="Stream Viewer Statistics"
+Name="Stream Viewer Statistics and Active Stream/s"
 Icon="img/streamviewer.png"
 Type="xmenu"
 Tabs="false"
-Title="Stream Viewer Statistics"
+Title="Stream Viewer Statistics and Active Stream/s"
 ---
 <?php
 require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
@@ -27,8 +27,47 @@ $tile_config = [
     'libSectionsOpen' => (($cfg['LIB_SECTIONS_OPEN'] ?? '0') === '1'),
 ];
 $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
+
+// ── Live tab config ────────────────────────────────────────────────────────
+// Shape mirrors window.streamviewerConfig used by the dashboard widget so the
+// shared SVCore factory can consume it unchanged. Reads the LIVE_* keys saved
+// from the Live Settings section. Numbers are stored in seconds in the cfg;
+// SVCore expects refreshInterval in milliseconds.
+$live_servers = [];
+for ($i = 1; $i <= 8; $i++) {
+    $enabled = ($cfg["SERVER{$i}_ENABLED"] ?? '0') === '1';
+    if (!$enabled) continue;
+    $live_servers[] = [
+        'index' => $i,
+        'name'  => (string)($cfg["SERVER{$i}_NAME"] ?? "Server {$i}"),
+        'type'  => (string)($cfg["SERVER{$i}_TYPE"] ?? ''),
+    ];
+}
+$live_interval_sec = max(5, (int)($cfg['LIVE_REFRESH_INTERVAL'] ?? 5));
+$live_config = [
+    'svToken'             => $tile_config['svToken'],
+    'refreshEnabled'      => (($cfg['LIVE_REFRESH_ENABLED']  ?? '1') === '1'),
+    'refreshInterval'     => $live_interval_sec * 1000,
+    'maxStreams'          => max(0, (int)($cfg['LIVE_MAX_STREAMS'] ?? 0)),
+    'showDevice'          => (($cfg['LIVE_SHOW_DEVICE']    ?? '1') === '1'),
+    'showIp'              => (($cfg['LIVE_SHOW_IP']        ?? '1') === '1'),
+    'showProgress'        => (($cfg['LIVE_SHOW_PROGRESS']  ?? '1') === '1'),
+    'showQuality'         => (($cfg['LIVE_SHOW_QUALITY']   ?? '1') === '1'),
+    'showTranscode'       => (($cfg['LIVE_SHOW_TRANSCODE'] ?? '1') === '1'),
+    'showDetails'         => (($cfg['LIVE_SHOW_DETAILS']   ?? '1') === '1'),
+    'showSummary'         => (($cfg['LIVE_SHOW_SUMMARY']   ?? '1') === '1'),
+    'showChart'           => (($cfg['LIVE_SHOW_CHART']     ?? '1') === '1'),
+    'allowKill'           => (($cfg['LIVE_ALLOW_KILL']     ?? '0') === '1'),
+    'servers'             => $live_servers,
+    'noServersConfigured' => empty($live_servers),
+    'isResponsive'        => true,
+    'badgeTheme'          => (string)($cfg['LIVE_BADGE_THEME'] ?? 'default'),
+    'largeView'           => true,  // hint for shared core to render in expanded layout
+];
+$live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
 ?>
 
+<link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/widget.css">
 <link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/tool.css">
 <script>window.svToolConfig = <?= $tile_config_json ?>;</script>
 
@@ -54,13 +93,133 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
     <div class="svt-tab" id="svtTabAlerts" role="button" tabindex="0">
       <span class="svt-tabicon"><i class="fa fa-lightbulb-o" aria-hidden="true"></i></span> Insights
     </div>
+    <div class="svt-tab svt-tab--right" id="svtTabLive" role="button" tabindex="0">
+      <span class="svt-tabicon"><i class="fa fa-play-circle" aria-hidden="true"></i></span> Active Stream/s
+    </div>
   </div>
 
   <!-- Panel -->
   <div class="svt-panel">
 
+    <!-- ═══ LIVE TAB ═══ (always rendered, independent of Statistics being enabled) -->
+    <div class="svt-tab-panel" id="svtPanelLive" style="display:none;">
+      <!-- Stats-style page header -->
+      <div class="svt-header">
+        <div class="svt-header__left">
+          <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
+          <div>
+            <h2 class="svt-header__title">Active Stream/s</h2>
+            <span class="svt-header__sub sv-refresh-indicator">
+              <span class="sv-pulse" id="sv-pulse" aria-hidden="true"></span>
+              <svg class="sv-ts-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span class="sv-ts-value" id="sv-timestamp"></span>
+            </span>
+          </div>
+        </div>
+        <div class="svt-header__right">
+          <div class="svt-header__icons">
+            <a href="#" id="sv-manual-refresh" title="Refresh streams" aria-label="Refresh streams">
+              <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
+            </a>
+            <a href="/Settings/StreamViewerSettings" id="sv-settings-icon" title="Stream Viewer Settings" aria-label="Stream Viewer Settings">
+              <i class="fa fa-fw fa-cog control" aria-hidden="true"></i>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live overview: 6 compact stat cards updated every poll -->
+      <div class="svll-overview">
+        <div class="svll-stat svll-stat--orange">
+          <div class="svll-stat__label">Total Active Stream/s</div>
+          <div class="svll-stat__value" id="svll-total-streams">0</div>
+        </div>
+        <div class="svll-stat svll-stat--blue">
+          <div class="svll-stat__label">Unique Users</div>
+          <div class="svll-stat__value" id="svll-unique-users">0</div>
+        </div>
+        <div class="svll-stat svll-stat--teal">
+          <div class="svll-stat__label">Average stream bitrate</div>
+          <div class="svll-stat__value" id="svll-avg-bitrate">0 kbps</div>
+        </div>
+        <div class="svll-stat svll-stat--amber">
+          <div class="svll-stat__label">Buffering</div>
+          <div class="svll-stat__value" id="svll-buffering">0</div>
+        </div>
+        <div class="svll-stat svll-stat--green">
+          <div class="svll-stat__label">Total CPU</div>
+          <div class="svll-stat__value" id="svll-total-cpu">0%</div>
+        </div>
+        <div class="svll-stat svll-stat--purple">
+          <div class="svll-stat__label">Total RAM</div>
+          <div class="svll-stat__value" id="svll-total-ram">0 MB</div>
+        </div>
+        <div class="svll-stat svll-stat--rose">
+          <div class="svll-stat__label">Total Bandwidth</div>
+          <div class="svll-stat__value" id="svll-total-bw">0 kbps</div>
+        </div>
+      </div>
+
+      <!-- Play-type breakdown bars (Direct play / Direct stream / Transcode / Remote) -->
+      <div class="svll-types">
+        <div class="svll-type" data-type="direct">
+          <div class="svll-type__head">Direct play</div>
+          <div class="svll-type__bar"><span class="svll-type__fill svll-type__fill--direct" id="svll-bar-direct"></span></div>
+          <div class="svll-type__pct" id="svll-pct-direct">0%</div>
+        </div>
+        <div class="svll-type" data-type="stream">
+          <div class="svll-type__head">Direct stream</div>
+          <div class="svll-type__bar"><span class="svll-type__fill svll-type__fill--stream" id="svll-bar-stream"></span></div>
+          <div class="svll-type__pct" id="svll-pct-stream">0%</div>
+        </div>
+        <div class="svll-type" data-type="transcode">
+          <div class="svll-type__head">Transcode</div>
+          <div class="svll-type__bar"><span class="svll-type__fill svll-type__fill--transcode" id="svll-bar-transcode"></span></div>
+          <div class="svll-type__pct" id="svll-pct-transcode">0%</div>
+        </div>
+        <div class="svll-type" data-type="remote">
+          <div class="svll-type__head">Remote</div>
+          <div class="svll-type__bar"><span class="svll-type__fill svll-type__fill--remote" id="svll-bar-remote"></span></div>
+          <div class="svll-type__pct" id="svll-pct-remote">0%</div>
+        </div>
+      </div>
+
+      <!-- Active streams (existing widget core handles this DOM) -->
+      <div class="sv-widget-wrap sv-large-view<?= $lightClass ? ' sv-light' : '' ?>">
+        <div class="sv-body sv-collapsible">
+          <div id="sv-streams-container" class="sv-streams" role="list" aria-live="polite" aria-label="Active streams">
+            <div class="sv-empty-state" id="sv-empty-state">
+              <i class="fa fa-circle-o sv-empty-icon" aria-hidden="true"></i>
+              <span>No active streams</span>
+              <span class="sv-last-activity" id="sv-last-activity" style="display:none;"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stop stream confirmation modal (mirrors widget) -->
+      <div class="sv-w-modal-host<?= $lightClass ? ' sv-light' : '' ?>">
+        <div id="svWidgetConfirmModal" class="sv-w-confirm-modal" style="display:none;">
+          <div class="sv-w-confirm-box">
+            <div class="sv-w-confirm-body">
+              <div class="sv-w-confirm-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e5a00d" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </div>
+              <div class="sv-w-confirm-title" id="svWidgetConfirmTitle">Stop stream</div>
+              <div class="sv-w-confirm-msg" id="svWidgetConfirmMsg"></div>
+            </div>
+            <div class="sv-w-confirm-footer">
+              <button type="button" class="sv-w-confirm-cancel" id="svWidgetConfirmCancel">Cancel</button>
+              <button type="button" class="sv-w-confirm-ok" id="svWidgetConfirmOk">OK</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- /svtPanelLive -->
+
 <?php if (!$statsEnabled): ?>
-    <div class="svt-disabled">
+    <div class="svt-disabled" id="svtDisabledMsg">
       <div class="svt-disabled-icon"><i class="fa fa-bar-chart" aria-hidden="true"></i></div>
       <h2>Statistics are not enabled</h2>
       <p>To use this page, enable watch history in
@@ -77,7 +236,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
       <div class="svt-header__left">
         <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
         <div>
-          <h2 class="svt-header__title">Stream Viewer Statistics</h2>
+          <h2 class="svt-header__title">Stream Viewer Statistics and Active Stream/s</h2>
           <span class="svt-header__sub" id="svt-subtitle">Loading...</span>
         </div>
       </div>
@@ -674,4 +833,7 @@ $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
 </div><!-- /svt-wrapper -->
 
 <script src="/plugins/streamviewer/js/chart.min.js"></script>
+<script>window.svLiveConfig = <?= $live_config_json ?>;</script>
+<script defer src="/plugins/streamviewer/js/streamviewer-core.js"></script>
+<script defer src="/plugins/streamviewer/js/streamviewer-live.js"></script>
 <script defer src="/plugins/streamviewer/js/streamviewer-tool.js"></script>

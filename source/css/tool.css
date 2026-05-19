@@ -42,20 +42,41 @@
   --svt-rm:        #c62828;
 }
 
-/* ── 2. LAYOUT ────────────────────────────────────────────────────────── */
+/* ── 2. LAYOUT ────────────────────────────────────────────────────────────
+   Width follows the Logs Viewer convention: 80% of the viewport on desktop
+   (10% gutter each side) and 95% on tablet/mobile below 768px. Max width is
+   capped so the content stays readable on very wide displays.
+*/
+/* The wrapper escapes the Unraid main content container's max-width cap by
+   using viewport-width units, then re-centers itself via negative margins
+   relative to the parent's mid-line. Result: a true 80% of the actual screen
+   width regardless of whatever Unraid wraps the page in. */
 .svt-wrapper {
-  width: min(64vw, 1200px);
-  min-width: 720px;
-  margin: 0 auto;
+  width: 80vw;
+  max-width: 80vw;
+  margin: 2rem auto;
+  margin-left: calc(50% - 40vw);
+  margin-right: calc(50% - 40vw);
   padding: 0;
   box-sizing: border-box;
   display: block;
   overflow: hidden;
 }
-@media (max-width: 1400px) { .svt-wrapper { width: 80%; } }
-@media (max-width: 1024px) { .svt-wrapper { width: 92%; } }
-@media (max-width: 900px)  { .svt-wrapper { width: 96vw; min-width: 0; } }
-@media (max-width: 768px)  { .svt-wrapper { width: 100%; min-width: 0; } }
+@media (max-width: 1919px) {
+  .svt-wrapper {
+    width: 90vw; max-width: 90vw;
+    margin-left: calc(50% - 45vw);
+    margin-right: calc(50% - 45vw);
+  }
+}
+@media (max-width: 768px) {
+  .svt-wrapper {
+    width: 95vw; max-width: 95vw;
+    margin-left: calc(50% - 47.5vw);
+    margin-right: calc(50% - 47.5vw);
+    min-width: 0;
+  }
+}
 
 /* ── 3. TABS ──────────────────────────────────────────────────────────── */
 .svt-tabs {
@@ -347,10 +368,8 @@
 /* History table */
 .svt-table-wrap {
   overflow-x: auto;
-  overflow-y: auto;
-  max-height: 410px;
 }
-.svt-table-wrap::-webkit-scrollbar { width: 4px; }
+.svt-table-wrap::-webkit-scrollbar { height: 4px; }
 .svt-table-wrap::-webkit-scrollbar-track { background: var(--svt-surface2); }
 .svt-table-wrap::-webkit-scrollbar-thumb { background: var(--svt-border-strong); border-radius: 2px; }
 .svt-table-wrap::-webkit-scrollbar-thumb:hover { background: var(--svt-text-dim); }
@@ -975,3 +994,460 @@
 
 /* Media icons */
 .svt-light .svt-media-icon { background: rgba(0,0,0,.08); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   LIVE TAB (.sv-large-view modifier on .sv-widget-wrap)
+
+   Layers on top of widget.css. The dashboard tile renders inside a 320px-ish
+   column so widget.css optimises for very narrow widths; in the Statistics
+   page the Live tab has the full svt-wrapper width to work with, so we relax
+   constraints and add a proper panel frame.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.sv-widget-wrap.sv-large-view {
+  background: var(--svt-surface, #1a1a1a);
+  border: 1px solid var(--svt-border, rgba(255,255,255,.06));
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+.sv-widget-wrap.sv-large-view .sv-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--svt-border, rgba(255,255,255,.06));
+}
+
+.sv-widget-wrap.sv-large-view .sv-header__left {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  text-align: left;
+}
+
+.sv-widget-wrap.sv-large-view .sv-tile-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--svt-text-primary, rgba(255,255,255,.92));
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sv-widget-wrap.sv-large-view .sv-tile-title .fa {
+  color: #f47d42;
+  font-size: 16px;
+}
+
+.sv-widget-wrap.sv-large-view .sv-header__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sv-widget-wrap.sv-large-view .tile-header-right-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sv-widget-wrap.sv-large-view .tile-header-right-controls a {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 1px solid var(--svt-border, rgba(255,255,255,.10));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--svt-text-secondary, rgba(255,255,255,.7));
+  text-decoration: none;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.sv-widget-wrap.sv-large-view .tile-header-right-controls a:hover {
+  background: rgba(255,255,255,.04);
+  border-color: rgba(255,255,255,.18);
+  color: var(--svt-text-primary, rgba(255,255,255,.92));
+}
+
+.sv-widget-wrap.sv-large-view .sv-streams {
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.sv-widget-wrap.sv-large-view .sv-footer {
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid var(--svt-border, rgba(255,255,255,.06));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--svt-text-secondary, rgba(255,255,255,.55));
+}
+
+/* Light theme overrides for the Live tab panel */
+.svt-light .sv-widget-wrap.sv-large-view {
+  background: var(--svt-surface, #f8f8f8);
+  border-color: var(--svt-border, rgba(0,0,0,.08));
+}
+
+.svt-light .sv-widget-wrap.sv-large-view .sv-header,
+.svt-light .sv-widget-wrap.sv-large-view .sv-footer {
+  border-color: var(--svt-border, rgba(0,0,0,.08));
+}
+
+.svt-light .sv-widget-wrap.sv-large-view .sv-tile-title {
+  color: var(--svt-text-primary, rgba(0,0,0,.85));
+}
+
+.svt-light .sv-widget-wrap.sv-large-view .tile-header-right-controls a {
+  border-color: rgba(0,0,0,.12);
+  color: rgba(0,0,0,.65);
+}
+
+.svt-light .sv-widget-wrap.sv-large-view .tile-header-right-controls a:hover {
+  background: rgba(0,0,0,.04);
+  border-color: rgba(0,0,0,.20);
+  color: rgba(0,0,0,.85);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   LIVE TAB — Stream card 2-column layout (.sv-stream--large)
+
+   The dashboard widget renders stream cards as a single column because the
+   tile is narrow. In the Live tab we have plenty of horizontal real estate,
+   so each card becomes:
+     [bar] [poster col] [main col → badges/title/sub/details/synopsis/footer]
+   The poster sits permanently on the left; the synopsis becomes plain text
+   (not a collapsible toggle); a bandwidth sparkline rides along the bottom
+   of every card alongside the live bitrate value.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.sv-stream--large {
+  display: grid;
+  grid-template-columns: 4px 120px 1fr;
+  grid-template-rows: auto;
+  gap: 14px;
+  column-gap: 14px;
+  row-gap: 0;
+  align-items: start;
+  padding: 12px 14px;
+  background: var(--svt-surface2, rgba(255,255,255,.02));
+  border: 1px solid var(--svt-border, rgba(255,255,255,.06));
+  border-radius: 8px;
+  position: relative;
+  overflow: visible;
+}
+
+.sv-stream--large .sv-stream__bar {
+  width: 4px;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.sv-stream--large .sv-stream__poster-col {
+  width: 120px;
+  aspect-ratio: 2 / 3;
+  background: var(--svt-surface, #1a1a1a);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sv-stream--large .sv-stream__poster-col .sv-stream__thumb-img,
+.sv-stream--large .sv-stream__poster-col .sv-stream__thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  font-size: 28px;
+  color: rgba(255,255,255,.20);
+}
+
+.sv-stream--large .sv-stream__main-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sv-stream--large .sv-stream__synopsis {
+  padding: 6px 0;
+  border-top: 1px dashed var(--svt-border, rgba(255,255,255,.10));
+  border-bottom: 1px dashed var(--svt-border, rgba(255,255,255,.10));
+}
+
+.sv-stream--large .sv-stream__synopsis .sv-stream__desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--svt-text-secondary, rgba(255,255,255,.75));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  -webkit-line-clamp: unset;
+  padding: 4px 10px;
+  border-right: none;       /* override widget.css border-right (looked like a "|") */
+  border-radius: 4px;
+  transition: background .6s ease;
+}
+
+.sv-stream--large .sv-stream__card-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+  font-size: 11px;
+  color: var(--svt-text-secondary, rgba(255,255,255,.55));
+}
+
+.sv-stream--large .sv-stream__sparkline-label {
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+  color: rgba(255,255,255,.40);
+  flex-shrink: 0;
+}
+
+.sv-stream--large .sv-chart {
+  flex: 1;
+  min-width: 0;
+  height: 60px;
+  position: relative;       /* anchor for the absolutely-positioned unit */
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.sv-stream--large .sv-chart__yaxis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0;
+  font-size: 9px;
+  line-height: 1;
+  color: rgba(255,255,255,.45);
+  min-width: 22px;
+  text-align: right;
+}
+
+.sv-stream--large .sv-chart__plot {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: block;
+}
+
+/* Chart internals — dark theme defaults */
+.sv-chart__plot .sv-spark-grid     { stroke: rgba(255,255,255,.08); }
+.sv-chart__plot .sv-spark-baseline { stroke: rgba(255,255,255,.15); }
+
+/* Light theme overrides for chart internals */
+.svt-light .sv-stream--large .sv-chart__yaxis        { color: rgba(0,0,0,.55); }
+.svt-light .sv-stream--large .sv-chart__yaxis .sv-chart__unit { color: rgba(0,0,0,.40); }
+.svt-light .sv-chart__plot .sv-spark-grid            { stroke: rgba(0,0,0,.10); }
+.svt-light .sv-chart__plot .sv-spark-baseline        { stroke: rgba(0,0,0,.18); }
+
+.sv-stream--large .sv-stream__bandwidth-now {
+  font-weight: 500;
+  color: var(--svt-text-primary, rgba(255,255,255,.85));
+  margin-left: auto;
+}
+
+/* Mobile: poster gets smaller, layout still 2-col */
+@media (max-width: 768px) {
+  .sv-stream--large {
+    grid-template-columns: 4px 80px 1fr;
+    gap: 10px;
+    padding: 10px;
+  }
+  .sv-stream--large .sv-stream__poster-col {
+    width: 80px;
+  }
+}
+
+/* Light theme overrides */
+.svt-light .sv-stream--large {
+  background: var(--svt-surface2, rgba(0,0,0,.02));
+  border-color: var(--svt-border, rgba(0,0,0,.08));
+}
+.svt-light .sv-stream--large .sv-stream__poster-col {
+  background: rgba(0,0,0,.06);
+}
+.svt-light .sv-stream--large .sv-stream__poster-col .sv-stream__thumb-placeholder {
+  color: rgba(0,0,0,.25);
+}
+.svt-light .sv-stream--large .sv-stream__synopsis .sv-stream__desc {
+  color: rgba(0,0,0,.65);
+}
+.svt-light .sv-stream--large .sv-stream__synopsis,
+.svt-light .sv-stream--large .sv-stream__card-footer {
+  border-top-color: rgba(0,0,0,.10);
+  border-bottom-color: rgba(0,0,0,.10);
+}
+.svt-light .sv-stream--large .sv-stream__sparkline-label {
+  color: rgba(0,0,0,.45);
+}
+.svt-light .sv-stream--large .sv-stream__bandwidth-now {
+  color: rgba(0,0,0,.85);
+}
+
+/* Push the Live tab to the right of the tab bar so it sits separately from
+   the statistics tabs (Dashboard, Libraries, Users, History, Graphs, Insights). */
+.svt-tabs .svt-tab--right {
+  margin-left: auto;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   LIVE TAB — Big header (mirrors Statistics dashboard header) + overview
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Use the existing .svt-header styles defined for the Statistics page. The
+   refresh-indicator below replaces the old count subtitle. */
+#svtPanelLive .svt-header__sub.sv-refresh-indicator {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-left: 10px;
+  color: var(--svt-text-secondary, rgba(255,255,255,.55));
+  font-size: 12px;
+}
+#svtPanelLive .svt-header__sub .sv-pulse {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--svt-text-muted, rgba(255,255,255,.30));
+  display: inline-block;
+}
+#svtPanelLive .svt-header__sub .sv-pulse--active {
+  animation: svPulseFlash .8s ease-out;
+}
+@keyframes svPulseFlash {
+  0%   { background: #4caf50; box-shadow: 0 0 0 0 rgba(76,175,80,.50); }
+  100% { background: var(--svt-text-muted, rgba(255,255,255,.30)); box-shadow: 0 0 0 6px rgba(76,175,80,0); }
+}
+#svtPanelLive .svt-header__sub .sv-ts-icon { opacity: .55; }
+
+/* ── Overview row: 5 compact stat cards ─────────────────────────────────── */
+.svll-overview {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0 10px;
+}
+
+.svll-stat {
+  background: var(--svt-surface, #1a1a1a);
+  border: 1px solid var(--svt-border, rgba(255,255,255,.06));
+  border-radius: 8px;
+  padding: 10px 14px;
+  min-width: 0;
+}
+
+/* Per-card subtle tints — low alpha, no neon, just a hint of color so the
+   cards become visually distinct without turning into a circus. */
+.svll-stat--orange { background: rgba(244, 125,  66, 0.06); border-color: rgba(244, 125,  66, 0.20); }
+.svll-stat--blue   { background: rgba( 74, 144, 226, 0.06); border-color: rgba( 74, 144, 226, 0.20); }
+.svll-stat--teal   { background: rgba( 38, 198, 218, 0.06); border-color: rgba( 38, 198, 218, 0.20); }
+.svll-stat--amber  { background: rgba(245, 179,   0, 0.06); border-color: rgba(245, 179,   0, 0.22); }
+.svll-stat--green  { background: rgba( 76, 175,  80, 0.06); border-color: rgba( 76, 175,  80, 0.20); }
+.svll-stat--purple { background: rgba(171,  71, 188, 0.06); border-color: rgba(171,  71, 188, 0.20); }
+.svll-stat--rose   { background: rgba(229, 115, 115, 0.06); border-color: rgba(229, 115, 115, 0.20); }
+
+.svll-stat__label {
+  font-size: 11px;
+  color: var(--svt-text-secondary, rgba(255,255,255,.55));
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.svll-stat__value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--svt-text-primary, rgba(255,255,255,.95));
+  white-space: nowrap;
+}
+
+@media (max-width: 1280px) {
+  .svll-overview { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .svll-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .svll-stat__value { font-size: 16px; }
+}
+
+/* ── Play-type breakdown bars row ───────────────────────────────────────── */
+.svll-types {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 14px;
+  padding: 0 4px;
+}
+
+.svll-type__head {
+  font-size: 11px;
+  color: var(--svt-text-secondary, rgba(255,255,255,.65));
+  margin-bottom: 6px;
+}
+
+.svll-type__bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,.06);
+  overflow: hidden;
+}
+
+.svll-type__fill {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 0;
+  border-radius: 3px;
+  transition: width .35s ease;
+}
+
+.svll-type__fill--direct    { background: #4caf50; }
+.svll-type__fill--stream    { background: #4a90e2; }
+.svll-type__fill--transcode { background: #f5b300; }
+.svll-type__fill--remote    { background: #e24b4a; }
+
+.svll-type__pct {
+  font-size: 11px;
+  color: var(--svt-text-secondary, rgba(255,255,255,.55));
+  margin-top: 4px;
+}
+
+@media (max-width: 640px) {
+  .svll-types { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Light theme tweaks for the overview/type rows */
+.svt-light .svll-stat__label { color: rgba(0,0,0,.55); }
+.svt-light .svll-stat__value { color: rgba(0,0,0,.95); }
+
+/* Light theme per-card tints — slightly higher alpha so they read on white. */
+.svt-light .svll-stat--orange { background: rgba(244, 125,  66, 0.09); border-color: rgba(244, 125,  66, 0.30); }
+.svt-light .svll-stat--blue   { background: rgba( 74, 144, 226, 0.09); border-color: rgba( 74, 144, 226, 0.30); }
+.svt-light .svll-stat--teal   { background: rgba( 38, 198, 218, 0.09); border-color: rgba( 38, 198, 218, 0.30); }
+.svt-light .svll-stat--amber  { background: rgba(245, 179,   0, 0.10); border-color: rgba(245, 179,   0, 0.32); }
+.svt-light .svll-stat--green  { background: rgba( 76, 175,  80, 0.09); border-color: rgba( 76, 175,  80, 0.30); }
+.svt-light .svll-stat--purple { background: rgba(171,  71, 188, 0.09); border-color: rgba(171,  71, 188, 0.30); }
+.svt-light .svll-stat--rose   { background: rgba(229, 115, 115, 0.09); border-color: rgba(229, 115, 115, 0.30); }
+
+.svt-light .svll-type__bar { background: rgba(0,0,0,.06); }
+.svt-light .svll-type__head { color: rgba(0,0,0,.65); }
+.svt-light .svll-type__pct  { color: rgba(0,0,0,.55); }

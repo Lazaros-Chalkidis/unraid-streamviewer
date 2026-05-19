@@ -103,20 +103,37 @@
 }
 
 
-/* ── WRAPPER & RESPONSIVE ────────────────────────────────────────────────── */
+/* ── WRAPPER & RESPONSIVE ─────────────────────────────────────────────────
+   Width follows the same convention as the Statistics page: 80% of the
+   viewport on desktop (10% gutter each side) and 95% on tablet/mobile below
+   768px, capped at 1400px so content stays readable on very wide displays.
+*/
 .streamviewer-settings {
-  width: min(54vw, 1020px);
-  min-width: 720px;
-  margin: 0 auto;
+  width: 80vw;
+  max-width: 80vw;
+  margin: 2rem auto;
+  margin-left: calc(50% - 40vw);
+  margin-right: calc(50% - 40vw);
   padding: 0;
   box-sizing: border-box;
   display: block;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
-@media (max-width: 1400px) { .streamviewer-settings { width: 78%; } }
-@media (max-width: 1024px) { .streamviewer-settings { width: 92%; } }
-@media (max-width: 900px)  { .streamviewer-settings { width: 96vw; min-width: 0; } }
-@media (max-width: 768px)  { .streamviewer-settings { width: 100%; min-width: 0; } }
+@media (max-width: 1919px) {
+  .streamviewer-settings {
+    width: 90vw; max-width: 90vw;
+    margin-left: calc(50% - 45vw);
+    margin-right: calc(50% - 45vw);
+  }
+}
+@media (max-width: 768px) {
+  .streamviewer-settings {
+    width: 95vw; max-width: 95vw;
+    margin-left: calc(50% - 47.5vw);
+    margin-right: calc(50% - 47.5vw);
+    min-width: 0;
+  }
+}
 
 
 /* ── SETTINGS PANEL ──────────────────────────────────────────────────────── */
@@ -583,10 +600,8 @@
 .sv-card--collapsed .sv-card-hd--toggle::after {
   transform: translateY(-50%) rotate(180deg);
 }
-.sv-card--collapsed .sv-card-bd-collapsible { display: none; }
 
-.sv-card-bd,
-.sv-card-bd-collapsible { padding: .6rem .85rem; }
+.sv-card-bd { padding: .6rem .85rem; }
 
 
 /* Accordion */
@@ -1256,19 +1271,6 @@
 }
 
 
-/* Info box */
-.sv-info-box {
-  background: rgba(74,144,226,.06); border: 1px solid rgba(74,144,226,.18);
-  border-radius: 5px; padding: .5rem .75rem;
-}
-.sv-info-title { font-weight: 600; font-size: 12px; color: rgba(74,144,226,.85); margin-bottom: .3rem; }
-.sv-info-body { font-size: 11.5px; line-height: 1.5; color: var(--sv-c-text-mid); }
-.sv-info-body code {
-  background: var(--sv-c-border-subtle); padding: .08em .3em; border-radius: 3px;
-  font-family: monospace; font-size: .92em;
-}
-
-
 /* form-control override for Plex/JF/Emby panels */
 .streamviewer-settings .form-control {
   background: var(--sv-ctrl-bg);
@@ -1476,3 +1478,99 @@
   background: var(--sv-c-bg-hover) !important;
   border-color: var(--sv-c-text-faint) !important;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Danger variant of the footer action button (used by "Wipe now" + any other
+   destructive action). Mirrors the size, spacing and weight of the footer
+   Apply/Reset/Done buttons so the visual language stays consistent.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.sv-action-btn--danger {
+  background: rgba(229, 80, 80, .12) !important;
+  border-color: rgba(229, 80, 80, .3) !important;
+  color: #e55050 !important;
+}
+.sv-action-btn--danger:hover {
+  background: rgba(229, 80, 80, .22) !important;
+  border-color: rgba(229, 80, 80, .55) !important;
+}
+.sv-action-btn--danger:active {
+  background: rgba(229, 80, 80, .32) !important;
+}
+
+/* Warning confirm modal (used by both Wipe DB and Erase-on-uninstall toggle) */
+.sv-warn-modal {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9999;
+}
+.sv-warn-modal__box {
+  background: var(--svt-surface-elevated, #2a2a2a);
+  border: 1px solid rgba(229, 80, 80, .35);
+  border-radius: 8px;
+  width: min(440px, 92vw);
+  padding: 22px 24px 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .55);
+}
+.sv-warn-modal__head {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 12px;
+}
+.sv-warn-modal__icon {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: rgba(229, 80, 80, .15);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #e55050;
+  font-size: 18px;
+}
+.sv-warn-modal__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+}
+.sv-warn-modal__msg {
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, .80);
+  margin-bottom: 18px;
+}
+.sv-warn-modal__msg strong { color: #fff; }
+.sv-warn-modal__actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+.sv-warn-modal__btn {
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .15s ease, border-color .15s ease;
+}
+.sv-warn-modal__btn--cancel {
+  background: transparent;
+  border-color: rgba(255, 255, 255, .15);
+  color: rgba(255, 255, 255, .75);
+}
+.sv-warn-modal__btn--cancel:hover {
+  background: rgba(255, 255, 255, .05);
+  border-color: rgba(255, 255, 255, .25);
+}
+.sv-warn-modal__btn--confirm {
+  background: rgba(229, 80, 80, .25);
+  border-color: rgba(229, 80, 80, .55);
+  color: #ffbcbc;
+}
+.sv-warn-modal__btn--confirm:hover {
+  background: rgba(229, 80, 80, .40);
+  border-color: rgba(229, 80, 80, .75);
+}
+
+/* Light theme tweaks */
+body.sv-light .sv-warn-modal__box     { background: #fff; }
+body.sv-light .sv-warn-modal__title   { color: #333; }
+body.sv-light .sv-warn-modal__msg     { color: rgba(0, 0, 0, .80); }
+body.sv-light .sv-warn-modal__msg strong { color: #000; }
+body.sv-light .sv-warn-modal__btn--cancel  { color: rgba(0, 0, 0, .70); border-color: rgba(0, 0, 0, .15); }
+body.sv-light .sv-warn-modal__btn--confirm { color: #a00; }

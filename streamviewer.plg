@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "streamviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.05.14">
+ <!ENTITY version   "2026.05.20">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "c4876e8d83990a7caf73d5b495430ae9">
+ <!ENTITY md5       "f1b0bb6ae88a74e4763f456e066ac759">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
@@ -24,6 +24,22 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 <CHANGES>
 
 # Stream Viewer
+
+## v2026.05.20
+
+### Bug Fixes
+- Statistics page was being constrained by Unraid's main content container width, leaving large gutters on 2K and 4K monitors.
+
+### New Features
+- New Active Stream/s tab in statistic page 
+- Bandwidth chart per stream card.
+- New "Network bandwidth capacity" setting in Widget settings controls the ceiling of the Total BW bar in the footer
+- Statistics retention dropdown gains an "Unlimited" option (sentinel value 0) that disables the daily prune entirely
+- New "Erase data on uninstall" toggle in Statistics settings (default off).
+- New "Wipe statistics database" button in Statistics settings
+
+### Improvements
+- "Show Docker stats" description changed from "CPU/RAM in footer" to "CPU/RAM/Total BW in footer"
 
 ## v2026.05.14
 

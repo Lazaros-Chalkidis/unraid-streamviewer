@@ -539,6 +539,7 @@ function loadAll() {
 // ── Tab Switching ─────────────────────────────────────────────────────────
 var TAB_MAP = {
     svtTabDashboard:  'svtPanelDashboard',
+    svtTabLive:       'svtPanelLive',
     svtTabLibraries:  'svtPanelLibraries',
     svtTabUsers:      'svtPanelUsers',
     svtTabHistory:    'svtPanelHistory',
@@ -560,6 +561,7 @@ var _alertsPeriod = '30d';
 
 function switchTab(tabId) {
     if (_activeTab === tabId) return;
+    var prevTab = _activeTab;
     _activeTab = tabId;
 
     // Toggle tab active class
@@ -573,6 +575,23 @@ function switchTab(tabId) {
     for (var j = 0; j < panelIds.length; j++) {
         var panel = document.getElementById(TAB_MAP[panelIds[j]]);
         if (panel) panel.style.display = (panelIds[j] === tabId) ? 'block' : 'none';
+    }
+
+    // Stats-disabled message visibility: the Live tab works independently of
+    // the statistics database, so when the user opens it we hide the disabled
+    // banner; when they switch to a stats tab we show it again (if present).
+    var disabledMsg = document.getElementById('svtDisabledMsg');
+    if (disabledMsg) {
+        disabledMsg.style.display = (tabId === 'svtTabLive') ? 'none' : '';
+    }
+
+    // Live tab polling lifecycle: start fetching when the user opens the tab,
+    // stop when they leave so we are not hitting backends for nothing while
+    // they browse other stats tabs.
+    if (tabId === 'svtTabLive') {
+        if (window.SVLive && typeof window.SVLive.start === 'function') window.SVLive.start();
+    } else if (prevTab === 'svtTabLive') {
+        if (window.SVLive && typeof window.SVLive.stop === 'function') window.SVLive.stop();
     }
 
     // Lazy load Libraries on first switch
@@ -1667,9 +1686,9 @@ function bgRecordPoll() {
 
 // ── Initialization ────────────────────────────────────────────────────────
 function init() {
-    if (!_cfg.statsEnabled) return;
-
-    // Tab switching
+    // Tab switching must be wired even when Statistics is disabled, otherwise
+    // the user cannot reach the Live tab (which works independently of the
+    // statistics database).
     var tabIds = Object.keys(TAB_MAP);
     for (var t = 0; t < tabIds.length; t++) {
         (function(tid) {
@@ -1679,6 +1698,10 @@ function init() {
             }
         })(tabIds[t]);
     }
+
+    // Everything below is statistics-only: period selector, refresh button,
+    // chart loading, etc. Skip when stats are disabled.
+    if (!_cfg.statsEnabled) return;
 
     // Period selector
     var periodEl = DOM.period();

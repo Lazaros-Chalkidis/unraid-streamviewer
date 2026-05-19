@@ -33,13 +33,12 @@ function StreamViewerButton(){
                 svg.setAttribute('stroke-linecap','round');
                 svg.setAttribute('stroke-linejoin','round');
                 svg.setAttribute('class','system');
+                // Play triangle (Tabler ti-player-play). Filled so it reads as a
+                // solid marker rather than an outlined wedge.
                 var p = document.createElementNS('http://www.w3.org/2000/svg','path');
-                p.setAttribute('d','M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6');
+                p.setAttribute('d','M7 4v16l13 -8z');
+                p.setAttribute('fill','currentColor');
                 svg.appendChild(p);
-                var ln = document.createElementNS('http://www.w3.org/2000/svg','line');
-                ln.setAttribute('x1','2'); ln.setAttribute('y1','20');
-                ln.setAttribute('x2','2.01'); ln.setAttribute('y2','20');
-                svg.appendChild(ln);
                 img.parentNode.replaceChild(svg, img);
 
                 // Match icon color to theme
@@ -50,27 +49,21 @@ function StreamViewerButton(){
             link.style.position = 'relative';
             badge = document.createElement('span');
             badge.style.position = 'absolute';
-            badge.style.top = '-1px';
-            badge.style.right = '-4px';
-            badge.style.background = '#7C4DFF';
-            badge.style.color = '#fff';
-            badge.style.fontSize = '8px';
-            badge.style.fontWeight = '600';
-            badge.style.minWidth = '12px';
-            badge.style.height = '12px';
-            badge.style.borderRadius = '6px';
+            badge.style.top = '0px';
+            badge.style.right = '0.5rem';
+            badge.style.background = 'transparent';
+            badge.style.color = 'rgb(25, 110, 244)';
+            badge.style.fontSize = '10px';
             badge.style.display = 'flex';
-            badge.style.alignItems = 'center';
-            badge.style.justifyContent = 'center';
-            badge.style.padding = '0 3px';
             badge.style.lineHeight = '1';
             badge.style.pointerEvents = 'none';
             link.appendChild(badge);
         }
 
-        // Start polling
+        // Start polling. Faster cadence than the dashboard tile (10s vs 30s)
+        // so the badge in the global header reflects new streams promptly.
         poll();
-        setInterval(poll, 30000);
+        setInterval(poll, 10000);
     }
 
     function poll(){
@@ -95,5 +88,5 @@ function StreamViewerButton(){
         x.send();
     }
 
-    setTimeout(setup, 2000);
+    setTimeout(setup, 800);
 })();
