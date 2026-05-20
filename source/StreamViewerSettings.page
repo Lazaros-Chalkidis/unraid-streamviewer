@@ -958,11 +958,34 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <span class="sv-credits-title">Stream Viewer</span>
             <span class="sv-credits-version">v<?php
               $_svPluginVer = '';
-              $_svPkgs = @glob('/var/log/packages/streamviewer-*');
-              if (is_array($_svPkgs) && !empty($_svPkgs)) {
-                $_svBase = basename($_svPkgs[0]);
-                if (preg_match('/^streamviewer-([^-]+(?:-[^-]+)?)/', $_svBase, $_svM)) $_svPluginVer = $_svM[1];
+
+              // Primary: VERSION file at the canonical installed location.
+              // Hardcoded absolute path because __DIR__ in a .page file under
+              // emhttp does not always resolve where one expects.
+              $_svVersionFile = '/usr/local/emhttp/plugins/streamviewer/VERSION';
+              if (is_readable($_svVersionFile)) {
+                  $_svRead = trim((string)@file_get_contents($_svVersionFile));
+                  if ($_svRead !== '') {
+                      $_svPluginVer = $_svRead;
+                  }
               }
+
+              // Fallback: Slackware package metadata for legacy installs that
+              // predate the VERSION file. Sort descending so the newest install
+              // wins even if a stale entry was left behind.
+              if ($_svPluginVer === '') {
+                  $_svPkgs = @glob('/var/log/packages/streamviewer-*');
+                  if (is_array($_svPkgs) && !empty($_svPkgs)) {
+                      usort($_svPkgs, function($a, $b) {
+                          return @filemtime($b) - @filemtime($a);
+                      });
+                      $_svBase = basename($_svPkgs[0]);
+                      if (preg_match('/^streamviewer-([^-]+(?:-[^-]+)?)/', $_svBase, $_svM)) {
+                          $_svPluginVer = $_svM[1];
+                      }
+                  }
+              }
+
               echo htmlspecialchars($_svPluginVer ?: '');
             ?></span>
           </div>
@@ -2342,5 +2365,37 @@ function resetDefaults() {
     }
 })();
 
+})();
+</script>
+
+<script>
+/*
+ * Page width unlocker (same approach as StreamViewerTool.page).
+ * Walks up from .streamviewer-settings to body and removes any max-width
+ * constraint on ancestors narrower than the viewport. No-op outside the
+ * standalone settings page.
+ */
+(function() {
+    'use strict';
+    function unlockAncestors() {
+        var wrap = document.querySelector('.streamviewer-settings');
+        if (!wrap) return;
+        var vw = window.innerWidth || document.documentElement.clientWidth;
+        var el = wrap.parentElement;
+        while (el && el !== document.documentElement) {
+            var cs = window.getComputedStyle(el);
+            var mw = parseFloat(cs.maxWidth);
+            if (!isNaN(mw) && mw > 0 && mw < vw) {
+                el.style.setProperty('max-width', 'none', 'important');
+            }
+            el = el.parentElement;
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', unlockAncestors);
+    } else {
+        unlockAncestors();
+    }
+    window.addEventListener('resize', unlockAncestors);
 })();
 </script>

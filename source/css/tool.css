@@ -47,34 +47,26 @@
    (10% gutter each side) and 95% on tablet/mobile below 768px. Max width is
    capped so the content stays readable on very wide displays.
 */
-/* The wrapper escapes the Unraid main content container's max-width cap by
-   using viewport-width units, then re-centers itself via negative margins
-   relative to the parent's mid-line. Result: a true 80% of the actual screen
-   width regardless of whatever Unraid wraps the page in. */
+/* Wrapper width: 80% on desktop at any resolution, 95% on tablet/mobile.
+   The parent's max-width constraint (imposed by the Unraid dynamix template,
+   typically ~1180px) is lifted at runtime by the inline script in
+   StreamViewerTool.page, which walks up the ancestor chain and removes any
+   max-width on parents narrower than the viewport. The wrapper itself uses
+   plain percentages and standard centering, so when the script no-ops (e.g.
+   the wrapper is not in the DOM, or no constraining parent exists) layout
+   stays sane. */
 .svt-wrapper {
-  width: 80vw;
-  max-width: 80vw;
+  width: 80%;
+  max-width: 80%;
   margin: 2rem auto;
-  margin-left: calc(50% - 40vw);
-  margin-right: calc(50% - 40vw);
   padding: 0;
   box-sizing: border-box;
   display: block;
-  overflow: hidden;
-}
-@media (max-width: 1919px) {
-  .svt-wrapper {
-    width: 90vw; max-width: 90vw;
-    margin-left: calc(50% - 45vw);
-    margin-right: calc(50% - 45vw);
-  }
 }
 @media (max-width: 768px) {
   .svt-wrapper {
-    width: 95vw; max-width: 95vw;
-    margin-left: calc(50% - 47.5vw);
-    margin-right: calc(50% - 47.5vw);
-    min-width: 0;
+    width: 95%;
+    max-width: 95%;
   }
 }
 

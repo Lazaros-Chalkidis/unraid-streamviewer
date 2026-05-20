@@ -72,6 +72,12 @@ PLUGIN_DEST="${PACKAGE_DIR_TEMP}/usr/local/emhttp/plugins/${PLUGIN_NAME}"
 mkdir -p "${PLUGIN_DEST}"
 cp -R source/* "${PLUGIN_DEST}/"
 
+# Plugin version (read by PHP at runtime for the credits modal). This file is
+# the authoritative source for "what version is actually deployed", because
+# the /var/log/packages/ Slackware metadata is only updated on a real .plg
+# install and stays stale when files are replaced manually during dev.
+echo "${VERSION}" > "${PLUGIN_DEST}/VERSION"
+
 # Branch metadata (readable by PHP for self-identification)
 cat > "${PLUGIN_DEST}/branch.meta" << METAEOF
 BRANCH="${BRANCH}"

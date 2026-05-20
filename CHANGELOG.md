@@ -1,6 +1,11 @@
 
 # Stream Viewer
 
+## v2026.05.20a
+
+### Bug Fixes
+- Fix width on settings and statistics pages
+
 ## v2026.05.20
 
 ### Bug Fixes

@@ -109,29 +109,18 @@
    768px, capped at 1400px so content stays readable on very wide displays.
 */
 .streamviewer-settings {
-  width: 80vw;
-  max-width: 80vw;
+  width: 80%;
+  max-width: 80%;
   margin: 2rem auto;
-  margin-left: calc(50% - 40vw);
-  margin-right: calc(50% - 40vw);
   padding: 0;
   box-sizing: border-box;
   display: block;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
-@media (max-width: 1919px) {
-  .streamviewer-settings {
-    width: 90vw; max-width: 90vw;
-    margin-left: calc(50% - 45vw);
-    margin-right: calc(50% - 45vw);
-  }
-}
 @media (max-width: 768px) {
   .streamviewer-settings {
-    width: 95vw; max-width: 95vw;
-    margin-left: calc(50% - 47.5vw);
-    margin-right: calc(50% - 47.5vw);
-    min-width: 0;
+    width: 95%;
+    max-width: 95%;
   }
 }
 

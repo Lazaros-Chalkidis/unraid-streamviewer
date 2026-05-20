@@ -837,3 +837,45 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
 <script defer src="/plugins/streamviewer/js/streamviewer-core.js"></script>
 <script defer src="/plugins/streamviewer/js/streamviewer-live.js"></script>
 <script defer src="/plugins/streamviewer/js/streamviewer-tool.js"></script>
+
+<script>
+/*
+ * Page width unlocker.
+ *
+ * The Unraid dynamix template wraps standalone plugin pages in a main content
+ * container with a max-width around 1180px. On 2K and 4K monitors this leaves
+ * large gutters. This block walks up from the .svt-wrapper element to the
+ * document body and removes any max-width constraint found on ancestors that
+ * are narrower than the viewport. The wrapper itself uses standard 80% width
+ * with margin auto, so when this script is not present (or finds nothing to
+ * change) layout stays sane and centered inside whatever parent it has.
+ *
+ * Runs only when .svt-wrapper exists in the DOM. No-op on the Dashboard tile,
+ * on the widget, or anywhere else that does not host this page.
+ */
+(function() {
+    'use strict';
+    function unlockAncestors() {
+        var wrap = document.querySelector('.svt-wrapper');
+        if (!wrap) return;
+        var vw = window.innerWidth || document.documentElement.clientWidth;
+        var el = wrap.parentElement;
+        while (el && el !== document.documentElement) {
+            var cs = window.getComputedStyle(el);
+            var mw = parseFloat(cs.maxWidth);
+            if (!isNaN(mw) && mw > 0 && mw < vw) {
+                el.style.setProperty('max-width', 'none', 'important');
+            }
+            el = el.parentElement;
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', unlockAncestors);
+    } else {
+        unlockAncestors();
+    }
+    // Re-run on resize so portrait/landscape rotation or browser-window drag
+    // recalculates correctly. Cheap operation, only touches inline styles.
+    window.addEventListener('resize', unlockAncestors);
+})();
+</script>
