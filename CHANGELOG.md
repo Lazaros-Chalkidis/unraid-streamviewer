@@ -1,6 +1,15 @@
 
 # Stream Viewer
 
+## v2026.05.23
+
+### Bug Fixes
+- Pause/resume of a stream was recorded as multiple separate plays in Recent history, inflating the play count in Most Watched.
+
+### New Features
+- New "Merge paused sessions" setting in Statistics settings. Stream sessions for the same user and title on the same server that end within this window are merged into a single play.
+- One-time cleanup on upgrade collapses existing pause/resume duplicates in the watch history using the 60 minute default window.
+
 ## v2026.05.20a
 
 ### Bug Fixes

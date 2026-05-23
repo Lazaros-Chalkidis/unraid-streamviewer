@@ -52,7 +52,7 @@ function StreamViewerButton(){
             badge.style.top = '0px';
             badge.style.right = '0.5rem';
             badge.style.background = 'transparent';
-            badge.style.color = 'rgb(25, 110, 244)';
+            badge.style.color = '#486dba';
             badge.style.fontSize = '10px';
             badge.style.display = 'flex';
             badge.style.lineHeight = '1';

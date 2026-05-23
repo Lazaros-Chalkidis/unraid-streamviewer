@@ -179,6 +179,12 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     }
     $new_cfg['STATS_RETENTION_DAYS'] = (string)$retDays;
 
+    // Pause/resume merge window in minutes. 0 disables merging.
+    $mwin = (int)($_POST['STATS_MERGE_WINDOW_MIN'] ?? 60);
+    $allowedMwin = [0, 15, 30, 60, 120, 240];
+    if (!in_array($mwin, $allowedMwin, true)) $mwin = 60;
+    $new_cfg['STATS_MERGE_WINDOW_MIN'] = (string)$mwin;
+
     $tab = $_POST['sv_active_tab'] ?? 'widget';
     if (!in_array($tab, ['widget', 'plex', 'jellyfin', 'emby'], true)) $tab = 'widget';
     $new_cfg['SV_ACTIVE_TAB'] = $tab;
@@ -239,17 +245,30 @@ for ($i = 1; $i <= SV_MAX_SERVERS; $i++) {
 $active_tab = (string)($cfg['SV_ACTIVE_TAB'] ?? 'servers');
 if (!in_array($active_tab, ['widget', 'plex', 'jellyfin', 'emby'], true)) $active_tab = 'widget';
 
-$plugin_version = 'dev';
-$plg = @file_get_contents('/boot/config/plugins/streamviewer/streamviewer.plg');
-if ($plg && preg_match('/<ENTITY\s+version\s+"([^"]+)"/i', $plg, $m)) {
-    $plugin_version = $m[1];
+// Plugin version: prefer the VERSION file at the installed plugin directory
+// (written by build.sh on every build). This stays fresh during dev workflows
+// where files are replaced without a full .plg reinstall. Falls back to the
+// .plg ENTITY and .txz filename for legacy installs that predate the VERSION
+// file. Same source as the credits modal — single source of truth.
+$plugin_version = '';
+$_pvFile = '/usr/local/emhttp/plugins/streamviewer/VERSION';
+if (is_readable($_pvFile)) {
+    $_pvRead = trim((string)@file_get_contents($_pvFile));
+    if ($_pvRead !== '') $plugin_version = $_pvRead;
 }
-if ($plugin_version === 'dev') {
+if ($plugin_version === '') {
+    $plg = @file_get_contents('/boot/config/plugins/streamviewer/streamviewer.plg');
+    if ($plg && preg_match('/<!ENTITY\s+version\s+"([^"]+)"/i', $plg, $m)) {
+        $plugin_version = $m[1];
+    }
+}
+if ($plugin_version === '') {
     $txz_files = glob('/boot/config/plugins/streamviewer/streamviewer-*.txz');
     if ($txz_files && preg_match('/streamviewer-(\d{4}\.\d{2}\.\d{2}[a-z]?)/', basename(end($txz_files)), $m)) {
         $plugin_version = $m[1];
     }
 }
+if ($plugin_version === '') $plugin_version = 'dev';
 ?>
 
 <?php
@@ -261,12 +280,8 @@ $sv_light     = in_array($unraid_theme, ['white', 'gray'], true);
 $lightClass   = $sv_light ? ' sv-light' : '';
 ?>
 
-<style>.streamviewer-settings,.sv-credits-top{visibility:hidden;}</style>
+<style>.streamviewer-settings{visibility:hidden;}</style>
 <link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/settings.css">
-
-<div class="sv-credits-top<?= $lightClass ?>">
-  <a href="#" class="sv-credits" id="svCreditsLink">Credits</a>
-</div>
 
 <form name="streamviewer_settings" method="post" class="streamviewer-settings<?= $lightClass ?>" autocomplete="off">
 
@@ -678,6 +693,20 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
           </div>
           <div class="sv-r">
+            <div class="sv-r-label">Merge paused sessions</div>
+            <div class="sv-r-field">
+              <select name="STATS_MERGE_WINDOW_MIN" class="sv-select">
+                <?= mk_option($cfg['STATS_MERGE_WINDOW_MIN'] ?? '60', '0',   _('Off')) ?>
+                <?= mk_option($cfg['STATS_MERGE_WINDOW_MIN'] ?? '60', '15',  _('15 minutes')) ?>
+                <?= mk_option($cfg['STATS_MERGE_WINDOW_MIN'] ?? '60', '30',  _('30 minutes')) ?>
+                <?= mk_option($cfg['STATS_MERGE_WINDOW_MIN'] ?? '60', '60',  _('60 minutes - Default')) ?>
+                <?= mk_option($cfg['STATS_MERGE_WINDOW_MIN'] ?? '60', '120', _('2 hours')) ?>
+                <?= mk_option($cfg['STATS_MERGE_WINDOW_MIN'] ?? '60', '240', _('4 hours')) ?>
+              </select>
+              <span class="sv-r-desc">Count pause + resume as one play within this window</span>
+            </div>
+          </div>
+          <div class="sv-r">
             <div class="sv-r-label">Library sections</div>
             <div class="sv-r-field">
               <select name="LIB_SECTIONS_OPEN" class="sv-select">
@@ -935,7 +964,13 @@ $lightClass   = $sv_light ? ' sv-light' : '';
   </div><!-- /sv-settings-panel -->
 
   <div class="sv-footer-row">
-    <a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" id="svSupportLink" class="sv-support-link">Support</a>
+    <span class="sv-support-links">
+      <a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" id="svSupportLink" class="sv-support-link" target="_blank" rel="noopener">Support Forum</a>
+      <span class="sv-support-sep" aria-hidden="true"></span>
+      <a href="https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues" class="sv-support-link" target="_blank" rel="noopener">GitHub Issues</a>
+      <span class="sv-support-sep" aria-hidden="true"></span>
+      <a href="#" id="svCreditsLink" class="sv-support-link">Credits</a>
+    </span>
     <span class="sv-version-badge">v<?= htmlspecialchars($plugin_version) ?></span>
   </div>
 
@@ -1940,6 +1975,7 @@ function resetDefaults() {
             STATS_ENABLED:'0',
             STATS_DB_PATH:'/mnt/user/appdata/Stream-Viewer',
             STATS_RETENTION_DAYS:'90',
+            STATS_MERGE_WINDOW_MIN:'60',
             STATS_ANONYMIZE_IP:'0',
             ERASE_ON_UNINSTALL:'0',
             BADGE_THEME:'default',
@@ -2241,9 +2277,7 @@ function resetDefaults() {
 
     // ── FOUC reveal ──────────────────────────────────────────────────────────
     var s = document.querySelector('.streamviewer-settings');
-    var c = document.querySelector('.sv-credits-top');
     if (s) s.style.visibility = '';
-    if (c) c.style.visibility = '';
 })();
 
 

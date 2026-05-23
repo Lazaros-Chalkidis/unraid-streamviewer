@@ -89,8 +89,7 @@
 
 
 /* ── FOUC PREVENTION ─────────────────────────────────────────────────────── */
-.streamviewer-settings,
-.sv-credits-top { visibility: visible !important; }
+.streamviewer-settings { visibility: visible !important; }
 
 
 /* ── BUTTON BASELINE (override Unraid width:100%) ────────────────────────── */
@@ -190,34 +189,6 @@
 @media (max-width: 480px) {
   .sv-tab { padding: 7px 12px; font-size: 12px; }
 }
-
-
-/* ══════════════════════════════════════════════════════════════════════════
-   CREDITS LINK (top right)
-   ══════════════════════════════════════════════════════════════════════════ */
-
-.sv-credits-top {
-  display: block !important;
-  width: 100% !important;
-  margin: 0 0 .3rem 0 !important;
-}
-.sv-credits-top .sv-credits {
-  float: right !important;
-  cursor: pointer !important;
-}
-.sv-credits-top::after { content: ""; display: block; clear: both; }
-.sv-credits {
-  font-size: .78em !important;
-  text-decoration: none !important;
-  color: var(--sv-c-text-muted) !important;
-  cursor: pointer !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  border: 0 !important;
-  background: transparent !important;
-  transition: color .2s !important;
-}
-.sv-credits:hover { color: var(--sv-blue) !important; }
 
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -520,16 +491,35 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
+  gap: 12px;
+}
+.sv-support-link,
+.sv-support-link:link,
+.sv-support-link:visited,
+.sv-support-link:hover,
+.sv-support-link:focus,
+.sv-support-link:active {
+  text-decoration: none;
 }
 .sv-support-link {
   color: var(--sv-blue);
-  text-decoration: none;
   font-weight: 500;
   cursor: pointer;
   transition: color .2s;
 }
 .sv-support-link:hover { color: #6bb3ff; }
+.sv-support-links {
+  display: inline-flex;
+  align-items: center;
+}
+.sv-support-sep {
+  display: inline-block;
+  width: 1px;
+  height: 12px;
+  background: currentColor;
+  opacity: 0.35;
+  margin: 0 10px;
+}
 .sv-version-badge {
   display: inline-block;
   font-size: 10px;

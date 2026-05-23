@@ -38,8 +38,10 @@ final class StreamViewerEndpoint
     private const STATS_DEFAULT_PATH   = '/mnt/user/appdata/Stream-Viewer';
     private const STATS_RETENTION_DAYS = 90;
     private const STATS_PRUNE_CHANCE   = 50;    // 1-in-N requests triggers prune
-    private const STATS_SCHEMA_VER     = 5;
+    private const STATS_SCHEMA_VER     = 6;
     private const STATS_BUSY_TIMEOUT   = 3000;  // ms -- SQLite WAL busy wait
+    private const STATS_MERGE_WINDOW_DEFAULT_MIN = 60;  // pause/resume merge window
+    private const STATS_MERGE_WINDOW_MAX_MIN     = 1440; // upper sanity cap (24h)
     private const LIBRARY_CACHE_TTL    = 300;   // seconds -- 5 min cache for library data
 
     // ── Runtime state ───────────────────────────────────────────────────
@@ -356,6 +358,79 @@ final class StreamViewerEndpoint
                     )
                 ");
             },
+
+            // v5 -> v6: one-time merge of pause/resume duplicates created
+            // before the merge-window logic was introduced. Same user + title +
+            // server entries ending within the default window are collapsed
+            // into a single row (earliest started_at, latest ended_at, summed
+            // active duration). Uses the fixed default window so new installs
+            // upgrading get consistent behavior regardless of cfg state.
+            6 => function(\SQLite3 $db) {
+                $windowSec = self::STATS_MERGE_WINDOW_DEFAULT_MIN * 60;
+
+                // Snapshot all rows first to avoid iterating a result set
+                // while issuing DELETE/UPDATE against the same table.
+                $res = @$db->query("
+                    SELECT id, user, title, server_name, server_type,
+                           started_at, ended_at, duration_sec
+                    FROM watch_history
+                    ORDER BY user, title, server_name, server_type, started_at ASC
+                ");
+                if ($res === false) return;
+
+                $rows = [];
+                while ($r = $res->fetchArray(SQLITE3_ASSOC)) $rows[] = $r;
+                if (count($rows) < 2) return;
+
+                $updates  = [];  // id => [ended_at, duration_sec]
+                $toDelete = [];
+                $prev = null;
+                foreach ($rows as $r) {
+                    $sameIdentity = $prev !== null
+                        && $r['user']        === $prev['user']
+                        && $r['title']       === $prev['title']
+                        && $r['server_name'] === $prev['server_name']
+                        && $r['server_type'] === $prev['server_type'];
+                    $gap = $prev !== null ? ((int)$r['started_at'] - (int)$prev['ended_at']) : PHP_INT_MAX;
+                    if ($sameIdentity && $gap <= $windowSec) {
+                        // Merge r into prev: extend end, sum active duration
+                        $prev['ended_at']     = max((int)$prev['ended_at'], (int)$r['ended_at']);
+                        $prev['duration_sec'] = (int)$prev['duration_sec'] + (int)$r['duration_sec'];
+                        $updates[(int)$prev['id']] = [
+                            'ended_at'     => $prev['ended_at'],
+                            'duration_sec' => $prev['duration_sec'],
+                        ];
+                        $toDelete[] = (int)$r['id'];
+                    } else {
+                        $prev = $r;
+                    }
+                }
+
+                if (!empty($updates)) {
+                    $upd = $db->prepare("UPDATE watch_history SET ended_at = :e, duration_sec = :d WHERE id = :id");
+                    foreach ($updates as $id => $u) {
+                        $upd->bindValue(':e',  $u['ended_at'],     SQLITE3_INTEGER);
+                        $upd->bindValue(':d',  $u['duration_sec'], SQLITE3_INTEGER);
+                        $upd->bindValue(':id', $id,                SQLITE3_INTEGER);
+                        $upd->execute();
+                        $upd->reset();
+                    }
+                    $upd->close();
+                }
+
+                if (!empty($toDelete)) {
+                    // Chunk to avoid huge IN clauses
+                    foreach (array_chunk($toDelete, 500) as $chunk) {
+                        $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+                        $del = $db->prepare("DELETE FROM watch_history WHERE id IN ($placeholders)");
+                        foreach ($chunk as $i => $id) {
+                            $del->bindValue($i + 1, $id, SQLITE3_INTEGER);
+                        }
+                        $del->execute();
+                        $del->close();
+                    }
+                }
+            },
         ];
 
         foreach ($migrations as $ver => $fn) {
@@ -387,6 +462,15 @@ final class StreamViewerEndpoint
 
         // Minimum duration to record (avoid partial/accidental plays)
         $minDurationSec = 30;
+
+        // Merge window: when a session ends, look for a recent same-identity
+        // history entry to merge into instead of inserting a new row. This
+        // collapses pause/resume cycles (which produce new session_ids from
+        // the media server) back into a single play.
+        $mergeWindowMin = (int)($cfg['STATS_MERGE_WINDOW_MIN'] ?? self::STATS_MERGE_WINDOW_DEFAULT_MIN);
+        if ($mergeWindowMin < 0) $mergeWindowMin = 0;
+        if ($mergeWindowMin > self::STATS_MERGE_WINDOW_MAX_MIN) $mergeWindowMin = self::STATS_MERGE_WINDOW_MAX_MIN;
+        $mergeWindowSec = $mergeWindowMin * 60;
 
         $db->exec('BEGIN');
 
@@ -448,6 +532,27 @@ final class StreamViewerEndpoint
             VALUES (:sk, :user, :title, :mt, :sn, :st, :pt, :ip, :dev,
                     :qual, :bw, :dur, :start, :end, :sres, :mdur)
         ");
+        $mergeFindStmt = ($mergeWindowSec > 0) ? $db->prepare("
+            SELECT id, ended_at, duration_sec
+            FROM watch_history
+            WHERE user = :user AND title = :title
+              AND server_name = :sn AND server_type = :st
+              AND ended_at >= :minEnded
+              AND ended_at <= :maxEnded
+            ORDER BY ended_at DESC
+            LIMIT 1
+        ") : null;
+        $mergeUpdStmt = ($mergeWindowSec > 0) ? $db->prepare("
+            UPDATE watch_history
+            SET duration_sec      = duration_sec + :extra,
+                ended_at          = :end,
+                play_type         = :pt,
+                quality           = :qual,
+                bandwidth_kbps    = :bw,
+                stream_resolution = :sres,
+                media_duration_ms = :mdur
+            WHERE id = :id
+        ") : null;
         $delStmt = $db->prepare("DELETE FROM active_sessions WHERE session_key = :sk");
 
         while ($row = $ended->fetchArray(SQLITE3_ASSOC)) {
@@ -462,30 +567,64 @@ final class StreamViewerEndpoint
                 continue;
             }
 
-            $moveStmt->bindValue(':sk',    $row['session_key'],  SQLITE3_TEXT);
-            $moveStmt->bindValue(':user',  $row['user'],         SQLITE3_TEXT);
-            $moveStmt->bindValue(':title', $row['title'],        SQLITE3_TEXT);
-            $moveStmt->bindValue(':mt',    $row['media_type'],   SQLITE3_TEXT);
-            $moveStmt->bindValue(':sn',    $row['server_name'],  SQLITE3_TEXT);
-            $moveStmt->bindValue(':st',    $row['server_type'],  SQLITE3_TEXT);
-            $moveStmt->bindValue(':pt',    $row['play_type'],    SQLITE3_TEXT);
-            $moveStmt->bindValue(':ip',    $row['ip_address'],   SQLITE3_TEXT);
-            $moveStmt->bindValue(':dev',   $row['device'],       SQLITE3_TEXT);
-            $moveStmt->bindValue(':qual',  $row['quality'],      SQLITE3_TEXT);
-            $moveStmt->bindValue(':bw',    (int)$row['bandwidth_kbps'], SQLITE3_INTEGER);
-            $moveStmt->bindValue(':dur',   $durationSec,         SQLITE3_INTEGER);
-            $moveStmt->bindValue(':start', (int)$row['first_seen'], SQLITE3_INTEGER);
-            $moveStmt->bindValue(':end',   (int)$row['last_seen'],  SQLITE3_INTEGER);
-            $moveStmt->bindValue(':sres',  (string)($row['stream_resolution'] ?? ''), SQLITE3_TEXT);
-            $moveStmt->bindValue(':mdur',  (int)($row['media_duration_ms'] ?? 0),     SQLITE3_INTEGER);
-            $moveStmt->execute();
-            $moveStmt->reset();
+            // Try to merge into a recent matching history entry (pause/resume)
+            $merged = false;
+            if ($mergeFindStmt !== null) {
+                $startedAt = (int)$row['first_seen'];
+                $endedAt   = (int)$row['last_seen'];
+                $mergeFindStmt->bindValue(':user',     (string)$row['user'],        SQLITE3_TEXT);
+                $mergeFindStmt->bindValue(':title',    (string)$row['title'],       SQLITE3_TEXT);
+                $mergeFindStmt->bindValue(':sn',       (string)$row['server_name'], SQLITE3_TEXT);
+                $mergeFindStmt->bindValue(':st',       (string)$row['server_type'], SQLITE3_TEXT);
+                $mergeFindStmt->bindValue(':minEnded', $startedAt - $mergeWindowSec, SQLITE3_INTEGER);
+                $mergeFindStmt->bindValue(':maxEnded', $endedAt,                     SQLITE3_INTEGER);
+                $cres = $mergeFindStmt->execute();
+                $cand = $cres ? $cres->fetchArray(SQLITE3_ASSOC) : false;
+                $mergeFindStmt->reset();
+
+                if ($cand) {
+                    $mergeUpdStmt->bindValue(':extra', $durationSec,                            SQLITE3_INTEGER);
+                    $mergeUpdStmt->bindValue(':end',   max((int)$cand['ended_at'], $endedAt),   SQLITE3_INTEGER);
+                    $mergeUpdStmt->bindValue(':pt',    (string)$row['play_type'],               SQLITE3_TEXT);
+                    $mergeUpdStmt->bindValue(':qual',  (string)$row['quality'],                 SQLITE3_TEXT);
+                    $mergeUpdStmt->bindValue(':bw',    (int)$row['bandwidth_kbps'],             SQLITE3_INTEGER);
+                    $mergeUpdStmt->bindValue(':sres',  (string)($row['stream_resolution'] ?? ''),SQLITE3_TEXT);
+                    $mergeUpdStmt->bindValue(':mdur',  (int)($row['media_duration_ms'] ?? 0),    SQLITE3_INTEGER);
+                    $mergeUpdStmt->bindValue(':id',    (int)$cand['id'],                        SQLITE3_INTEGER);
+                    $mergeUpdStmt->execute();
+                    $mergeUpdStmt->reset();
+                    $merged = true;
+                }
+            }
+
+            if (!$merged) {
+                $moveStmt->bindValue(':sk',    $row['session_key'],  SQLITE3_TEXT);
+                $moveStmt->bindValue(':user',  $row['user'],         SQLITE3_TEXT);
+                $moveStmt->bindValue(':title', $row['title'],        SQLITE3_TEXT);
+                $moveStmt->bindValue(':mt',    $row['media_type'],   SQLITE3_TEXT);
+                $moveStmt->bindValue(':sn',    $row['server_name'],  SQLITE3_TEXT);
+                $moveStmt->bindValue(':st',    $row['server_type'],  SQLITE3_TEXT);
+                $moveStmt->bindValue(':pt',    $row['play_type'],    SQLITE3_TEXT);
+                $moveStmt->bindValue(':ip',    $row['ip_address'],   SQLITE3_TEXT);
+                $moveStmt->bindValue(':dev',   $row['device'],       SQLITE3_TEXT);
+                $moveStmt->bindValue(':qual',  $row['quality'],      SQLITE3_TEXT);
+                $moveStmt->bindValue(':bw',    (int)$row['bandwidth_kbps'], SQLITE3_INTEGER);
+                $moveStmt->bindValue(':dur',   $durationSec,         SQLITE3_INTEGER);
+                $moveStmt->bindValue(':start', (int)$row['first_seen'], SQLITE3_INTEGER);
+                $moveStmt->bindValue(':end',   (int)$row['last_seen'],  SQLITE3_INTEGER);
+                $moveStmt->bindValue(':sres',  (string)($row['stream_resolution'] ?? ''), SQLITE3_TEXT);
+                $moveStmt->bindValue(':mdur',  (int)($row['media_duration_ms'] ?? 0),     SQLITE3_INTEGER);
+                $moveStmt->execute();
+                $moveStmt->reset();
+            }
 
             $delStmt->bindValue(':sk', $row['session_key'], SQLITE3_TEXT);
             $delStmt->execute();
             $delStmt->reset();
         }
         $moveStmt->close();
+        if ($mergeFindStmt !== null) $mergeFindStmt->close();
+        if ($mergeUpdStmt  !== null) $mergeUpdStmt->close();
         $delStmt->close();
 
         $db->exec('COMMIT');
