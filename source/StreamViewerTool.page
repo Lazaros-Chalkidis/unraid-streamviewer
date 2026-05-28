@@ -13,6 +13,11 @@ $cfg = @parse_plugin_cfg('streamviewer', true) ?: [];
 
 $statsEnabled = (($cfg['STATS_ENABLED'] ?? '0') === '1');
 
+// Server types the user actually has (configured or with stats history).
+// Used to filter chart legends and the Recent History server filter dropdown.
+$svt_active_types = StreamViewerEndpoint::activeServerTypes();
+$svt_type_labels  = ['plex' => 'Plex', 'jellyfin' => 'Jellyfin', 'emby' => 'Emby'];
+
 // Theme detection (same as Settings page)
 $dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
 $unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
@@ -25,6 +30,7 @@ $tile_config = [
     'statsEnabled'    => $statsEnabled,
     'lightTheme'      => $svt_light,
     'libSectionsOpen' => (($cfg['LIB_SECTIONS_OPEN'] ?? '0') === '1'),
+    'activeServerTypes' => StreamViewerEndpoint::activeServerTypes(),
 ];
 $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
 
@@ -253,6 +259,9 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
           <option value="7d">Last 7 days</option>
           <option value="30d" selected>Last 30 days</option>
           <option value="90d">Last 90 days</option>
+          <option value="180d">Last 180 days</option>
+          <option value="365d">Last 365 days</option>
+          <option value="all">All time</option>
         </select>
       </div>
     </div>
@@ -332,9 +341,9 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         <div class="svt-filters">
           <select id="svt-filter-server" class="svt-select svt-select--sm" aria-label="Filter by server">
             <option value="">All servers</option>
-            <option value="plex">Plex</option>
-            <option value="jellyfin">Jellyfin</option>
-            <option value="emby">Emby</option>
+            <?php foreach ($svt_active_types as $t): ?>
+            <option value="<?= htmlspecialchars($t) ?>"><?= htmlspecialchars($svt_type_labels[$t]) ?></option>
+            <?php endforeach; ?>
           </select>
           <select id="svt-filter-play" class="svt-select svt-select--sm" aria-label="Filter by play type">
             <option value="">All types</option>
@@ -456,6 +465,9 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
             <option value="7d">Last 7 days</option>
             <option value="30d" selected>Last 30 days</option>
             <option value="90d">Last 90 days</option>
+            <option value="180d">Last 180 days</option>
+            <option value="365d">Last 365 days</option>
+            <option value="all">All time</option>
           </select>
         </div>
       </div>
@@ -510,12 +522,15 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
               <option value="7d">Last 7 days</option>
               <option value="30d" selected>Last 30 days</option>
               <option value="90d">Last 90 days</option>
+              <option value="180d">Last 180 days</option>
+              <option value="365d">Last 365 days</option>
+              <option value="all">All time</option>
             </select>
             <select id="svt-hist-server" class="svt-select svt-select--sm" aria-label="Server">
               <option value="">All servers</option>
-              <option value="plex">Plex</option>
-              <option value="jellyfin">Jellyfin</option>
-              <option value="emby">Emby</option>
+              <?php foreach ($svt_active_types as $t): ?>
+              <option value="<?= htmlspecialchars($t) ?>"><?= htmlspecialchars($svt_type_labels[$t]) ?></option>
+              <?php endforeach; ?>
             </select>
             <select id="svt-hist-user" class="svt-select svt-select--sm" aria-label="User">
               <option value="">All users</option>
@@ -607,6 +622,9 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
             <option value="7d">Last 7 days</option>
             <option value="30d" selected>Last 30 days</option>
             <option value="90d">Last 90 days</option>
+            <option value="180d">Last 180 days</option>
+            <option value="365d">Last 365 days</option>
+            <option value="all">All time</option>
           </select>
         </div>
       </div>
@@ -796,6 +814,9 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
             <option value="7d">Last 7 days</option>
             <option value="30d" selected>Last 30 days</option>
             <option value="90d">Last 90 days</option>
+            <option value="180d">Last 180 days</option>
+            <option value="365d">Last 365 days</option>
+            <option value="all">All time</option>
           </select>
         </div>
       </div>

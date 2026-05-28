@@ -112,6 +112,72 @@ final class StreamViewerEndpoint
         return $this->cfgCache;
     }
 
+    /**
+     * Returns the set of server types that the user actually uses: the union
+     * of (a) currently-enabled servers configured in cfg, and (b) server types
+     * that have data in the stats DB (historical or currently active). Used
+     * by the Statistics page to hide chart/legend/filter entries for server
+     * types the user does not have. Returned in canonical order. Result is
+     * cached per request.
+     *
+     * Callable statically so PHP templates can use it without instantiating
+     * the endpoint class.
+     */
+    public static function activeServerTypes(): array
+    {
+        static $cached = null;
+        if ($cached !== null) return $cached;
+
+        $cfg = @parse_plugin_cfg(self::PLUGIN_NAME, true);
+        if (!is_array($cfg)) $cfg = [];
+
+        $set = [];
+
+        // 1. Currently configured enabled servers
+        for ($i = 1; $i <= self::MAX_SERVERS; $i++) {
+            if (($cfg["SERVER{$i}_ENABLED"] ?? '0') !== '1') continue;
+            $t = (string)($cfg["SERVER{$i}_TYPE"] ?? '');
+            if (in_array($t, self::VALID_TYPES, true)) $set[$t] = true;
+        }
+
+        // 2. Server types with data in stats DB (covers removed-but-historical
+        //    servers so the user can still view their old plays).
+        if (($cfg['STATS_ENABLED'] ?? '0') === '1') {
+            $dir = trim((string)($cfg['STATS_DB_PATH'] ?? self::STATS_DEFAULT_PATH));
+            if ($dir === '') $dir = self::STATS_DEFAULT_PATH;
+            $dbPath = $dir . '/' . self::STATS_DB_NAME;
+            if (is_file($dbPath)) {
+                try {
+                    $db = new \SQLite3($dbPath, SQLITE3_OPEN_READONLY);
+                    $db->busyTimeout(1000);
+                    $res = @$db->query("
+                        SELECT DISTINCT server_type FROM watch_history
+                        WHERE server_type IS NOT NULL AND server_type != ''
+                        UNION
+                        SELECT DISTINCT server_type FROM active_sessions
+                        WHERE server_type IS NOT NULL AND server_type != ''
+                    ");
+                    if ($res !== false) {
+                        while ($r = $res->fetchArray(SQLITE3_NUM)) {
+                            $t = (string)$r[0];
+                            if (in_array($t, self::VALID_TYPES, true)) $set[$t] = true;
+                        }
+                    }
+                    $db->close();
+                } catch (\Throwable $e) {
+                    // Silent fallback: rely on cfg-configured types only
+                }
+            }
+        }
+
+        // Return in canonical order
+        $out = [];
+        foreach (self::VALID_TYPES as $t) {
+            if (isset($set[$t])) $out[] = $t;
+        }
+        return $cached = $out;
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // Stats -- SQLite database layer
     // ══════════════════════════════════════════════════════════════════════
@@ -1006,6 +1072,9 @@ final class StreamViewerEndpoint
             'get_alerts'         => fn() => $this->replyGetAlerts(),
             // Admin maintenance
             'wipe_stats'         => fn() => $this->replyWipeStats(),
+            // Returns canonical-order array of server types the user has
+            // (configured or with data) so the UI can hide unused entries.
+            'get_active_server_types' => fn() => $this->json(['server_types' => self::activeServerTypes()]),
             // Local Plex container detection (for mismatch banner & OAuth enrichment)
             'check_local_mismatch' => fn() => $this->replyCheckLocalMismatch(),
             'apply_local_url'      => fn() => $this->replyApplyLocalUrl(),
@@ -1936,9 +2005,12 @@ final class StreamViewerEndpoint
     private function statsPeriodCutoff(): int
     {
         $period = (string)($_GET['period'] ?? '30d');
+        if ($period === 'all') return 0;  // no cutoff
         $days = match($period) {
-            '7d'  => 7,
-            '90d' => 90,
+            '7d'   => 7,
+            '90d'  => 90,
+            '180d' => 180,
+            '365d' => 365,
             default => 30,
         };
         return time() - ($days * 86400);
@@ -2899,9 +2971,14 @@ final class StreamViewerEndpoint
         $db = $this->openDb();
         if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
 
-        $periodMap = ['7d' => 7, '30d' => 30, '90d' => 90];
-        $days = $periodMap[$_GET['period'] ?? '30d'] ?? 30;
-        $cutoff = time() - ($days * 86400);
+        $period = (string)($_GET['period'] ?? '30d');
+        if ($period === 'all') {
+            $cutoff = 0;
+        } else {
+            $periodMap = ['7d' => 7, '30d' => 30, '90d' => 90, '180d' => 180, '365d' => 365];
+            $days = $periodMap[$period] ?? 30;
+            $cutoff = time() - ($days * 86400);
+        }
 
         // 1. Buffering warnings: sessions under 120 seconds, grouped by title
         $bufferStmt = $db->prepare("

@@ -1027,10 +1027,13 @@ $lightClass   = $sv_light ? ' sv-light' : '';
           <div class="sv-credits-desc">Real-time media stream monitor and statistics tracker for Plex, Jellyfin and Emby.</div>
           <div class="sv-credits-links">
             <a href="https://github.com/Lazaros-Chalkidis" target="_blank" rel="noopener" class="sv-credits-link">
-              <i class="fa fa-github"></i><span>Github profile</span><i class="fa fa-external-link sv-credits-link-ext"></i>
+              <i class="fa fa-github"></i><span>GitHub Profile</span><i class="fa fa-external-link sv-credits-link-ext"></i>
             </a>
             <a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" target="_blank" rel="noopener" class="sv-credits-link">
               <i class="fa fa-comments-o"></i><span>Plugin Support Thread</span><i class="fa fa-external-link sv-credits-link-ext"></i>
+            </a>
+            <a href="https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues" target="_blank" rel="noopener" class="sv-credits-link">
+              <i class="fa fa-bug"></i><span>GitHub Issues</span><i class="fa fa-external-link sv-credits-link-ext"></i>
             </a>
           </div>
         </div>

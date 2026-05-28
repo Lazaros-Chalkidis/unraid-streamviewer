@@ -1,6 +1,13 @@
 
 # Stream Viewer
 
+## v2026.05.28
+
+### Bug Fixes
+- Statistics time-range dropdowns now go up to All time (previously capped at 90 days) to match the retention options in Statistics settings.
+- Movies in Recently Added now show "Movie" in the Type column instead of "-".
+- Stats charts, legends, tooltips and Server filter dropdowns now only show the server types you actually use, instead of always showing Plex, Jellyfin and Emby.
+
 ## v2026.05.23
 
 ### Bug Fixes

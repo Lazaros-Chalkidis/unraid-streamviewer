@@ -29,6 +29,20 @@ var _histPage   = 1;
 var _chart      = null;  // Chart.js instance
 var _loading    = false;
 
+// Server types the user actually has. Used to filter chart datasets,
+// legends and tooltips so users see only the servers they use.
+// Falls back to all three only if the bootstrap value is missing entirely
+// (defensive: keeps previous behavior if cfg load somehow failed).
+var _activeServerTypes = (_cfg.activeServerTypes && _cfg.activeServerTypes.length)
+    ? _cfg.activeServerTypes
+    : ['plex', 'jellyfin', 'emby'];
+function _hasServerType(t) {
+    for (var i = 0; i < _activeServerTypes.length; i++) {
+        if (_activeServerTypes[i] === t) return true;
+    }
+    return false;
+}
+
 // Theme-dependent chart colors
 
 // ── Chart Colors ──────────────────────────────────────────────────────────
@@ -156,7 +170,7 @@ function loadStats() {
         // Subtitle
         var sub = DOM.subtitle();
         if (sub) {
-            var periodLabel = { '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days' };
+            var periodLabel = { '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days', '180d': 'Last 180 days', '365d': 'Last 365 days', 'all': 'All time' };
             sub.textContent = (periodLabel[_period] || 'Last 30 days');
         }
     });
@@ -197,39 +211,36 @@ function loadDailyChart() {
             _chart = null;
         }
 
-        var periodLabel = { '7d': 'last 7 days', '30d': 'last 30 days', '90d': 'last 90 days' };
+        var periodLabel = { '7d': 'last 7 days', '30d': 'last 30 days', '90d': 'last 90 days', '180d': 'last 180 days', '365d': 'last 365 days', 'all': 'all time' };
         var cp = DOM.chartPeriod();
         if (cp) cp.textContent = periodLabel[_period] || 'last 30 days';
 
         var ctx = canvas.getContext('2d');
 
+        var allDatasets = [
+            { type: 'plex',     label: 'Plex',     data: plex, backgroundColor: '#e5a00d', borderRadius: 2, maxBarThickness: 20 },
+            { type: 'jellyfin', label: 'Jellyfin', data: jf,   backgroundColor: '#00a4dc', borderRadius: 2, maxBarThickness: 20 },
+            { type: 'emby',     label: 'Emby',     data: emby, backgroundColor: '#52b54b', borderRadius: 2, maxBarThickness: 20 },
+        ];
+        var datasets = [];
+        for (var di = 0; di < allDatasets.length; di++) {
+            if (_hasServerType(allDatasets[di].type)) {
+                var ds = allDatasets[di];
+                datasets.push({
+                    label: ds.label,
+                    data: ds.data,
+                    backgroundColor: ds.backgroundColor,
+                    borderRadius: ds.borderRadius,
+                    maxBarThickness: ds.maxBarThickness,
+                });
+            }
+        }
+
         _chart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: labels,
-                datasets: [
-                    {
-                        label: 'Plex',
-                        data: plex,
-                        backgroundColor: '#e5a00d',
-                        borderRadius: 2,
-                        maxBarThickness: 20,
-                    },
-                    {
-                        label: 'Jellyfin',
-                        data: jf,
-                        backgroundColor: '#00a4dc',
-                        borderRadius: 2,
-                        maxBarThickness: 20,
-                    },
-                    {
-                        label: 'Emby',
-                        data: emby,
-                        backgroundColor: '#52b54b',
-                        borderRadius: 2,
-                        maxBarThickness: 20,
-                    },
-                ],
+                datasets: datasets,
             },
             options: {
                 responsive: true,
@@ -742,11 +753,17 @@ function loadRecentlyAdded() {
             return;
         }
 
+        // Fallback labels per media_type when the row carries no S/E info
+        // (e.g. movies don't have an episode label).
+        var MEDIA_TYPE_DEFAULT_LABEL = { 'movie': 'Movie', 'show': 'Series', 'episode': 'Episode' };
+
         var html = '';
         for (var i = 0; i < items.length; i++) {
             var r = items[i];
             var typeIcon = mediaTypeIcon(r.media_type);
-            var typeLbl = r.type_label || '-';
+            var typeLbl = (r.type_label && r.type_label !== '-')
+                ? r.type_label
+                : (MEDIA_TYPE_DEFAULT_LABEL[r.media_type] || '-');
             var typeColor = LIB_TYPE_COLORS[r.media_type] || LIB_TYPE_COLORS['movie'] || '#555';
             var statusCls = r.watched ? 'svt-lib-status--watched' : 'svt-lib-status--unwatched';
             var statusTxt = r.watched ? 'Watched' : 'Unwatched';
@@ -1153,18 +1170,25 @@ function loadGraphs() {
             wtJf.push(wt[i].jellyfin || 0);
             wtEmby.push(wt[i].emby || 0);
         }
-        grBuildLegend(document.getElementById('svt-gr-legend-wt'), [
-            { color: '#e5a00d', label: 'Plex' },
-            { color: '#00a4dc', label: 'Jellyfin' },
-            { color: '#52b54b', label: 'Emby' },
-        ]);
+        var wtAll = [
+            { type: 'plex',     color: '#e5a00d', label: 'Plex',     data: wtPlex, bg: 'rgba(229,160,13,.1)'  },
+            { type: 'jellyfin', color: '#00a4dc', label: 'Jellyfin', data: wtJf,   bg: 'rgba(0,164,220,.08)' },
+            { type: 'emby',     color: '#52b54b', label: 'Emby',     data: wtEmby, bg: 'rgba(82,181,75,.08)' },
+        ];
+        var wtLegend = [], wtDatasets = [];
+        for (var wi = 0; wi < wtAll.length; wi++) {
+            if (!_hasServerType(wtAll[wi].type)) continue;
+            wtLegend.push({ color: wtAll[wi].color, label: wtAll[wi].label });
+            wtDatasets.push({
+                label: wtAll[wi].label, data: wtAll[wi].data,
+                borderColor: wtAll[wi].color, backgroundColor: wtAll[wi].bg,
+                fill: true, tension: 0.3, borderWidth: 2, pointRadius: 2,
+            });
+        }
+        grBuildLegend(document.getElementById('svt-gr-legend-wt'), wtLegend);
         grMakeChart('svt-gr-watchtime', {
             type: 'line',
-            data: { labels: wtLabels, datasets: [
-                { label: 'Plex', data: wtPlex, borderColor: '#e5a00d', backgroundColor: 'rgba(229,160,13,.1)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 2 },
-                { label: 'Jellyfin', data: wtJf, borderColor: '#00a4dc', backgroundColor: 'rgba(0,164,220,.08)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 2 },
-                { label: 'Emby', data: wtEmby, borderColor: '#52b54b', backgroundColor: 'rgba(82,181,75,.08)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 2 },
-            ]},
+            data: { labels: wtLabels, datasets: wtDatasets },
             options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: grBaseTooltip() },
                 scales: { x: { ticks: { color: grTick(), font: { size: 15 } }, grid: { display: false } },
                           y: { ticks: { color: grTick(), font: { size: 15 }, callback: function(v) { return v + 'h'; } }, grid: { color: grGrid() }, beginAtZero: true } },
