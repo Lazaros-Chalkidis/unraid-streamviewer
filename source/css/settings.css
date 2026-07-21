@@ -1,11 +1,10 @@
-/* ==========================================================================
-   STREAM VIEWER — Settings Page Styles (Redesigned v3)
+/* ============================================================================
+   STREAM VIEWER
    Copyright (C) 2026 Lazaros Chalkidis
    License: GPLv3
-   /plugins/streamviewer/css/settings.css
-   ========================================================================== */
+   ========================================================================= */
 
-/* ── CSS CUSTOM PROPERTIES ───────────────────────────────────────────────── */
+/* tokens */
 :root {
   --sv-c-text:          rgba(255,255,255,.87);
   --sv-c-text-mid:      rgba(255,255,255,.60);
@@ -21,7 +20,6 @@
   --sv-c-bg-subtle:     rgba(255,255,255,.035);
   --sv-c-bg-faint:      rgba(255,255,255,.02);
 
-  /* Neutral grey ramp (matching tool.css) */
   --sv-panel-bg:       #1c1c1c;
   --sv-sec-hd-bg:      #242424;
   --sv-sec-hd-hover:   #2c2c2c;
@@ -30,22 +28,18 @@
   --sv-label-bg:       rgba(0,0,0,.15);
   --sv-footer-bg:      #181818;
 
-  /* Accent */
   --sv-accent:         #f47d42;
   --sv-accent-dim:     rgba(244,125,66,.12);
   --sv-accent-border:  rgba(244,125,66,.45);
 
-  /* Toggle */
   --sv-tog-on:         #f47d42;
   --sv-tog-off-track:  rgba(255,255,255,.10);
   --sv-tog-off-thumb:  rgba(255,255,255,.40);
 
-  /* Select/Input */
   --sv-ctrl-bg:        #262626;
   --sv-ctrl-border:    #383838;
   --sv-ctrl-hover:     #4a4a4a;
 
-  /* Misc */
   --sv-green:          #4caf50;
   --sv-red:            #e74c3c;
   --sv-blue:           #4a90e2;
@@ -54,6 +48,7 @@
   --sv-emby:           #52b54b;
 }
 
+/* light themes */
 .sv-light {
   --sv-c-text:          rgba(0,0,0,.85);
   --sv-c-text-mid:      rgba(0,0,0,.60);
@@ -87,12 +82,8 @@
   --sv-green:          #2e7d32;
 }
 
-
-/* ── FOUC PREVENTION ─────────────────────────────────────────────────────── */
 .streamviewer-settings { visibility: visible !important; }
 
-
-/* ── BUTTON BASELINE (override Unraid width:100%) ────────────────────────── */
 .streamviewer-settings button,
 .streamviewer-settings input[type="button"],
 .streamviewer-settings input[type="submit"] {
@@ -101,12 +92,6 @@
   flex-shrink: 0 !important;
 }
 
-
-/* ── WRAPPER & RESPONSIVE ─────────────────────────────────────────────────
-   Width follows the same convention as the Statistics page: 80% of the
-   viewport on desktop (10% gutter each side) and 95% on tablet/mobile below
-   768px, capped at 1400px so content stays readable on very wide displays.
-*/
 .streamviewer-settings {
   width: 80%;
   max-width: 80%;
@@ -123,8 +108,6 @@
   }
 }
 
-
-/* ── SETTINGS PANEL ──────────────────────────────────────────────────────── */
 .streamviewer-settings .sv-settings-panel {
   background: var(--sv-panel-bg);
   border: 1px solid var(--sv-c-border);
@@ -137,11 +120,6 @@
 #svEmbyPanel {
   padding: .75rem;
 }
-
-
-/* ══════════════════════════════════════════════════════════════════════════
-   TOP TABS
-   ══════════════════════════════════════════════════════════════════════════ */
 
 .streamviewer-settings .sv-tabs {
   display: flex !important;
@@ -190,11 +168,7 @@
   .sv-tab { padding: 7px 12px; font-size: 12px; }
 }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   COLLAPSIBLE SECTIONS
-   ══════════════════════════════════════════════════════════════════════════ */
-
+/* collapsible sections */
 .sv-sec {
   border-bottom: 1px solid var(--sv-c-border);
 }
@@ -255,11 +229,6 @@
   color: var(--sv-c-text-mid);
 }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   TABLE-CELL ROWS with ZEBRA STRIPING
-   ══════════════════════════════════════════════════════════════════════════ */
-
 .sv-r {
   display: flex;
   align-items: center;
@@ -271,7 +240,6 @@
 .sv-r:nth-child(odd) { background: var(--sv-row-odd); }
 .sv-r:nth-child(even) { background: var(--sv-row-even); }
 
-/* Label cell */
 .sv-r-label {
   width: 220px;
   flex-shrink: 0;
@@ -287,7 +255,6 @@
   line-height: 1.35;
 }
 
-/* Field cell */
 .sv-r-field {
   flex: 1;
   padding: 5px 16px;
@@ -310,7 +277,6 @@
   font-weight: 500;
 }
 
-/* Mobile: stack vertically */
 @media (max-width: 768px) {
   .sv-r {
     flex-direction: column;
@@ -328,11 +294,7 @@
   }
 }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   TOGGLE SWITCH (23x13px)
-   ══════════════════════════════════════════════════════════════════════════ */
-
+/* on/off switches */
 .sv-toggle {
   position: relative;
   display: inline-flex;
@@ -387,11 +349,6 @@
 .sv-toggle-txt.on { color: var(--sv-green); }
 .sv-toggle-txt.off { color: var(--sv-c-text-faint); }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   STYLED SELECT (compact, auto-width)
-   ══════════════════════════════════════════════════════════════════════════ */
-
 .sv-select {
   appearance: none;
   -webkit-appearance: none;
@@ -424,11 +381,6 @@
 }
 .sv-light .sv-select option { background: #fff; color: rgba(0,0,0,.85); }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   STYLED INPUT (compact)
-   ══════════════════════════════════════════════════════════════════════════ */
-
 .sv-input {
   appearance: none;
   -webkit-appearance: none;
@@ -457,11 +409,6 @@
   line-height: 1.3;
 }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   FOOTER (native Unraid buttons, centered)
-   ══════════════════════════════════════════════════════════════════════════ */
-
 .sv-footer {
   display: flex;
   align-items: center;
@@ -475,7 +422,6 @@
   flex-wrap: wrap;
 }
 
-/* Keep compact sizing but let Unraid handle colors */
 .sv-footer input[type="button"],
 .sv-footer input[type="submit"] {
   min-width: 95px !important;
@@ -483,7 +429,7 @@
   font-size: 11.5px !important;
 }
 
-/* Footer bottom row (support + version badge) */
+/* footer (support link + version) */
 .sv-footer-row {
   text-align: center;
   padding: 8px 0 4px;
@@ -532,11 +478,6 @@
   line-height: 1.6;
 }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   SERVER MANAGEMENT PANELS (Plex / Jellyfin / Emby)
-   ══════════════════════════════════════════════════════════════════════════ */
-
 .sv-card {
   border: 1px solid var(--sv-c-border);
   background: var(--sv-row-even);
@@ -582,8 +523,6 @@
 
 .sv-card-bd { padding: .6rem .85rem; }
 
-
-/* Accordion */
 .sv-accordion {
   border: 1px solid var(--sv-c-border);
   border-radius: 6px;
@@ -620,8 +559,6 @@
 .sv-accordion--collapsed .sv-accordion-bd { display: none; }
 .sv-accordion-bd { padding: .4rem .8rem .6rem; }
 
-
-/* Plex sign-in button */
 .sv-plex-signin-btn {
   display: inline-flex !important;
   align-items: center !important;
@@ -678,8 +615,7 @@
 }
 .sv-cancel-btn:hover { background: rgba(231,76,60,.18) !important; }
 
-
-/* Server card */
+/* per-server config cards */
 .sv-server-card {
   border: 1px solid var(--sv-c-border);
   border-radius: 6px;
@@ -757,8 +693,6 @@
   .sv-jf-add-fields .sv-server-field--wide { grid-column: auto; }
 }
 
-
-/* Buttons (Test, Add, Remove) */
 .sv-test-btn {
   display: inline-flex !important;
   align-items: center !important;
@@ -844,8 +778,6 @@
   color: var(--sv-red) !important;
 }
 
-
-/* Discovery cards */
 .sv-disc-card {
   margin-bottom: .8rem;
   padding-bottom: .8rem;
@@ -878,16 +810,12 @@
 
 .sv-light .sv-disc-card { border-bottom-color: rgba(0,0,0,.10); }
 
-
-/* Test results */
 .sv-test-ok  { background: rgba(82,181,74,.1); border: 1px solid rgba(82,181,74,.25); color: var(--sv-green); }
 .sv-test-err { background: rgba(231,76,60,.08); border: 1px solid rgba(231,76,60,.2); color: var(--sv-red); }
 .sv-inline-result { padding: 2px 8px; border-radius: 4px; font-size: 11.5px; font-weight: 500; }
 .sv-light .sv-test-ok  { background: rgba(82,181,74,.07); border-color: rgba(82,181,74,.35); color: #2e7d26; }
 .sv-light .sv-test-err { background: rgba(231,76,60,.07); border-color: rgba(231,76,60,.3); color: #c0392b; }
 
-
-/* No-servers placeholder */
 .sv-no-servers {
   text-align: center; padding: 1rem .75rem;
   color: var(--sv-c-text-faint); font-style: italic; font-size: 12px;
@@ -895,7 +823,6 @@
 
 .sv-discovery-found { font-size: 12.5px; font-weight: 500; padding: .2rem 0; }
 
-/* Help text shown between the connection picker and the Add button */
 .sv-disc-conn-help {
   font-size: 11.5px;
   color: var(--sv-c-text-faint);
@@ -904,7 +831,6 @@
   margin-top: .2rem;
 }
 
-/* ── Local Plex container mismatch banner ──────────────────────────────── */
 .sv-mismatch-banner {
   background: rgba(229, 160, 13, .08);
   border: 1px solid rgba(229, 160, 13, .35);
@@ -944,9 +870,6 @@
 .sv-mismatch-banner__btn:hover { background: #f5b300; }
 .sv-mismatch-banner__btn[disabled] { opacity: .55; cursor: default; }
 
-/* Light theme overrides for the mismatch banner. The dark variants use white
- * overlays for the inline code chip and the row divider, which become almost
- * invisible on white/gray backgrounds; recolor with dark overlays for them. */
 .sv-light .sv-mismatch-banner__body code {
   background: rgba(0,0,0,.06);
   color: var(--sv-c-text);
@@ -954,13 +877,6 @@
 .sv-light .sv-mismatch-banner__row {
   border-top-color: rgba(0,0,0,.10);
 }
-
-
-/* ══════════════════════════════════════════════════════════════════════════
-   CREDITS MODAL (2-column grid: avatar + name on the left, info + links on
-   the right). Styled after the Logs Viewer credits modal so the two plugins
-   feel consistent. Uses sv- prefixed classes throughout.
-   ══════════════════════════════════════════════════════════════════════════ */
 
 .sv-credits-modal-box {
   width: 460px;
@@ -981,7 +897,6 @@
   gap: 0;
 }
 
-/* Left column: avatar + identity */
 .sv-credits-left {
   position: relative;
   padding: 26px 16px 22px;
@@ -1031,7 +946,6 @@
   opacity: 0.85;
 }
 
-/* Right column: info + links */
 .sv-credits-right {
   padding: 20px 22px;
 }
@@ -1103,7 +1017,6 @@
   opacity: 0.5;
 }
 
-/* Footer */
 .sv-credits-footer {
   padding: 12px 22px;
   background: var(--sv-footer-bg);
@@ -1136,7 +1049,6 @@
   border-color: #d56a35 !important;
 }
 
-/* Light theme overrides */
 .sv-light .sv-credits-modal-box {
   background: #fff;
   color: rgba(0,0,0,.85);
@@ -1162,11 +1074,6 @@
   border-top-color: rgba(0,0,0,.10);
 }
 .sv-light .sv-credits-copy { color: rgba(0,0,0,.55); }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   RESET SUCCESS MODAL (shown after Reset to defaults click).
-   Mirrors the LV reset modal design: small card, green checkmark, single OK.
-   ══════════════════════════════════════════════════════════════════════════ */
 
 .sv-reset-modal-box {
   width: 380px;
@@ -1228,11 +1135,6 @@
   border-top-color: rgba(0,0,0,.10);
 }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   LEGACY ROW STRUCTURE (Plex/JF/Emby card bodies)
-   ══════════════════════════════════════════════════════════════════════════ */
-
 .sv-card-bd .sv-row {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: .8rem; padding: .4rem 0; border-bottom: 1px solid var(--sv-c-border-row);
@@ -1249,8 +1151,6 @@
   .sv-card-bd .sv-field { width: 100%; }
 }
 
-
-/* form-control override for Plex/JF/Emby panels */
 .streamviewer-settings .form-control {
   background: var(--sv-ctrl-bg);
   border: 1px solid var(--sv-ctrl-border);
@@ -1269,11 +1169,6 @@
   background: #fff;
   border-color: rgba(0,0,0,.18);
 }
-
-
-/* ══════════════════════════════════════════════════════════════════════════
-   BADGE THEME PICKER (horizontal grid, 6+6)
-   ══════════════════════════════════════════════════════════════════════════ */
 
 .sv-badge-themes {
   display: grid;
@@ -1340,7 +1235,6 @@
   color: var(--sv-c-text-faint);
 }
 
-/* Label sub-description (below label text) */
 .sv-r-label-desc {
   display: block;
   font-size: 10.5px;
@@ -1355,18 +1249,14 @@
   justify-content: center;
 }
 
-/* Light theme */
 .sv-light .sv-badge-theme-opt:hover { background: rgba(0,0,0,.03); }
 .sv-light .sv-badge-theme-opt--sel { background: rgba(244,125,66,.06); }
 .sv-light .sv-badge-theme-radio { border-color: rgba(0,0,0,.25); }
 
-/* Responsive: 4 columns on narrow */
 @media (max-width: 768px) {
   .sv-badge-themes { grid-template-columns: repeat(4, 1fr); }
 }
 
-
-/* DB path warning */
 #svDbPathWarn {
   font-size: 11px !important;
   font-weight: 500 !important;
@@ -1375,21 +1265,12 @@
   line-height: 1.3;
 }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   MASKED INPUT (prevents browser password save prompt)
-   ══════════════════════════════════════════════════════════════════════════ */
-
 .sv-masked-input {
   -webkit-text-security: disc;
   text-security: disc;
 }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   ACTION BAR (Apply / Reset / Done)
-   ══════════════════════════════════════════════════════════════════════════ */
-
+/* apply / reset / done bar */
 .sv-actions-bar {
   display: flex;
   gap: 6px;
@@ -1458,12 +1339,6 @@
   border-color: var(--sv-c-text-faint) !important;
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   Danger variant of the footer action button (used by "Wipe now" + any other
-   destructive action). Mirrors the size, spacing and weight of the footer
-   Apply/Reset/Done buttons so the visual language stays consistent.
-   ────────────────────────────────────────────────────────────────────────── */
-
 .sv-action-btn--danger {
   background: rgba(229, 80, 80, .12) !important;
   border-color: rgba(229, 80, 80, .3) !important;
@@ -1477,7 +1352,6 @@
   background: rgba(229, 80, 80, .32) !important;
 }
 
-/* Warning confirm modal (used by both Wipe DB and Erase-on-uninstall toggle) */
 .sv-warn-modal {
   position: fixed; inset: 0;
   background: rgba(0, 0, 0, .55);
@@ -1546,7 +1420,6 @@
   border-color: rgba(229, 80, 80, .75);
 }
 
-/* Light theme tweaks */
 body.sv-light .sv-warn-modal__box     { background: #fff; }
 body.sv-light .sv-warn-modal__title   { color: #333; }
 body.sv-light .sv-warn-modal__msg     { color: rgba(0, 0, 0, .80); }

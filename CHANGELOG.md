@@ -1,6 +1,10 @@
 
 # Stream Viewer
 
+## 2026.07.21
+
+Changed: support links now point to GitHub Issues, and the README wording was tightened
+
 ## v2026.05.28
 
 ### Bug Fixes

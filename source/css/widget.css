@@ -1,22 +1,10 @@
-/* ==========================================================================
-   STREAM VIEWER — Widget Styles
+/* ============================================================================
+   STREAM VIEWER
    Copyright (C) 2026 Lazaros Chalkidis
    License: GPLv3
-   /plugins/streamviewer/css/widget.css
+   ========================================================================= */
 
-   SECTIONS
-    1. CSS Custom Properties        9. Empty State
-    2. Button Baseline             10. Stream Row (bar, rows 1-3, progress,
-    3. Overflow Containment            synopsis, thumbnail, server badges)
-    4. Header — Responsive         11. Footer (docker stats, pulse, error)
-    5. Header — Legacy             12. Technical Details
-    6. Header Meta (badge row)     13. Kill Button
-    7. Body + Overflow             14. Loading Skeleton
-    8. Streams Container           15. No-servers State
-                                   16. Responsive Tweaks
-   ========================================================================== */
-
-/* ── 1. CSS CUSTOM PROPERTIES ─────────────────────────────────────────────── */
+/* colours and tokens (plex/jellyfin/emby brand colours, severity, layout) */
 :root {
   --sv-play:    #4caf50;
   --sv-stream:  #2196f3;
@@ -28,7 +16,6 @@
   --sv-radius:  6px;
   --sv-row-gap: .55rem;
 
-  /* Theme-adaptive (dark default) */
   --sv-c-text:          rgba(255,255,255,.85);
   --sv-c-text-mid:      rgba(255,255,255,.65);
   --sv-c-text-muted:    rgba(255,255,255,.45);
@@ -41,7 +28,7 @@
   --sv-c-bg-faint:      rgba(255,255,255,.025);
 }
 
-/* Light theme overrides */
+/* light themes (white, gray) */
 .sv-light {
   --sv-c-text:          rgba(0,0,0,.85);
   --sv-c-text-mid:      rgba(0,0,0,.65);
@@ -55,7 +42,6 @@
   --sv-c-bg-faint:      rgba(0,0,0,.02);
 }
 
-/* ── 2. BUTTON BASELINE ───────────────────────────────────────────────────── */
 .sv-body button,
 .sv-body input[type="button"],
 .sv-body input[type="submit"] {
@@ -65,7 +51,7 @@
   flex-shrink: 0 !important;
 }
 
-/* ── 3. OVERFLOW CONTAINMENT ──────────────────────────────────────────────── */
+/* widget shell */
 .sv-widget-wrap,
 #db-streamviewer,
 #db-streamviewer td {
@@ -74,7 +60,7 @@
   box-sizing: border-box !important;
 }
 
-/* ── 4. HEADER — RESPONSIVE (Unraid 7.2+) ────────────────────────────────── */
+/* 7.2 header */
 .sv-header { display: flex; width: 100%; align-items: flex-start; overflow: hidden; box-sizing: border-box; max-width: 100%; }
 .sv-header__left,
 .sv-header .tile-header-left  { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .2rem; overflow: hidden; }
@@ -84,7 +70,7 @@
 .sv-header__title { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sv-header__controls { display: flex; align-items: center; gap: .1rem; flex-shrink: 0; }
 
-/* ── 5. HEADER — LEGACY (pre-7.2) ─────────────────────────────────────────── */
+/* pre-7.2 header */
 .sv-legacy-header {
   display: flex; justify-content: space-between; align-items: flex-start;
   padding: .3rem 0; width: 100%; overflow: hidden; box-sizing: border-box;
@@ -95,16 +81,14 @@
 .sv-legacy-title { font-size: 1.05em; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sv-legacy-controls { display: flex; align-items: center; gap: .1rem; flex-shrink: 0; }
 
-/* ── 6. HEADER META (badge row) ───────────────────────────────────────────── */
 .sv-header-meta {
   display: flex; align-items: center; gap: .4rem;
   margin-top: -13px;
-  padding-left: calc(32px + 1.5rem); /* clear the icon, align under title text */
+  padding-left: calc(32px + 1.5rem);
   max-width: 100%;
   box-sizing: border-box;
   overflow: hidden;
 }
-
 
 .sv-badge-streams {
   display: inline-flex; align-items: center; gap: .3rem;
@@ -116,7 +100,6 @@
 }
 .sv-badge-label { opacity: .6; }
 
-/* Pulsing dot: idle=grey, active=green */
 .sv-badge-dot {
   width: 6px; height: 6px;
   border-radius: 60%; display: inline-block;
@@ -138,9 +121,6 @@
   100% { box-shadow: 0 0 0 0   rgba(72,109,186,0);  }
 }
 
-/* ── 7. BODY + OVERFLOW CONTAINMENT ───────────────────────────────────────── */
-
-/* Widget wrapper: hard boundary for all content */
 .sv-widget-wrap {
   width: 100%;
   max-width: 100%;
@@ -155,7 +135,7 @@
   box-sizing: border-box;
 }
 
-/* ── 8. STREAMS CONTAINER ─────────────────────────────────────────────────── */
+/* stream cards */
 .sv-streams {
   display: flex; flex-direction: column;
   gap: var(--sv-row-gap);
@@ -164,7 +144,6 @@
   min-width: 0; overflow: hidden;
 }
 
-/* ── 9. EMPTY STATE ───────────────────────────────────────────────────────── */
 .sv-empty-state {
   display: flex; align-items: center; justify-content: center; gap: .4rem;
   padding: 1.1rem .5rem;
@@ -177,7 +156,6 @@
   font-size: .9em; font-style: normal; color: var(--sv-c-text-faint); opacity: .7;
 }
 
-/* ── 10. STREAM ROW ────────────────────────────────────────────────────────── */
 .sv-stream {
   display: grid;
   grid-template-columns: 10px 1fr;
@@ -199,7 +177,6 @@
   border-color: var(--sv-c-border);
 }
 
-/* ── Play-type indicator bar (left edge) ──────────────────────────────────── */
 .sv-stream__bar {
   grid-row: 1 / 7;
   grid-column: 1;
@@ -215,14 +192,12 @@
 .sv-stream__bar--trans  { background: var(--sv-trans); }
 .sv-stream__bar--paused { background: var(--sv-paused); }
 
-/* ── Row 1: title + right meta ────────────────────────────────────────────── */
 .sv-stream__main {
   grid-row: 2; grid-column: 2;
   display: flex; align-items: center; gap: .4rem;
   min-width: 0; overflow: hidden;
 }
 
-/* ── Row 1 right: badges ──────────────────────────────────────────────────── */
 .sv-stream__badges-row {
   grid-row: 1; grid-column: 2;
   display: flex; align-items: center;
@@ -242,7 +217,6 @@
   flex-wrap: wrap; justify-content: flex-end; min-width: 0;
 }
 
-/* Title */
 .sv-stream__title {
   font-weight: 600; font-size: .85em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -250,7 +224,6 @@
   flex: 1; min-width: 0;
 }
 
-/* Media-type icon (movie/tv/music) -- SVG inline */
 .sv-stream__type-icon {
   display: inline-flex;
   align-items: center;
@@ -263,7 +236,6 @@
   display: block;
 }
 
-/* Play/Pause state icon (FA, same size as stop) */
 .sv-stream__state-icon {
   font-size: .72em;
   flex-shrink: 0;
@@ -272,7 +244,6 @@
 .sv-stream__state-icon--playing { color: var(--sv-play); }
 .sv-stream__state-icon--paused  { color: var(--sv-paused); }
 
-/* Server-type badge (plex / jellyfin / emby) */
 .sv-stream__server-badge {
   display: inline-flex; align-items: center;
   font-size: .68em; font-weight: 700; line-height: 1;
@@ -287,7 +258,6 @@
   background: transparent;
 }
 
-/* Quality badge (1080p, 4K…) */
 .sv-stream__quality {
   display: inline-flex; align-items: center;
   font-size: .7em; font-weight: 600; line-height: 1;
@@ -299,7 +269,6 @@
   border: 0.1em solid;
 }
 
-/* Bitrate badge (live speed — shown in left badges group) */
 .sv-stream__bitrate {
   display: inline-flex; align-items: center;
   font-size: .7em; font-weight: 600; line-height: 1;
@@ -312,7 +281,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Transcode badge */
 .sv-stream__transcode {
   display: inline-flex; align-items: center;
   font-size: .68em; font-weight: 700; line-height: 1;
@@ -330,7 +298,6 @@
 .sv-stream__transcode--trans  { background: rgba(255,152,0,.15);  color: var(--sv-trans);  border-color: rgba(255,152,0,.3);   }
 .sv-stream__transcode-speed  { margin-left: .3em; opacity: .75; font-weight: 600; display: inline-block; text-align: right; }
 
-/* ── Row 2: user · device · ip + progress ─────────────────────────────────── */
 .sv-stream__sub {
   grid-row: 3; grid-column: 2;
   display: flex; align-items: center; gap: .5rem;
@@ -357,7 +324,6 @@
   white-space: nowrap;
 }
 
-/* ── Progress block ───────────────────────────────────────────────────────── */
 .sv-stream__progress-wrap {
   display: flex; align-items: center; gap: .35rem;
   flex: 0 0 264px; min-width: 0; max-width: 264px;
@@ -389,14 +355,11 @@
   text-transform: none;
 }
 
-
-/* ── Row 3: server type + badges ──────────────────────────────────────────── */
 .sv-stream__row3 {
   grid-row: 6; grid-column: 2;
   min-width: 0; overflow: hidden;
 }
 
-/* Synopsis toggle header */
 .sv-stream__row3-hd {
   display: flex; align-items: center; justify-content: flex-end; gap: .25rem;
   cursor: pointer;
@@ -408,14 +371,13 @@
 .sv-stream__row3-arrow {
   font-size: .7em; opacity: .55;
   transition: transform .2s, opacity .15s;
-  transform: rotate(180deg); /* ▲ points up = open */
-  pointer-events: none; /* clicks always reach parent hd */
+  transform: rotate(180deg);
+  pointer-events: none;
 }
 .sv-stream__row3--collapsed .sv-stream__row3-arrow {
-  transform: rotate(0deg); /* ▼ points down = collapsed */
+  transform: rotate(0deg);
 }
 
-/* Thumbnail panel */
 .sv-stream__row3-bd {
   padding: .3rem .35rem .35rem 0;
   display: flex; align-items: stretch;
@@ -461,7 +423,6 @@
   transition: background .6s ease;
 }
 
-/* Server TYPE badge (PLEX / JELLYFIN / EMBY) */
 .sv-stream__server-type {
   display: inline-flex; align-items: center;
   font-size: .68em; font-weight: 700; line-height: 1;
@@ -474,7 +435,7 @@
 .sv-stream__server-type--plex     { background: rgba(229,160,13,.25); color: var(--sv-plex);   border: 0.1em solid rgba(229,160,13,.3); }
 .sv-stream__server-type--jellyfin { background: rgba(0,164,220,.2);   color: var(--sv-jf);     border: 0.1em solid rgba(0,164,220,.25); }
 .sv-stream__server-type--emby     { background: rgba(82,181,74,.2);   color: var(--sv-emby);   border: 0.1em solid rgba(82,181,74,.25); }
-/* ── 11. FOOTER ───────────────────────────────────────────────────────────── */
+
 .sv-footer {
   display: flex; align-items: center; justify-content: space-between;
   padding: .35rem 0 .1rem;
@@ -485,7 +446,6 @@
 .sv-footer-left  { display: flex; align-items: center; gap: .5rem; color: var(--sv-c-text-muted); min-width: 0; flex: 1; }
 .sv-footer-right { display: flex; align-items: center; gap: .3rem; font-size: 0.9rem; flex-shrink: 0; }
 
-/* Docker resource stats in footer (micro-bar design) */
 .sv-docker-stats {
   display: flex; align-items: center; justify-content: flex-start;
   gap: 1.5rem;
@@ -511,7 +471,6 @@
 .sv-docker-stat__fill--bw  { background: #4a90e2; }
 .sv-docker-stat__val { font-weight: 600; color: var(--sv-c-text-mid); min-width: 28px; }
 
-/* Badge in footer (stream count) */
 .sv-footer-left .sv-badge-streams {
   display: inline-flex; align-items: center; gap: .3rem;
   font-size: 1em; color: var(--sv-c-text-muted);
@@ -529,7 +488,6 @@
 .sv-ts-icon  { color: var(--sv-c-text-muted); flex-shrink: 0; opacity: 0.7; }
 .sv-ts-value { font-variant-numeric: tabular-nums; color: var(--sv-c-text); }
 
-/* Pulse animation (active refresh) — flash green once per refresh cycle */
 .sv-pulse {
   display: inline-block; width: 6px; height: 6px;
   border-radius: 50%; background: rgba(76,175,80,.2);
@@ -543,7 +501,6 @@
   100% { background: rgba(76,175,80,.2);  box-shadow: none; }
 }
 
-/* Error badge */
 .sv-err-badge {
   display: inline-flex; align-items: center; gap: .25rem;
   font-size: .78em; color: #ff9800;
@@ -553,7 +510,6 @@
   cursor: default;
 }
 
-/* ── 12. TECHNICAL DETAILS ────────────────────────────────────────────────── */
 .sv-stream__details {
   grid-row: 4; grid-column: 2; padding: 0;
   margin-top: .25rem;
@@ -574,7 +530,7 @@
 .sv-dtag--hw     { background: rgba(82,181,74,.1); color: #52b54b; border-color: rgba(82,181,74,.25); }
 .sv-dtag--reason { background: rgba(244,125,66,.08); color: rgba(244,125,66,.8); border-color: rgba(244,125,66,.2); font-weight: 500; }
 
-/* ── 13. KILL BUTTON ─────────────────────────────────────────────────────── */
+/* terminate-session button */
 .sv-kill-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: auto !important; height: auto !important;
@@ -593,7 +549,6 @@
 .sv-kill-btn:hover { background: rgba(226,75,74,.12); color: #e24b4a; }
 .sv-kill-btn:disabled { opacity: .4; cursor: not-allowed; }
 
-/* ── 14. LOADING SKELETON ─────────────────────────────────────────────────── */
 .sv-loading {
   display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: .6rem; padding: 1.5rem 1rem;
@@ -615,7 +570,6 @@
   font-size: .78em; color: var(--sv-c-text-faint);
 }
 
-/* ── 15. NO-SERVERS STATE ─────────────────────────────────────────────────── */
 .sv-no-servers-state {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: .6rem; padding: 1.5rem 1rem; text-align: center;
@@ -646,9 +600,7 @@
   text-decoration: none !important;
 }
 
-/* ── 16. RESPONSIVE TWEAKS ────────────────────────────────────────────────── */
-
-/* Tablet and small desktop */
+/* responsive */
 @media (max-width: 640px) {
   .sv-stream__device { max-width: 100px; }
   .sv-stream__progress-wrap { flex-basis: 216px; max-width: 216px; }
@@ -656,7 +608,6 @@
   .sv-header-meta { padding-left: calc(32px + 1rem); }
 }
 
-/* Large phones */
 @media (max-width: 480px) {
   .sv-header-meta { padding-left: .5rem; }
   .sv-stream__progress-wrap { flex-basis: 168px; max-width: 168px; }
@@ -673,7 +624,6 @@
   .sv-stream__sub { flex-wrap: wrap; gap: .25rem; }
 }
 
-/* Small phones */
 @media (max-width: 360px) {
   .sv-header-meta { padding-left: .25rem; }
   .sv-stream__sub { flex-wrap: wrap; gap: .25rem; }
@@ -691,15 +641,9 @@
   .sv-stream__time { font-size: .65em; }
 }
 
-
-/* ══════════════════════════════════════════════════════════════════════════
-   STOP STREAM CONFIRM MODAL (replaces native browser confirm dialog).
-   Rendered as a sibling of .sv-widget-wrap (in a .sv-w-modal-host container)
-   so the wrap's overflow:hidden does not clip the modal or its text.
-   ══════════════════════════════════════════════════════════════════════════ */
-
+/* kill confirm modal */
 .sv-w-modal-host {
-  /* Host is invisible by default; only the modal inside it shows itself. */
+
   position: static;
 }
 
@@ -764,9 +708,6 @@
   border-bottom-right-radius: 8px;
 }
 
-/* Button base. High specificity + !important is required because Unraid's
- * global dashboard CSS heavily styles bare <button> elements with an orange
- * theme that otherwise bleeds through onto Cancel. */
 .sv-w-modal-host .sv-w-confirm-cancel,
 .sv-w-modal-host .sv-w-confirm-ok {
   padding: .35rem 1.3rem !important;
@@ -782,8 +723,6 @@
   line-height: 1.4 !important;
 }
 
-/* Cancel: neutral / outline. Hard overrides on every color-related property
- * so the global orange .btn-like rules cannot leak through. */
 .sv-w-modal-host .sv-w-confirm-cancel,
 .sv-w-modal-host button.sv-w-confirm-cancel,
 .sv-w-modal-host .sv-w-confirm-cancel:link,
@@ -804,7 +743,6 @@
   color: rgba(255,255,255,.95) !important;
 }
 
-/* OK / Stop: filled orange (the destructive action). */
 .sv-w-modal-host .sv-w-confirm-ok,
 .sv-w-modal-host button.sv-w-confirm-ok {
   background: #f47d42 !important;
@@ -822,7 +760,6 @@
   color: #fff !important;
 }
 
-/* Light theme */
 .sv-w-modal-host.sv-light .sv-w-confirm-box {
   background: #fff;
   color: rgba(0,0,0,.85);
@@ -846,12 +783,6 @@
   color: rgba(0,0,0,.90) !important;
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   BANDWIDTH CHART (widget mode)
-   Lives in a compact row between the technical details and the synopsis.
-   Shares the .sv-chart HTML markup with the Active Stream/s tab so the JS
-   code stays uniform across both views.
-   ────────────────────────────────────────────────────────────────────────── */
 .sv-stream__chart-row {
   grid-row: 5; grid-column: 2;
   display: flex;
@@ -877,7 +808,7 @@
   flex: 1;
   min-width: 0;
   height: 34px;
-  position: relative;       /* anchor for the absolutely-positioned unit */
+  position: relative;
   display: flex;
   align-items: stretch;
   gap: 4px;
@@ -914,13 +845,11 @@
   white-space: nowrap;
 }
 
-/* Light theme tweaks for the widget chart row */
 .sv-light .sv-stream__chart-row .sv-chart__yaxis            { color: rgba(0,0,0,.55); }
 .sv-light .sv-stream__chart-row .sv-chart__yaxis .sv-chart__unit { color: rgba(0,0,0,.40); }
 .sv-light .sv-stream__chart-row .sv-chart__plot .sv-spark-grid     { stroke: rgba(0,0,0,.10); }
 .sv-light .sv-stream__chart-row .sv-chart__plot .sv-spark-baseline { stroke: rgba(0,0,0,.18); }
 
-/* Narrow tile mode: collapse a bit so it stays usable */
 @media (max-width: 480px) {
   .sv-stream__chart-row .sv-chart { height: 29px; }
   .sv-stream__chart-row .sv-chart__yaxis { min-width: 18px; font-size: 7px; }

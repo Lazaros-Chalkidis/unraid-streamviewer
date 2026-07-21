@@ -6,22 +6,25 @@ Tabs="false"
 Title="Stream Viewer Statistics and Active Stream/s"
 ---
 <?php
+/* ============================================================================
+   STREAM VIEWER
+   Copyright (C) 2026 Lazaros Chalkidis
+   License: GPLv3
+   ========================================================================= */
+
 require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
 require_once '/usr/local/emhttp/plugins/streamviewer/include/streamviewer_api.php';
 
 $cfg = @parse_plugin_cfg('streamviewer', true) ?: [];
 
-$statsEnabled = (($cfg['STATS_ENABLED'] ?? '0') === '1');
+$statsEnabled = (($cfg['STATS_ENABLED'] ?? '0') === '1');  // the whole stats UI only renders when recording is on
 
-// Server types the user actually has (configured or with stats history).
-// Used to filter chart legends and the Recent History server filter dropdown.
-$svt_active_types = StreamViewerEndpoint::activeServerTypes();
+$svt_active_types = StreamViewerEndpoint::activeServerTypes();  // only show server-type filters for the types actually configured
 $svt_type_labels  = ['plex' => 'Plex', 'jellyfin' => 'Jellyfin', 'emby' => 'Emby'];
 
-// Theme detection (same as Settings page)
 $dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
 $unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
-// Light themes are white and gray; black and azure are dark.
+
 $svt_light    = in_array($unraid_theme, ['white', 'gray'], true);
 $lightClass   = $svt_light ? ' svt-light' : '';
 
@@ -34,11 +37,6 @@ $tile_config = [
 ];
 $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
 
-// ── Live tab config ────────────────────────────────────────────────────────
-// Shape mirrors window.streamviewerConfig used by the dashboard widget so the
-// shared SVCore factory can consume it unchanged. Reads the LIVE_* keys saved
-// from the Live Settings section. Numbers are stored in seconds in the cfg;
-// SVCore expects refreshInterval in milliseconds.
 $live_servers = [];
 for ($i = 1; $i <= 8; $i++) {
     $enabled = ($cfg["SERVER{$i}_ENABLED"] ?? '0') === '1';
@@ -68,7 +66,7 @@ $live_config = [
     'noServersConfigured' => empty($live_servers),
     'isResponsive'        => true,
     'badgeTheme'          => (string)($cfg['LIVE_BADGE_THEME'] ?? 'default'),
-    'largeView'           => true,  // hint for shared core to render in expanded layout
+    'largeView'           => true,
 ];
 $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
 ?>
@@ -79,7 +77,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
 
 <div class="svt-wrapper<?= $lightClass ?>">
 
-  <!-- Tabs -->
   <div class="svt-tabs">
     <div class="svt-tab active" id="svtTabDashboard" role="button" tabindex="0">
       <span class="svt-tabicon"><i class="fa fa-bar-chart" aria-hidden="true"></i></span> Dashboard
@@ -104,12 +101,10 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
     </div>
   </div>
 
-  <!-- Panel -->
   <div class="svt-panel">
 
-    <!-- ═══ LIVE TAB ═══ (always rendered, independent of Statistics being enabled) -->
     <div class="svt-tab-panel" id="svtPanelLive" style="display:none;">
-      <!-- Stats-style page header -->
+
       <div class="svt-header">
         <div class="svt-header__left">
           <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
@@ -134,7 +129,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Live overview: 6 compact stat cards updated every poll -->
       <div class="svll-overview">
         <div class="svll-stat svll-stat--orange">
           <div class="svll-stat__label">Total Active Stream/s</div>
@@ -166,7 +160,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Play-type breakdown bars (Direct play / Direct stream / Transcode / Remote) -->
       <div class="svll-types">
         <div class="svll-type" data-type="direct">
           <div class="svll-type__head">Direct play</div>
@@ -190,7 +183,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Active streams (existing widget core handles this DOM) -->
       <div class="sv-widget-wrap sv-large-view<?= $lightClass ? ' sv-light' : '' ?>">
         <div class="sv-body sv-collapsible">
           <div id="sv-streams-container" class="sv-streams" role="list" aria-live="polite" aria-label="Active streams">
@@ -203,7 +195,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Stop stream confirmation modal (mirrors widget) -->
       <div class="sv-w-modal-host<?= $lightClass ? ' sv-light' : '' ?>">
         <div id="svWidgetConfirmModal" class="sv-w-confirm-modal" style="display:none;">
           <div class="sv-w-confirm-box">
@@ -222,7 +213,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
     </div>
-    <!-- /svtPanelLive -->
 
 <?php if (!$statsEnabled): ?>
     <div class="svt-disabled" id="svtDisabledMsg">
@@ -234,10 +224,8 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
     </div>
 <?php else: ?>
 
-    <!-- ═══ DASHBOARD TAB ═══ -->
     <div class="svt-tab-panel" id="svtPanelDashboard">
 
-    <!-- Header -->
     <div class="svt-header">
       <div class="svt-header__left">
         <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
@@ -266,7 +254,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
       </div>
     </div>
 
-    <!-- Metric cards -->
     <div class="svt-cards" id="svt-cards">
       <div class="svt-card">
         <div class="svt-card__label">Total plays</div>
@@ -286,7 +273,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
       </div>
     </div>
 
-    <!-- Play type ratio -->
     <div class="svt-play-types" id="svt-play-types">
       <div class="svt-pt" id="svt-pt-dp">
         <span class="svt-pt__label">Direct play</span>
@@ -310,7 +296,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
       </div>
     </div>
 
-    <!-- Daily chart -->
     <div class="svt-section">
       <h3 class="svt-section__title">Daily streams <span class="svt-period-text" id="svt-chart-period">last 30 days</span></h3>
       <div class="svt-chart-wrap">
@@ -318,7 +303,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
       </div>
     </div>
 
-    <!-- Leaderboards (side by side) -->
     <div class="svt-leaderboards">
       <div class="svt-section svt-section--half">
         <h3 class="svt-section__title">Most watched</h3>
@@ -334,7 +318,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
       </div>
     </div>
 
-    <!-- Recent history table -->
     <div class="svt-section">
       <div class="svt-section__header">
         <h3 class="svt-section__title">Recent history</h3>
@@ -373,9 +356,8 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
       </div>
     </div>
 
-    </div><!-- /svtPanelDashboard -->
+    </div>
 
-    <!-- ═══ LIBRARIES TAB ═══ -->
     <div class="svt-tab-panel" id="svtPanelLibraries" style="display:none;">
 
       <div class="svt-header">
@@ -398,7 +380,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Summary cards -->
       <div class="svt-cards" id="svt-lib-summary">
         <div class="svt-card">
           <div class="svt-card__label">Total items</div>
@@ -414,10 +395,8 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Server sections (dynamic) -->
       <div id="svt-lib-servers-container"></div>
 
-      <!-- Recently added -->
       <div class="svt-section">
         <h3 class="svt-section__title">Recently added</h3>
         <div class="svt-table-wrap">
@@ -439,9 +418,8 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-    </div><!-- /svtPanelLibraries -->
+    </div>
 
-    <!-- ═══ PLACEHOLDER TABS ═══ -->
     <div class="svt-tab-panel" id="svtPanelUsers" style="display:none;">
 
       <div class="svt-header">
@@ -472,7 +450,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Summary cards -->
       <div class="svt-cards">
         <div class="svt-card">
           <div class="svt-card__label">Total users</div>
@@ -492,7 +469,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- User cards (dynamic) -->
       <div id="svt-users-container">
         <div class="svt-table__empty">Loading...</div>
       </div>
@@ -555,7 +531,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Summary cards -->
       <div class="svt-cards">
         <div class="svt-card">
           <div class="svt-card__label">Total entries</div>
@@ -575,7 +550,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- History table -->
       <div class="svt-section" style="padding: 0;">
           <div class="svt-table-wrap">
           <table class="svt-table" id="svt-hist-table">
@@ -629,7 +603,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Row 1: Watch time + Peak hours -->
       <div class="svt-graph-row">
         <div class="svt-graph-card">
           <div class="svt-graph-card__hd">
@@ -648,7 +621,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Row 2: Play type + Media type -->
       <div class="svt-graph-row">
         <div class="svt-graph-card">
           <div class="svt-graph-card__hd">
@@ -668,7 +640,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Row 3: User activity + Local/Remote -->
       <div class="svt-graph-row">
         <div class="svt-graph-card">
           <div class="svt-graph-card__hd">
@@ -687,7 +658,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Full width: Bandwidth -->
       <div class="svt-graph-card">
         <div class="svt-graph-card__hd">
           <span class="svt-graph-card__title">Bandwidth usage</span>
@@ -696,7 +666,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--short"><canvas id="svt-gr-bandwidth"></canvas></div>
       </div>
 
-      <!-- Row: Day of week + Monthly -->
       <div class="svt-graph-row">
         <div class="svt-graph-card">
           <div class="svt-graph-card__hd">
@@ -714,7 +683,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Row: Top devices + Library activity -->
       <div class="svt-graph-row">
         <div class="svt-graph-card">
           <div class="svt-graph-card__hd">
@@ -732,7 +700,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Full width: Concurrent streams -->
       <div class="svt-graph-card">
         <div class="svt-graph-card__hd">
           <span class="svt-graph-card__title">Concurrent streams</span>
@@ -741,7 +708,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--short"><canvas id="svt-gr-concurrent"></canvas></div>
       </div>
 
-      <!-- Row: Source resolution + Stream resolution -->
       <div class="svt-graph-row">
         <div class="svt-graph-card">
           <div class="svt-graph-card__hd">
@@ -761,7 +727,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Full width: Watch completion -->
       <div class="svt-graph-card">
         <div class="svt-graph-card__hd">
           <span class="svt-graph-card__title">Watch completion</span>
@@ -770,7 +735,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--short"><canvas id="svt-gr-completion"></canvas></div>
       </div>
 
-      <!-- Row: Plays by country + Top locations -->
       <div class="svt-graph-row">
         <div class="svt-graph-card">
           <div class="svt-graph-card__hd">
@@ -790,7 +754,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
 
     </div>
 
-    <!-- ── Insights tab ───────────────────────────────────────────────── -->
     <div class="svt-tab-panel" id="svtPanelAlerts" style="display:none;">
 
       <div class="svt-header">
@@ -821,7 +784,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Summary cards -->
       <div class="svt-cards" id="svt-alerts-cards">
         <div class="svt-card">
           <div class="svt-card__label">Active alerts</div>
@@ -841,17 +803,16 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
         </div>
       </div>
 
-      <!-- Alert sections -->
       <div id="svt-alerts-content">
         <div class="svt-table__empty">Loading...</div>
       </div>
 
-    </div><!-- /svtPanelAlerts -->
+    </div>
 
 <?php endif; ?>
 
-  </div><!-- /svt-panel -->
-</div><!-- /svt-wrapper -->
+  </div>
+</div>
 
 <script src="/plugins/streamviewer/js/chart.min.js"></script>
 <script>window.svLiveConfig = <?= $live_config_json ?>;</script>
@@ -860,22 +821,10 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
 <script defer src="/plugins/streamviewer/js/streamviewer-tool.js"></script>
 
 <script>
-/*
- * Page width unlocker.
- *
- * The Unraid dynamix template wraps standalone plugin pages in a main content
- * container with a max-width around 1180px. On 2K and 4K monitors this leaves
- * large gutters. This block walks up from the .svt-wrapper element to the
- * document body and removes any max-width constraint found on ancestors that
- * are narrower than the viewport. The wrapper itself uses standard 80% width
- * with margin auto, so when this script is not present (or finds nothing to
- * change) layout stays sane and centered inside whatever parent it has.
- *
- * Runs only when .svt-wrapper exists in the DOM. No-op on the Dashboard tile,
- * on the widget, or anywhere else that does not host this page.
- */
+
 (function() {
     'use strict';
+    // unlock any narrow max-width ancestor so the tool can use the full page width
     function unlockAncestors() {
         var wrap = document.querySelector('.svt-wrapper');
         if (!wrap) return;
@@ -895,8 +844,7 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
     } else {
         unlockAncestors();
     }
-    // Re-run on resize so portrait/landscape rotation or browser-window drag
-    // recalculates correctly. Cheap operation, only touches inline styles.
+
     window.addEventListener('resize', unlockAncestors);
 })();
 </script>

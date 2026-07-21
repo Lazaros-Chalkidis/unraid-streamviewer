@@ -1,20 +1,10 @@
-/* ==========================================================================
-   STREAM VIEWER -- Statistics Tool Page Styles
+/* ============================================================================
+   STREAM VIEWER
    Copyright (C) 2026 Lazaros Chalkidis
    License: GPLv3
-   /plugins/streamviewer/css/tool.css
+   ========================================================================= */
 
-   SECTIONS
-    1. CSS Custom Properties         8. Users Tab
-    2. Layout                        9. History Tab
-    3. Tabs                         10. Graphs Tab
-    4. Panel + States               11. Alerts Tab
-    5. Page Header                  12. Responsive
-    6. Shared Components            13. Light Theme Overrides
-    7. Libraries Tab
-   ========================================================================== */
-
-/* ── 1. CSS CUSTOM PROPERTIES ─────────────────────────────────────────── */
+/* tokens, kept separate from the widget so the tool has no load-order dependency */
 :root {
   --svt-bg:        #1a1a1a;
   --svt-surface:   #242424;
@@ -30,31 +20,16 @@
   --svt-radius:    6px;
   --svt-bg-subtle: rgba(255,255,255,.04);
 
-  /* server colors */
   --svt-plex:      #e5a00d;
   --svt-jf:        #00a4dc;
   --svt-emby:      #52b54b;
 
-  /* play type colors */
   --svt-dp:        #4caf50;
   --svt-ds:        #2196f3;
   --svt-tc:        #ff9800;
   --svt-rm:        #c62828;
 }
 
-/* ── 2. LAYOUT ────────────────────────────────────────────────────────────
-   Width follows the Logs Viewer convention: 80% of the viewport on desktop
-   (10% gutter each side) and 95% on tablet/mobile below 768px. Max width is
-   capped so the content stays readable on very wide displays.
-*/
-/* Wrapper width: 80% on desktop at any resolution, 95% on tablet/mobile.
-   The parent's max-width constraint (imposed by the Unraid dynamix template,
-   typically ~1180px) is lifted at runtime by the inline script in
-   StreamViewerTool.page, which walks up the ancestor chain and removes any
-   max-width on parents narrower than the viewport. The wrapper itself uses
-   plain percentages and standard centering, so when the script no-ops (e.g.
-   the wrapper is not in the DOM, or no constraining parent exists) layout
-   stays sane. */
 .svt-wrapper {
   width: 80%;
   max-width: 80%;
@@ -70,7 +45,7 @@
   }
 }
 
-/* ── 3. TABS ──────────────────────────────────────────────────────────── */
+/* tabs */
 .svt-tabs {
   display: flex;
   align-items: flex-end;
@@ -107,7 +82,6 @@
   border-color: rgba(244,125,66,.55);
 }
 
-/* ── 4. PANEL + STATES ────────────────────────────────────────────────── */
 .svt-panel {
   padding: 1.25rem;
   box-sizing: border-box;
@@ -116,7 +90,7 @@
   border-radius: 0 0 8px 8px;
 }
 
-/* Disabled state (centered) */
+/* shown when stats recording is off */
 .svt-disabled {
   text-align: center;
   padding: 4rem 2rem;
@@ -127,10 +101,9 @@
 .svt-disabled p    { margin: 0 auto; color: var(--svt-text-dim); text-align: center; }
 .svt-disabled a    { color: var(--svt-accent); text-decoration: underline; }
 
-/* Tab panels */
 .svt-tab-panel { display: block; }
 
-/* ── 5. PAGE HEADER ──────────────────────────────────────────────────── */
+/* page header */
 .svt-header {
   display: flex;
   align-items: flex-start;
@@ -195,7 +168,6 @@
   background: rgba(0,0,0,.08) !important;
 }
 
-/* ── 6. SHARED COMPONENTS ──────────────────────────────────────────────── */
 .svt-select {
   -webkit-appearance: none;
   -moz-appearance: none;
@@ -221,7 +193,7 @@
   border-radius: 4px;
 }
 
-/* Metric cards */
+/* stat cards */
 .svt-cards {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -238,7 +210,6 @@
 .svt-card__value { font-size: 2.1rem; font-weight: 700; color: var(--svt-text); margin-top: .15rem; }
 .svt-unit { font-size: 1.05rem; font-weight: 400; }
 
-/* Play type ratio bars */
 .svt-play-types {
   display: flex;
   gap: 1.5rem;
@@ -266,7 +237,6 @@
 .svt-pt__fill--rm { background: var(--svt-rm); }
 .svt-pt__pct { font-size: .95rem; color: var(--svt-text-mid); margin-top: .2rem; display: inline-block; }
 
-/* Section blocks */
 .svt-section {
   background: var(--svt-surface);
   border: 1px solid var(--svt-border-strong);
@@ -287,7 +257,7 @@
 .svt-section__header .svt-section__title { margin-bottom: 0; }
 .svt-filters { display: flex; gap: .4rem; }
 
-/* Chart */
+/* chart.js canvases */
 .svt-chart-wrap {
   position: relative;
   width: 100%;
@@ -295,7 +265,6 @@
 }
 .svt-chart-wrap canvas { width: 100% !important; height: 100% !important; }
 
-/* Leaderboards */
 .svt-leaderboards {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -337,7 +306,6 @@
 .svt-list-item__meta { font-size: 1rem; color: var(--svt-text-mid); }
 .svt-list-item__hours { font-size: 1.1rem; color: var(--svt-text-mid); flex-shrink: 0; font-weight: 600; }
 
-/* User avatar circle */
 .svt-avatar {
   width: 34px; height: 34px;
   border-radius: 50%;
@@ -346,7 +314,6 @@
   flex-shrink: 0;
 }
 
-/* Media type icons */
 .svt-media-icon {
   width: 34px; height: 34px;
   border-radius: 4px;
@@ -357,7 +324,6 @@
   flex-shrink: 0;
 }
 
-/* History table */
 .svt-table-wrap {
   overflow-x: auto;
 }
@@ -393,7 +359,6 @@
 .svt-table__empty { text-align: center; color: var(--svt-text-dim); padding: 1.5rem !important; }
 .svt-title-icon { color: var(--svt-text-dim); margin-right: .3rem; font-size: 1em; }
 
-/* Server badges */
 .svt-badge {
   display: inline-flex;
   align-items: center;
@@ -414,13 +379,11 @@
 .svt-badge--jellyfin { background: rgba(0,164,220,.2);   color: var(--svt-jf); }
 .svt-badge--emby     { background: rgba(82,181,75,.2);   color: var(--svt-emby); }
 
-/* Play type badges */
 .svt-badge--dp { background: rgba(76,175,80,.15);  color: var(--svt-dp); }
 .svt-badge--ds { background: rgba(33,150,243,.15); color: var(--svt-ds); }
 .svt-badge--tc { background: rgba(255,152,0,.15);  color: var(--svt-tc); }
 .svt-badge--rm { background: rgba(198,40,40,.15);  color: var(--svt-rm); }
 
-/* Pagination */
 .svt-pagination {
   display: flex;
   align-items: center;
@@ -443,10 +406,8 @@
 .svt-page-btn--active           { background: var(--svt-accent); color: #000; border-color: var(--svt-accent); font-weight: 700; }
 .svt-page-btn:disabled          { opacity: .4; cursor: default; }
 
-/* Loading state */
 .svt-loading { opacity: .5; pointer-events: none; }
 
-/* ── 7. LIBRARIES TAB ─────────────────────────────────────────────────── */
 .svt-lib-server {
   background: var(--svt-surface);
   border: 0.5px solid var(--svt-border-strong);
@@ -495,7 +456,6 @@
 }
 .svt-lib-server__body { transition: none; }
 
-/* Library type cards (grid inside server) */
 .svt-lib-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -535,10 +495,8 @@
 }
 .svt-lib-card__watched { font-size: .75rem; color: var(--svt-text-dim); }
 
-/* Server offline dimming */
 .svt-lib-server--offline .svt-lib-grid { opacity: .5; }
 
-/* Recently added status badges */
 .svt-lib-status {
   font-size: .85rem;
   font-weight: 600;
@@ -548,11 +506,11 @@
 .svt-lib-status--watched   { color: #4caf50; background: rgba(76,175,80,.1); }
 .svt-lib-status--unwatched { color: var(--svt-text-dim); background: var(--svt-surface2); }
 
-/* Libraries tab table consistency */
 #svtPanelLibraries .svt-title-icon { font-size: 1em; }
 
-/* ── 8. USERS TAB ────────────────────────────────────────────────────────── */
 .svt-card__value--sm { font-size: 1.4rem; }
+
+/* per-user stats cards */
 .svt-user-card {
   background: var(--svt-surface);
   border: 0.5px solid var(--svt-border-strong);
@@ -593,7 +551,6 @@
   padding: .15rem .5rem; border-radius: 3px;
 }
 
-/* User stats grid */
 .svt-user-stats {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -610,7 +567,6 @@
 .svt-user-stat__val--device { font-size: .9rem; }
 .svt-user-stat__label { font-size: 1.05rem; color: var(--svt-text-dim); margin-top: 2px; }
 
-/* User play type bar */
 .svt-user-pt {
   display: flex;
   align-items: center;
@@ -631,12 +587,11 @@
 .svt-user-pt__seg--tc { background: #ff9800; }
 .svt-user-pt__summary { font-size: .9rem; color: var(--svt-text-dim); flex-shrink: 0; }
 
-/* Responsive user stats */
 @media (max-width: 700px) {
   .svt-user-stats { grid-template-columns: repeat(3, 1fr); }
 }
 
-/* ── 9. HISTORY TAB ───────────────────────────────────────────────────────── */
+/* history tab */
 .svt-hist-filters {
   display: flex;
   flex-wrap: wrap;
@@ -683,7 +638,6 @@
 }
 #svtPanelHistory .svt-hist-export-btn:hover { border-color: var(--svt-accent); background: var(--svt-surface); }
 
-/* Summary card sizes (consistent across Users, History, Alerts) */
 #svtPanelHistory .svt-hist-user__avatar { width: 28px; height: 28px; font-size: 1.1rem; }
 #svtPanelUsers  .svt-card__label,
 #svtPanelHistory .svt-card__label,
@@ -692,7 +646,6 @@
 #svtPanelHistory .svt-card__value,
 #svtPanelAlerts .svt-card__value { font-size: 1.68rem; }
 
-/* History footer (showing X of Y + pagination) */
 .svt-hist-footer {
   display: flex;
   align-items: center;
@@ -703,7 +656,6 @@
 .svt-hist-footer__info { font-size: .95rem; color: var(--svt-text-dim); }
 .svt-hist-footer__pages { display: flex; gap: .25rem; }
 
-/* User mini-avatar in history table rows */
 .svt-hist-user {
   display: flex;
   align-items: center;
@@ -717,12 +669,11 @@
   flex-shrink: 0;
 }
 
-/* IP with local/remote indicator */
 .svt-ip-tag { font-size: .8rem; font-weight: 600; margin-left: 3px; }
 .svt-ip-tag--local  { color: #4caf50; }
 .svt-ip-tag--remote { color: #c62828; }
 
-/* ── 10. GRAPHS TAB ────────────────────────────────────────────────────────── */
+/* graphs tab */
 .svt-graph-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -769,15 +720,12 @@
   .svt-graph-row { grid-template-columns: 1fr; }
 }
 
-/* Light theme */
 .svt-light .svt-graph-card { background: var(--svt-surface); }
 
-/* Light theme: library overrides */
 .svt-light .svt-lib-server { background: var(--svt-surface); }
 .svt-light .svt-lib-card { background: var(--svt-surface2); }
 .svt-light .svt-lib-card__bar { background: rgba(0,0,0,.08); }
 
-/* ── 11. ALERTS TAB ────────────────────────────────────────────────────────── */
 .svt-alert-section {
   margin-bottom: 1.5rem;
   border: 1px solid var(--svt-border);
@@ -829,7 +777,6 @@
 }
 .svt-alert-section__body--hidden { display: none; }
 
-/* Alert items */
 .svt-alert-item {
   display: flex;
   align-items: center;
@@ -868,7 +815,6 @@
 }
 .svt-alert-none i { font-size: 1.5rem; display: block; margin-bottom: .5rem; color: #2ecc71; }
 
-/* Transcode gauge */
 .svt-tc-gauge {
   display: flex;
   align-items: center;
@@ -900,7 +846,6 @@
 .svt-tc-gauge__pct--warning  { color: #f39c12; }
 .svt-tc-gauge__pct--critical { color: #e74c3c; }
 
-/* ── 12. RESPONSIVE ────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .svt-cards           { grid-template-columns: repeat(2, 1fr); }
   .svt-leaderboards    { grid-template-columns: 1fr; }
@@ -912,7 +857,6 @@
   .svt-chart-wrap      { height: 200px; }
 }
 
-/* ── 13. LIGHT THEME OVERRIDES ─────────────────────────────────────────────── */
 .svt-light {
   --svt-bg:        #f5f5f5;
   --svt-surface:   #ffffff;
@@ -927,37 +871,31 @@
   --svt-bg-subtle: rgba(0,0,0,.04);
 }
 
-/* Tabs */
 .svt-light .svt-tab.active {
   background: rgba(255,255,255,.85);
   color: rgba(0,0,0,.85);
   border-color: rgba(244,125,66,.55);
 }
 
-/* Panel */
 .svt-light .svt-panel {
   background: rgba(255,255,255,.5);
   border-color: rgba(0,0,0,.12);
 }
 
-/* Cards */
 .svt-light .svt-card {
   background: var(--svt-surface);
   border-color: var(--svt-border-strong);
 }
 
-/* Sections */
 .svt-light .svt-section {
   background: var(--svt-surface);
   border-color: var(--svt-border-strong);
 }
 
-/* List items */
 .svt-light .svt-list-item {
   background: var(--svt-surface2);
 }
 
-/* Scrollbars */
 .svt-light .svt-table-wrap::-webkit-scrollbar-track { background: #eee; }
 .svt-light .svt-table-wrap::-webkit-scrollbar-thumb { background: rgba(0,0,0,.2); }
 .svt-light .svt-table-wrap::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.35); }
@@ -965,36 +903,21 @@
 .svt-light .svt-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,.2); }
 .svt-light .svt-list::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.35); }
 
-/* Play type bars background */
 .svt-light .svt-pt__bar { background: rgba(0,0,0,.08); }
 
-/* Table */
 .svt-light .svt-table th { background: var(--svt-surface); }
 
-/* Disabled state */
 .svt-light .svt-disabled { color: rgba(0,0,0,.50); }
 .svt-light .svt-disabled h2 { color: rgba(0,0,0,.85); }
 .svt-light .svt-disabled-icon { color: rgba(0,0,0,.30); }
 
-/* Users */
 .svt-light .svt-user-card { background: var(--svt-surface); }
 .svt-light .svt-user-stat { background: var(--svt-surface2); }
 
-/* History */
 .svt-light #svtPanelHistory .svt-hist-search { background: var(--svt-surface) !important; }
 .svt-light .svt-hist-footer { border-top-color: var(--svt-border); }
 
-/* Media icons */
 .svt-light .svt-media-icon { background: rgba(0,0,0,.08); }
-
-/* ──────────────────────────────────────────────────────────────────────────
-   LIVE TAB (.sv-large-view modifier on .sv-widget-wrap)
-
-   Layers on top of widget.css. The dashboard tile renders inside a 320px-ish
-   column so widget.css optimises for very narrow widths; in the Statistics
-   page the Live tab has the full svt-wrapper width to work with, so we relax
-   constraints and add a proper panel frame.
-   ────────────────────────────────────────────────────────────────────────── */
 
 .sv-widget-wrap.sv-large-view {
   background: var(--svt-surface, #1a1a1a);
@@ -1089,7 +1012,6 @@
   color: var(--svt-text-secondary, rgba(255,255,255,.55));
 }
 
-/* Light theme overrides for the Live tab panel */
 .svt-light .sv-widget-wrap.sv-large-view {
   background: var(--svt-surface, #f8f8f8);
   border-color: var(--svt-border, rgba(0,0,0,.08));
@@ -1114,18 +1036,6 @@
   border-color: rgba(0,0,0,.20);
   color: rgba(0,0,0,.85);
 }
-
-/* ──────────────────────────────────────────────────────────────────────────
-   LIVE TAB — Stream card 2-column layout (.sv-stream--large)
-
-   The dashboard widget renders stream cards as a single column because the
-   tile is narrow. In the Live tab we have plenty of horizontal real estate,
-   so each card becomes:
-     [bar] [poster col] [main col → badges/title/sub/details/synopsis/footer]
-   The poster sits permanently on the left; the synopsis becomes plain text
-   (not a collapsible toggle); a bandwidth sparkline rides along the bottom
-   of every card alongside the live bitrate value.
-   ────────────────────────────────────────────────────────────────────────── */
 
 .sv-stream--large {
   display: grid;
@@ -1193,7 +1103,7 @@
   display: block;
   -webkit-line-clamp: unset;
   padding: 4px 10px;
-  border-right: none;       /* override widget.css border-right (looked like a "|") */
+  border-right: none;
   border-radius: 4px;
   transition: background .6s ease;
 }
@@ -1219,7 +1129,7 @@
   flex: 1;
   min-width: 0;
   height: 60px;
-  position: relative;       /* anchor for the absolutely-positioned unit */
+  position: relative;
   display: flex;
   align-items: stretch;
   gap: 6px;
@@ -1245,11 +1155,9 @@
   display: block;
 }
 
-/* Chart internals — dark theme defaults */
 .sv-chart__plot .sv-spark-grid     { stroke: rgba(255,255,255,.08); }
 .sv-chart__plot .sv-spark-baseline { stroke: rgba(255,255,255,.15); }
 
-/* Light theme overrides for chart internals */
 .svt-light .sv-stream--large .sv-chart__yaxis        { color: rgba(0,0,0,.55); }
 .svt-light .sv-stream--large .sv-chart__yaxis .sv-chart__unit { color: rgba(0,0,0,.40); }
 .svt-light .sv-chart__plot .sv-spark-grid            { stroke: rgba(0,0,0,.10); }
@@ -1261,7 +1169,6 @@
   margin-left: auto;
 }
 
-/* Mobile: poster gets smaller, layout still 2-col */
 @media (max-width: 768px) {
   .sv-stream--large {
     grid-template-columns: 4px 80px 1fr;
@@ -1273,7 +1180,6 @@
   }
 }
 
-/* Light theme overrides */
 .svt-light .sv-stream--large {
   background: var(--svt-surface2, rgba(0,0,0,.02));
   border-color: var(--svt-border, rgba(0,0,0,.08));
@@ -1299,18 +1205,10 @@
   color: rgba(0,0,0,.85);
 }
 
-/* Push the Live tab to the right of the tab bar so it sits separately from
-   the statistics tabs (Dashboard, Libraries, Users, History, Graphs, Insights). */
 .svt-tabs .svt-tab--right {
   margin-left: auto;
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   LIVE TAB — Big header (mirrors Statistics dashboard header) + overview
-   ────────────────────────────────────────────────────────────────────────── */
-
-/* Use the existing .svt-header styles defined for the Statistics page. The
-   refresh-indicator below replaces the old count subtitle. */
 #svtPanelLive .svt-header__sub.sv-refresh-indicator {
   display: inline-flex; align-items: center; gap: 6px;
   margin-left: 10px;
@@ -1331,7 +1229,6 @@
 }
 #svtPanelLive .svt-header__sub .sv-ts-icon { opacity: .55; }
 
-/* ── Overview row: 5 compact stat cards ─────────────────────────────────── */
 .svll-overview {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -1347,8 +1244,6 @@
   min-width: 0;
 }
 
-/* Per-card subtle tints — low alpha, no neon, just a hint of color so the
-   cards become visually distinct without turning into a circus. */
 .svll-stat--orange { background: rgba(244, 125,  66, 0.06); border-color: rgba(244, 125,  66, 0.20); }
 .svll-stat--blue   { background: rgba( 74, 144, 226, 0.06); border-color: rgba( 74, 144, 226, 0.20); }
 .svll-stat--teal   { background: rgba( 38, 198, 218, 0.06); border-color: rgba( 38, 198, 218, 0.20); }
@@ -1381,7 +1276,6 @@
   .svll-stat__value { font-size: 16px; }
 }
 
-/* ── Play-type breakdown bars row ───────────────────────────────────────── */
 .svll-types {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1427,11 +1321,9 @@
   .svll-types { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* Light theme tweaks for the overview/type rows */
 .svt-light .svll-stat__label { color: rgba(0,0,0,.55); }
 .svt-light .svll-stat__value { color: rgba(0,0,0,.95); }
 
-/* Light theme per-card tints — slightly higher alpha so they read on white. */
 .svt-light .svll-stat--orange { background: rgba(244, 125,  66, 0.09); border-color: rgba(244, 125,  66, 0.30); }
 .svt-light .svll-stat--blue   { background: rgba( 74, 144, 226, 0.09); border-color: rgba( 74, 144, 226, 0.30); }
 .svt-light .svll-stat--teal   { background: rgba( 38, 198, 218, 0.09); border-color: rgba( 38, 198, 218, 0.30); }

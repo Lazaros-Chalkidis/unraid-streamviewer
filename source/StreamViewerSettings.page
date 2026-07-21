@@ -3,6 +3,12 @@ Icon="img/streamviewer.png"
 Title="Stream Viewer Settings"
 ---
 <?php
+/* ============================================================================
+   STREAM VIEWER
+   Copyright (C) 2026 Lazaros Chalkidis
+   License: GPLv3
+   ========================================================================= */
+
 require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
 require_once '/usr/local/emhttp/plugins/streamviewer/include/streamviewer_api.php';
 
@@ -11,8 +17,7 @@ const SV_CFG_FILE    = '/boot/config/plugins/streamviewer/streamviewer.cfg';
 const SV_MAX_SERVERS = 10;
 const SV_VALID_TYPES = ['plex', 'jellyfin', 'emby'];
 
-// ── Poll daemon management ────────────────────────────────────────────────
-
+// start or stop the poll daemon to match the stats toggle
 function sv_manage_poll(bool $statsEnabled): void
 {
     $pidFile  = '/var/run/streamviewer_poll.pid';
@@ -26,10 +31,10 @@ function sv_manage_poll(bool $statsEnabled): void
         }
     }
 
-    // Clean up any leftover cron entry from previous versions
     $cronFile = '/var/spool/cron/crontabs/root';
     if (file_exists($cronFile)) {
         $cron = (string)@file_get_contents($cronFile);
+        // remove any leftover crontab entry from older versions
         if (strpos($cron, 'streamviewer_cron') !== false) {
             exec("sed -i '/streamviewer_cron/d' " . escapeshellarg($cronFile));
         }
@@ -45,23 +50,20 @@ function sv_manage_poll(bool $statsEnabled): void
     }
 }
 
-// ── Sanitizers ─────────────────────────────────────────────────────────────
-
 $yn = static fn($v, $d = '0') => ((string)($v ?? $d) === '1') ? '1' : '0';
 
 $sanitize_url = static function($v): string {
     $v = trim((string)($v ?? ''));
     $v = rtrim($v, '/');
     if ($v === '') return '';
-    // Accept http(s):// URLs with a valid hostname (including Plex relay hostnames
-    // like 84-254-60-132.abc123.plex.direct:23057 which fail filter_var on some PHP builds)
+
     if (!preg_match('#^https?://[a-zA-Z0-9._\-]+(:[0-9]{1,5})?(/.*)?$#i', $v)) return '';
     return $v;
 };
 
 $sanitize_token = static function($v): string {
     $v = trim((string)($v ?? ''));
-    // Allow all printable ASCII except quotes/backslash (safe for .cfg file storage)
+
     return preg_replace('/[^\x20-\x21\x23-\x5B\x5D-\x7E]/u', '', $v);
 };
 
@@ -82,8 +84,7 @@ $clamp_max_streams = static function($v): string {
     return in_array((string)$v, $allowed, true) ? (string)$v : '10';
 };
 
-// ── Handle POST (Apply) ────────────────────────────────────────────────────
-
+// the # in the field name gets url-encoded by some setups, so check all three forms
 if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'] ?? '') === 'apply') {
     $existing = @parse_plugin_cfg(SV_PLUGIN, true) ?: [];
     $new_cfg  = [];
@@ -137,9 +138,6 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['TOOL_ALLOW_KILL']       = $yn($_POST['TOOL_ALLOW_KILL']       ?? '0', '0');
     $new_cfg['VERIFY_SSL']            = $yn($_POST['VERIFY_SSL']            ?? '0', '0');
 
-    // ── Live tab settings (Statistics page > Live) ──
-    // Independent of Widget settings so users can configure the dashboard widget
-    // and the Statistics Live tab separately.
     $new_cfg['LIVE_REFRESH_ENABLED']  = $yn($_POST['LIVE_REFRESH_ENABLED']  ?? '1', '1');
     $new_cfg['LIVE_REFRESH_INTERVAL'] = $clamp_interval($_POST['LIVE_REFRESH_INTERVAL'] ?? 5);
     $new_cfg['LIVE_MAX_STREAMS']      = $clamp_max_streams($_POST['LIVE_MAX_STREAMS'] ?? '0');
@@ -153,33 +151,30 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $new_cfg['LIVE_SHOW_SUMMARY']     = $yn($_POST['LIVE_SHOW_SUMMARY']     ?? '1', '1');
     $new_cfg['LIVE_SHOW_CHART']       = $yn($_POST['LIVE_SHOW_CHART']       ?? '1', '1');
 
-    // ── Badge theme ──
     $validThemes = ['default', 'blue', 'lime', 'green', 'purple', 'unraid', 'red', 'cyan', 'pink', 'gold', 'teal', 'mono'];
     $bt = (string)($_POST['BADGE_THEME'] ?? 'default');
     $new_cfg['BADGE_THEME'] = in_array($bt, $validThemes, true) ? $bt : 'default';
     $lbt = (string)($_POST['LIVE_BADGE_THEME'] ?? 'default');
     $new_cfg['LIVE_BADGE_THEME'] = in_array($lbt, $validThemes, true) ? $lbt : 'default';
 
-    // ── Stats settings ──
     $new_cfg['STATS_ENABLED']        = $yn($_POST['STATS_ENABLED'] ?? '0', '0');
     $new_cfg['STATS_ANONYMIZE_IP']   = $yn($_POST['STATS_ANONYMIZE_IP'] ?? '0', '0');
     $new_cfg['ERASE_ON_UNINSTALL']   = $yn($_POST['ERASE_ON_UNINSTALL'] ?? '0', '0');
 
     $statsPath = trim((string)($_POST['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer'));
     if ($statsPath === '') $statsPath = '/mnt/user/appdata/Stream-Viewer';
-    // Security: only allow paths under /mnt/
+
     if (strncmp($statsPath, '/mnt/', 5) !== 0) $statsPath = '/mnt/user/appdata/Stream-Viewer';
     $new_cfg['STATS_DB_PATH'] = rtrim($statsPath, '/');
 
     $retDays = (int)($_POST['STATS_RETENTION_DAYS'] ?? 90);
-    // 0 is the sentinel for "Forever - never delete"; otherwise clamp 7..365.
+
     if ($retDays !== 0) {
         if ($retDays < 7)   $retDays = 7;
         if ($retDays > 365) $retDays = 365;
     }
     $new_cfg['STATS_RETENTION_DAYS'] = (string)$retDays;
 
-    // Pause/resume merge window in minutes. 0 disables merging.
     $mwin = (int)($_POST['STATS_MERGE_WINDOW_MIN'] ?? 60);
     $allowedMwin = [0, 15, 30, 60, 120, 240];
     if (!in_array($mwin, $allowedMwin, true)) $mwin = 60;
@@ -189,6 +184,7 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     if (!in_array($tab, ['widget', 'plex', 'jellyfin', 'emby'], true)) $tab = 'widget';
     $new_cfg['SV_ACTIVE_TAB'] = $tab;
 
+    // escape embedded quotes so no value can break out of the ini
     $ini = '';
     foreach ($new_cfg as $k => $v) {
         $v   = str_replace('"', '\\"', (string)$v);
@@ -197,12 +193,10 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     @mkdir(dirname(SV_CFG_FILE), 0755, true);
     $written = file_put_contents(SV_CFG_FILE, $ini);
 
-    // Sync cron entry with stats toggle
     if ($written !== false) {
-        sv_manage_poll($new_cfg['STATS_ENABLED'] === '1');
+        sv_manage_poll($new_cfg['STATS_ENABLED'] === '1');  // cfg saved, bring the daemon in line with the new setting
     }
 
-    // If this is an AJAX request, return JSON and exit
     if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) || !empty($_POST['_svAjax'])) {
         header('Content-Type: application/json');
         if ($written === false) {
@@ -218,8 +212,6 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
 } else {
     $cfg = @parse_plugin_cfg(SV_PLUGIN, true) ?: [];
 }
-
-// ── Build server data array for JS ────────────────────────────────────────
 
 $servers_data = [];
 for ($i = 1; $i <= SV_MAX_SERVERS; $i++) {
@@ -245,11 +237,6 @@ for ($i = 1; $i <= SV_MAX_SERVERS; $i++) {
 $active_tab = (string)($cfg['SV_ACTIVE_TAB'] ?? 'servers');
 if (!in_array($active_tab, ['widget', 'plex', 'jellyfin', 'emby'], true)) $active_tab = 'widget';
 
-// Plugin version: prefer the VERSION file at the installed plugin directory
-// (written by build.sh on every build). This stays fresh during dev workflows
-// where files are replaced without a full .plg reinstall. Falls back to the
-// .plg ENTITY and .txz filename for legacy installs that predate the VERSION
-// file. Same source as the credits modal — single source of truth.
 $plugin_version = '';
 $_pvFile = '/usr/local/emhttp/plugins/streamviewer/VERSION';
 if (is_readable($_pvFile)) {
@@ -272,10 +259,10 @@ if ($plugin_version === '') $plugin_version = 'dev';
 ?>
 
 <?php
-// ── Theme detection (light/dark) ──────────────────────────────────────────
+
 $dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
 $unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
-// Light themes are white and gray; black and azure are dark.
+
 $sv_light     = in_array($unraid_theme, ['white', 'gray'], true);
 $lightClass   = $sv_light ? ' sv-light' : '';
 ?>
@@ -285,7 +272,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
 
 <form name="streamviewer_settings" method="post" class="streamviewer-settings<?= $lightClass ?>" autocomplete="off">
 
-  <!-- ── Top tabs: Dashboard Widget · Plex · Jellyfin · Emby ──────── -->
   <div class="sv-tabs" id="svTopTabs">
     <div class="sv-tab<?= $active_tab === 'widget'   ? ' active' : '' ?>" id="svTabWidget"   role="button" tabindex="0">
       <span class="sv-tabicon">▦</span> Settings
@@ -303,14 +289,10 @@ $lightClass   = $sv_light ? ' sv-light' : '';
 
   <div class="sv-settings-panel">
 
-    <!-- ════════════════════════════════════════════════════════════════
-         DASHBOARD WIDGET PANEL
-         ════════════════════════════════════════════════════════════════ -->
     <div id="svWidgetPanel" style="<?= $active_tab !== 'widget' ? 'display:none;' : '' ?>">
 
       <?php
-      // Helper: render a toggle switch for a boolean config key
-      // $name = form field name, $val = current value, $default = default value, $onLabel/$offLabel
+
       $toggle = function($name, $val, $default = '1', $onLabel = 'Enabled', $offLabel = 'Disabled') {
           $isOn = ((string)($val ?? $default)) === '1';
           $checked = $isOn ? ' checked' : '';
@@ -322,13 +304,11 @@ $lightClass   = $sv_light ? ' sv-light' : '';
               . '<span class="sv-toggle-txt ' . $txtClass . '">' . $txtLabel . '</span>';
       };
 
-      // Helper for show/hide toggles
       $toggleShow = function($name, $val, $default = '1') use ($toggle) {
           return $toggle($name, $val, $default, 'Show', 'Hide');
       };
       ?>
 
-      <!-- ── Section 1: Widget Settings ── -->
       <div class="sv-sec" id="svSecWidget">
         <div class="sv-sec-hd">
           <span>Widget settings</span>
@@ -511,13 +491,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         </div>
       </div>
 
-      <!-- ── Section 2: Live Settings ── -->
-      <!--
-        Mirrors the Widget Settings section above but with a LIVE_* prefix so the
-        Statistics page Live tab can be configured independently of the Dashboard
-        widget. Header stream badge and Badge color theme remain global (declared
-        once in Widget Settings) since they are not per-view.
-      -->
       <div class="sv-sec closed" id="svSecLive">
         <div class="sv-sec-hd">
           <span>Active Stream/s</span>
@@ -631,9 +604,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <div class="sv-r-label">Badge color theme<span class="sv-r-label-desc">Server name badge colors</span></div>
             <div class="sv-r-field" style="padding:6px 16px;">
               <?php
-              // Reuse the same palette declared in the Widget settings section so
-              // the two stay visually consistent. Stored under LIVE_BADGE_THEME
-              // so the Live tab can pick a different theme than the widget.
+
               $liveBadgeTheme = (string)($cfg['LIVE_BADGE_THEME'] ?? 'default');
               ?>
               <input type="hidden" name="LIVE_BADGE_THEME" value="<?= htmlspecialchars($liveBadgeTheme) ?>">
@@ -652,7 +623,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         </div>
       </div>
 
-      <!-- ── Section 3: Statistics Settings ── -->
       <div class="sv-sec closed" id="svSecStats">
         <div class="sv-sec-hd">
           <span>Statistics settings</span>
@@ -742,7 +712,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         </div>
       </div>
 
-      <!-- ── Section 3: Connection Settings ── -->
       <div class="sv-sec closed" id="svSecConn">
         <div class="sv-sec-hd">
           <span>Connection settings</span>
@@ -760,18 +729,12 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         </div>
       </div>
 
-    </div><!-- /svWidgetPanel -->
+    </div>
 
-
-    <!-- ════════════════════════════════════════════════════════════════
-         PLEX PANEL
-         ════════════════════════════════════════════════════════════════ -->
     <div id="svPlexPanel" style="<?= $active_tab !== 'plex' ? 'display:none;' : '' ?>">
 
-      <!-- ── Local Plex container mismatch banner (populated by JS on load) -->
       <div id="svLocalMismatchBanner" class="sv-mismatch-banner" style="display:none;"></div>
 
-      <!-- ── Add Plex Servers card (with Connect button on right + accordion) -->
       <div class="sv-card">
         <div class="sv-card-hd">
           <span style="color:#e5a00d;">▶</span>&nbsp;Add Plex Servers
@@ -791,7 +754,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
           </div>
 
-          <!-- Step 1: initiate -->
           <div id="svPlexOauthStep1" style="margin-top:.85rem;display:flex;justify-content:flex-end;">
             <button type="button" id="svPlexSignInBtn" class="sv-plex-signin-btn">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="vertical-align:middle;margin-right:.3rem;"><path d="M11.69 3 5 12l6.69 9h1.55l-6.69-9 6.69-9zM17.31 3h-1.55l-6.69 9 6.69 9h1.55l-6.69-9z"/></svg>
@@ -799,7 +761,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </button>
           </div>
 
-          <!-- Step 2: waiting for auth -->
           <div id="svPlexOauthStep2" style="display:none;margin-top:.85rem;">
             <div class="sv-oauth-waiting">
               <i class="fa fa-spinner fa-spin" style="color:#e5a00d;font-size:1.1em;"></i>
@@ -808,14 +769,12 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             </div>
           </div>
 
-          <!-- Discovery results -->
           <div id="svDiscoveryResults" style="display:none;margin-top:1rem;">
             <div class="sv-discovery-header" id="svDiscoveryHeader"></div>
             <div id="svDiscoveryList"></div>
           </div>
           <div id="svDiscoveryError" class="sv-test-err" style="display:none;margin-top:.75rem;"></div>
 
-          <!-- ── Configured Plex Servers (accordion) ── -->
           <div class="sv-accordion sv-accordion--collapsed" id="svPlexServersAccordion" style="margin-top:1rem;">
             <div class="sv-accordion-hd" id="svPlexServersAccordionHd">
               <span>Configured Plex Servers</span>
@@ -828,12 +787,8 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         </div>
       </div>
 
-    </div><!-- /svPlexPanel -->
+    </div>
 
-
-    <!-- ════════════════════════════════════════════════════════════════
-         JELLYFIN PANEL
-         ════════════════════════════════════════════════════════════════ -->
     <div id="svJellyfinPanel" style="<?= $active_tab !== 'jellyfin' ? 'display:none;' : '' ?>">
 
       <div class="sv-card">
@@ -868,7 +823,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <span id="svJfTestResult" class="sv-inline-result" style="display:none;"></span>
           </div>
 
-          <!-- ── Configured Jellyfin Servers (accordion) ── -->
           <div class="sv-accordion sv-accordion--collapsed" id="svJfServersAccordion" style="margin-top:1rem;">
             <div class="sv-accordion-hd" id="svJfServersAccordionHd">
               <span>Configured Jellyfin Servers</span>
@@ -881,12 +835,8 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         </div>
       </div>
 
-    </div><!-- /svJellyfinPanel -->
+    </div>
 
-
-    <!-- ════════════════════════════════════════════════════════════════
-         EMBY PANEL
-         ════════════════════════════════════════════════════════════════ -->
     <div id="svEmbyPanel" style="<?= $active_tab !== 'emby' ? 'display:none;' : '' ?>">
 
       <div class="sv-card">
@@ -921,7 +871,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <span id="svEmbyTestResult" class="sv-inline-result" style="display:none;"></span>
           </div>
 
-          <!-- ── Configured Emby Servers (accordion) ── -->
           <div class="sv-accordion sv-accordion--collapsed" id="svEmbyServersAccordion" style="margin-top:1rem;">
             <div class="sv-accordion-hd" id="svEmbyServersAccordionHd">
               <span>Configured Emby Servers</span>
@@ -934,9 +883,8 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         </div>
       </div>
 
-    </div><!-- /svEmbyPanel -->
+    </div>
 
-  <!-- Hidden inputs for form submit (all server slots) -->
   <?php for ($i = 1; $i <= SV_MAX_SERVERS; $i++): ?>
   <input type="hidden" name="SERVER<?= $i ?>_ENABLED" id="svHidEnabled<?= $i ?>" value="0" autocomplete="off">
   <input type="hidden" name="SERVER<?= $i ?>_TYPE"    id="svHidType<?= $i ?>"    value="" autocomplete="off">
@@ -945,7 +893,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
   <input type="hidden" name="SERVER<?= $i ?>_TOKEN"   id="svHidToken<?= $i ?>"   value="" autocomplete="off">
   <?php endfor; ?>
 
-  <!-- ── Footer ─────────────────────────────────────────────────────── -->
   <input type="hidden" name="sv_active_tab" id="svActiveTabInput" value="<?= htmlspecialchars($active_tab) ?>">
 
   <div class="sv-actions-bar">
@@ -961,12 +908,10 @@ $lightClass   = $sv_light ? ' sv-light' : '';
     </button>
   </div>
 
-  </div><!-- /sv-settings-panel -->
+  </div>
 
   <div class="sv-footer-row">
     <span class="sv-support-links">
-      <a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" id="svSupportLink" class="sv-support-link" target="_blank" rel="noopener">Support Forum</a>
-      <span class="sv-support-sep" aria-hidden="true"></span>
       <a href="https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues" class="sv-support-link" target="_blank" rel="noopener">GitHub Issues</a>
       <span class="sv-support-sep" aria-hidden="true"></span>
       <a href="#" id="svCreditsLink" class="sv-support-link">Credits</a>
@@ -974,11 +919,10 @@ $lightClass   = $sv_light ? ' sv-light' : '';
     <span class="sv-version-badge">v<?= htmlspecialchars($plugin_version) ?></span>
   </div>
 
-  <!-- ── Credits modal ──────────────────────────────────────────────── -->
   <div id="svCreditsModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
     <div class="sv-credits-modal-box sv-credits-modal-v2">
       <div class="sv-credits-grid">
-        <!-- Left: avatar column -->
+
         <div class="sv-credits-left">
           <span class="sv-credits-accent-stripe"></span>
           <div class="sv-credits-avatar-wrap">
@@ -987,16 +931,13 @@ $lightClass   = $sv_light ? ' sv-light' : '';
           <div class="sv-credits-name">Lazaros Chalkidis</div>
           <div class="sv-credits-role">Developer</div>
         </div>
-        <!-- Right: info + links -->
+
         <div class="sv-credits-right">
           <div class="sv-credits-title-row">
             <span class="sv-credits-title">Stream Viewer</span>
             <span class="sv-credits-version">v<?php
               $_svPluginVer = '';
 
-              // Primary: VERSION file at the canonical installed location.
-              // Hardcoded absolute path because __DIR__ in a .page file under
-              // emhttp does not always resolve where one expects.
               $_svVersionFile = '/usr/local/emhttp/plugins/streamviewer/VERSION';
               if (is_readable($_svVersionFile)) {
                   $_svRead = trim((string)@file_get_contents($_svVersionFile));
@@ -1005,9 +946,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
                   }
               }
 
-              // Fallback: Slackware package metadata for legacy installs that
-              // predate the VERSION file. Sort descending so the newest install
-              // wins even if a stale entry was left behind.
               if ($_svPluginVer === '') {
                   $_svPkgs = @glob('/var/log/packages/streamviewer-*');
                   if (is_array($_svPkgs) && !empty($_svPkgs)) {
@@ -1029,9 +967,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <a href="https://github.com/Lazaros-Chalkidis" target="_blank" rel="noopener" class="sv-credits-link">
               <i class="fa fa-github"></i><span>GitHub Profile</span><i class="fa fa-external-link sv-credits-link-ext"></i>
             </a>
-            <a href="https://forums.unraid.net/topic/197757-plugin-stream-viewer/" target="_blank" rel="noopener" class="sv-credits-link">
-              <i class="fa fa-comments-o"></i><span>Plugin Support Thread</span><i class="fa fa-external-link sv-credits-link-ext"></i>
-            </a>
             <a href="https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues" target="_blank" rel="noopener" class="sv-credits-link">
               <i class="fa fa-bug"></i><span>GitHub Issues</span><i class="fa fa-external-link sv-credits-link-ext"></i>
             </a>
@@ -1045,7 +980,6 @@ $lightClass   = $sv_light ? ' sv-light' : '';
     </div>
   </div>
 
-  <!-- ── Reset success modal (shown after Reset to defaults) ──────────── -->
   <div id="svResetModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
     <div class="sv-reset-modal-box">
       <div class="sv-reset-body">
@@ -1073,10 +1007,6 @@ window.svMaxServers = <?= SV_MAX_SERVERS ?>;
 (function () {
 'use strict';
 
-// ══════════════════════════════════════════════════════════════════════════════
-// CONSTANTS
-// ══════════════════════════════════════════════════════════════════════════════
-
 var PLEX_TV_API  = 'https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1';
 var PLEX_HEADERS = {
     'Accept':                  'application/json',
@@ -1091,20 +1021,13 @@ var SV_TYPES = {
     emby:     { label: 'Emby',     color: '#52b54b' },
 };
 
-// ══════════════════════════════════════════════════════════════════════════════
-// STATE
-// ══════════════════════════════════════════════════════════════════════════════
-
-var cards = [];  // [{cardIndex, removed, data}]
-
-// ══════════════════════════════════════════════════════════════════════════════
-// HELPERS
-// ══════════════════════════════════════════════════════════════════════════════
+var cards = [];
 
 function escHtml(s) {
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// flag unsaved changes so we can warn before leaving
 function markDirty() {
     var apply = document.querySelector('input[name="#apply_btn"]');
     if (!apply) return;
@@ -1112,22 +1035,11 @@ function markDirty() {
     if (typeof window.checkChanges === 'function') { try { window.checkChanges(); } catch(_) {} }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// PLEX OAUTH PIN FLOW  — ALL plex.tv calls go through PHP (avoids CORS + Origin)
-//
-// Flow:
-//  1. JS  → PHP plex_create_pin  → PHP POSTs to plex.tv/api/v2/pins (no Origin)
-//  2. PHP returns {pin_id, auth_url}, JS opens auth_url popup
-//  3. JS polls PHP plex_poll_pin every 2s
-//  4. PHP polls plex.tv/api/v2/pins/{id} — when ready, runs discovery
-//  5. PHP returns server list, account token NEVER leaves PHP
-// ══════════════════════════════════════════════════════════════════════════════
-
 var _plexPollTimer  = null;
 var _plexAuthWindow = null;
 var _plexPinId      = null;
 var _plexPollCount  = 0;
-var PLEX_POLL_MAX   = 120;   // 120 × 2s = 4 minutes
+var PLEX_POLL_MAX   = 120;
 var PLEX_POLL_MS    = 2000;
 var SV_API          = '/plugins/streamviewer/include/streamviewer_api.php';
 
@@ -1145,7 +1057,7 @@ function plexShowStep(step) {
     if (s2) s2.style.display = step === 2 ? 'flex' : 'none';
 }
 
-/** Step 1 — ask PHP to create the PIN, then open the auth popup. */
+// plex pin flow: open the auth window, then poll for the user to approve it
 function startPlexOauth() {
     var btn   = document.getElementById('svPlexSignInBtn');
     var errEl = document.getElementById('svDiscoveryError');
@@ -1156,7 +1068,6 @@ function startPlexOauth() {
     errEl.style.display = 'none';
     if (resEl) resEl.style.display = 'none';
 
-    // PHP creates the PIN server-side — no Origin header sent to plex.tv
     $.ajax({
         url:      SV_API,
         method:   'GET',
@@ -1174,7 +1085,6 @@ function startPlexOauth() {
             _plexPinId     = data.pin_id;
             _plexPollCount = 0;
 
-            // Open Plex auth popup — URL was built by PHP
             _plexAuthWindow = window.open(
                 data.auth_url, 'plex_auth',
                 'width=800,height=700,left=' + Math.round((screen.width  - 800) / 2)
@@ -1193,10 +1103,10 @@ function startPlexOauth() {
     });
 }
 
-/** Step 3 — poll PHP which polls plex.tv server-side. */
 function pollPlexPin() {
     _plexPollCount++;
 
+    // give up after the max number of polls and tell the user it timed out
     if (_plexPollCount > PLEX_POLL_MAX) {
         cancelPlexOauth();
         showDiscoveryError('Sign-in timed out. Please try again.');
@@ -1215,16 +1125,15 @@ function pollPlexPin() {
         dataType: 'json',
         success: function(data) {
             if (!data.ok) {
-                // transient error — keep polling
+
                 return;
             }
 
             if (!data.ready) {
-                // Not yet authorized — keep polling
+
                 return;
             }
 
-            // Authorized! PHP already ran discovery and returned servers.
             clearInterval(_plexPollTimer);
             _plexPollTimer = null;
             if (_plexAuthWindow) { try { _plexAuthWindow.close(); } catch(_) {} _plexAuthWindow = null; }
@@ -1240,7 +1149,7 @@ function pollPlexPin() {
             renderDiscoveryResults(data.servers);
         },
         error: function() {
-            // network hiccup — keep polling
+
         },
     });
 }
@@ -1264,6 +1173,7 @@ function showDiscoveryError(msg) {
     el.style.display = '';
 }
 
+// rank a discovered connection as local vs remote so we can prefer the LAN address
 function classifyConnection(conn, hasLocalContainer) {
     hasLocalContainer = !!hasLocalContainer;
     if (conn.container_detected) {
@@ -1304,10 +1214,6 @@ function classifyConnection(conn, hasLocalContainer) {
     };
 }
 
-/**
- * Render the discovery results — one card per found Plex server.
- * Each card has a connection dropdown and an "Add" button.
- */
 function renderDiscoveryResults(servers) {
     var resultsEl = document.getElementById('svDiscoveryResults');
     var headerEl  = document.getElementById('svDiscoveryHeader');
@@ -1323,14 +1229,12 @@ function renderDiscoveryResults(servers) {
         return buildDiscoveryCard(srv, idx);
     }).join('');
 
-    // Bind Add buttons
     listEl.querySelectorAll('.sv-disc-add-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
             addDiscoveredServer(btn, servers);
         });
     });
 
-    // Bind selection change so the help line below each dropdown follows the choice
     listEl.querySelectorAll('.sv-disc-conn-select').forEach(function(sel) {
         sel.addEventListener('change', function() {
             var opt  = sel.options[sel.selectedIndex];
@@ -1355,9 +1259,6 @@ function buildDiscoveryCard(srv, idx) {
 
     var hasLocalContainer = connections.some(function(c) { return c.container_detected; });
 
-    // Sort connections: container-detected first (priority 0), then original order
-    // (relay 1, remote 2, local plex.direct 3). Preserves original behavior when
-    // no local container is detected, and elevates the detected one when it is.
     var sorted = connections.slice().sort(function(a, b) {
         return classifyConnection(a, hasLocalContainer).priority - classifyConnection(b, hasLocalContainer).priority;
     });
@@ -1416,12 +1317,10 @@ function addDiscoveredServer(btn, servers) {
         url:               url,
         enabled:           true,
         has_token:         !!(srv.accessToken),
-        // accessToken = server-specific token from plex.tv discovery
-        // this is what the PHP API uses — NOT the account token
+
         token_placeholder: srv.accessToken || '',
     });
 
-    // Mark as added in the discovery card
     btn.disabled = true;
     btn.innerHTML = '<i class="fa fa-check"></i> Added';
     var already = btn.closest('.sv-disc-card');
@@ -1438,15 +1337,7 @@ function addDiscoveredServer(btn, servers) {
     markDirty();
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// LOCAL PLEX CONTAINER MISMATCH BANNER
-// ──────────────────────────────────────────────────────────────────────────────
-// Detects when a saved Plex server is configured with a non-local URL while a
-// Plex container is actually running on this same Unraid host. Surfaces a
-// persistent banner with a one-click "Switch to local" action that rewrites the
-// SERVERn_URL line in the config to the container's LAN address.
-// ══════════════════════════════════════════════════════════════════════════════
-
+// warn if a plex server is reachable on the LAN but configured with a remote url
 function checkLocalPlexMismatch() {
     var banner = document.getElementById('svLocalMismatchBanner');
     if (!banner) return;
@@ -1467,8 +1358,7 @@ function checkLocalPlexMismatch() {
             renderLocalMismatchBanner(banner, data.mismatches);
         },
         error: function() {
-            // Silent fail: a missing Docker socket, permission issue, or network blip
-            // should not block the settings page. The user can still operate normally.
+
             banner.style.display = 'none';
         },
     });
@@ -1526,7 +1416,7 @@ function applyLocalUrl(index, btn) {
         timeout:  8000,
         success: function(data) {
             if (data && data.ok) {
-                // Re-check: this server's row disappears, banner hides if it was the last one
+
                 checkLocalPlexMismatch();
             } else {
                 if (btn) { btn.disabled = false; btn.textContent = 'Switch to local'; }
@@ -1539,10 +1429,6 @@ function applyLocalUrl(index, btn) {
         },
     });
 }
-
-// ══════════════════════════════════════════════════════════════════════════════
-// JELLYFIN / EMBY MANUAL ADD
-// ══════════════════════════════════════════════════════════════════════════════
 
 function addJellyfinServer() {
     var type  = 'jellyfin';
@@ -1569,7 +1455,6 @@ function addJellyfinServer() {
         token_placeholder: token,
     });
 
-    // Clear the form
     document.getElementById('svJfName').value  = '';
     document.getElementById('svJfUrl').value   = '';
     document.getElementById('svJfToken').value = '';
@@ -1587,7 +1472,6 @@ function testJellyfinServer() {
     var btn   = document.getElementById('svJfTestBtn');
     var res   = document.getElementById('svJfTestResult');
 
-    // Brief flash: hide result so re-click is always visible
     if (res) res.style.display = 'none';
 
     if (!url || !token) {
@@ -1630,10 +1514,6 @@ function testJellyfinServer() {
     });
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// CONFIGURED SERVERS LIST
-// ══════════════════════════════════════════════════════════════════════════════
-
 function addCard(data) {
     var ci = Date.now() + Math.floor(Math.random() * 1000);
     cards.push({ cardIndex: ci, removed: false, data: data });
@@ -1650,13 +1530,11 @@ function buildServerCard(data, cardIndex) {
     var typeMeta = SV_TYPES[type] || { label: type, color: '#fff' };
     var enabledClass = enabled ? ' sv-server-card--enabled' : '';
 
-    // For plex: token is from discovery (read-only hint), URL is read-only
-    // For jf/emby: fully editable
     var urlReadonly    = type === 'plex' ? ' readonly title="Discovered via plex.tv"' : '';
     var tokenReadonly  = type === 'plex' ? ' readonly title="Server token from plex.tv discovery"' : '';
     var tokenPlaceholder = type === 'plex'
         ? (hasToken ? 'Server token stored (from plex.tv discovery)' : '')
-        : (hasToken ? 'Token saved — type to replace' : 'Paste your API key here');
+        : (hasToken ? 'Token saved - type to replace' : 'Paste your API key here');
 
     return '<div class="sv-server-card' + enabledClass + '" data-card-index="' + cardIndex + '">'
         + '<div class="sv-server-card-hd">'
@@ -1751,15 +1629,10 @@ function updateCountPill() {
     if (pill) pill.textContent = active + ' / ' + window.svMaxServers;
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// RESULT DISPLAY HELPER
-// ══════════════════════════════════════════════════════════════════════════════
-
 function showResult(el, ok, msg) {
     if (!el) return;
     msg = msg || '';
 
-    // Detect network errors that suggest ipvlan/macvlan host isolation
     var networkHint = '';
     if (!ok) {
         var lower = msg.toLowerCase();
@@ -1781,17 +1654,12 @@ function showResult(el, ok, msg) {
     el.style.display = '';
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// EMBY ADD / TEST
-// ══════════════════════════════════════════════════════════════════════════════
-
 function testEmbyServer() {
     var url   = ((document.getElementById('svEmbyUrl')   || {}).value || '').replace(/\/$/, '');
     var token = (document.getElementById('svEmbyToken') || {}).value || '';
     var btn   = document.getElementById('svEmbyTestBtn');
     var res   = document.getElementById('svEmbyTestResult');
 
-    // Brief flash: hide result so re-click is always visible
     if (res) res.style.display = 'none';
 
     if (!url || !token) {
@@ -1858,12 +1726,8 @@ function addEmbyServer() {
     markDirty();
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// SYNC CARDS → HIDDEN INPUTS  (called before form submit)
-// ══════════════════════════════════════════════════════════════════════════════
-
 function syncAllToHidden() {
-    // Read current DOM state from all type-specific lists
+
     ['svPlexServerList','svJfServerList','svEmbyServerList'].forEach(function(listId) {
         var list = document.getElementById(listId);
         if (!list) return;
@@ -1897,7 +1761,7 @@ function syncAllToHidden() {
             if (url) url.value = card.data.url     || '';
             if (tok) {
                 var t = card.data.token_placeholder || '';
-                // If token is unchanged sentinel OR is the raw token, pass it through
+
                 tok.value = t;
             }
         } else {
@@ -1909,10 +1773,6 @@ function syncAllToHidden() {
         }
     }
 }
-
-// ══════════════════════════════════════════════════════════════════════════════
-// TABS
-// ══════════════════════════════════════════════════════════════════════════════
 
 function setTab(which) {
     var tabMap = {
@@ -1929,7 +1789,7 @@ function setTab(which) {
     });
     var inp = document.getElementById('svActiveTabInput');
     if (inp) inp.value = which;
-    // Update Reset button label per tab
+
     var resetBtn = document.getElementById('svResetBtn');
     if (resetBtn) {
         resetBtn.style.display = '';
@@ -1940,10 +1800,6 @@ function setTab(which) {
     try { sessionStorage.setItem('sv_active_tab', which); } catch(_) {}
     try { history.replaceState(null, '', '#' + which); } catch(_) {}
 }
-
-// ══════════════════════════════════════════════════════════════════════════════
-// RESET TO DEFAULTS
-// ══════════════════════════════════════════════════════════════════════════════
 
 function svShowResetModal() {
     var m = document.getElementById('svResetModal');
@@ -1969,7 +1825,7 @@ function resetDefaults() {
             LIB_SECTIONS_OPEN:'0',
             TOOL_ALLOW_KILL:'0',
             VERIFY_SSL:'0',
-            // Live tab (Statistics page) settings, independent from Widget
+
             LIVE_REFRESH_ENABLED:'1', LIVE_REFRESH_INTERVAL:'5', LIVE_MAX_STREAMS:'0',
             LIVE_ALLOW_KILL:'0',
             LIVE_SHOW_DEVICE:'1', LIVE_SHOW_IP:'1', LIVE_SHOW_PROGRESS:'1',
@@ -1988,7 +1844,7 @@ function resetDefaults() {
             var el = form.querySelector('[name="' + k + '"]');
             if (el) el.value = defaults[k];
         });
-        // Sync toggle checkboxes to match reset values
+
         document.querySelectorAll('.sv-toggle input[type="checkbox"]').forEach(function(cb) {
             var name = cb.dataset.svToggle;
             if (!name || !defaults.hasOwnProperty(name)) return;
@@ -2000,7 +1856,7 @@ function resetDefaults() {
                 txt.className = 'sv-toggle-txt ' + (cb.checked ? 'on' : 'off');
             }
         });
-        // Sync badge theme radio buttons
+
         document.querySelectorAll('.sv-badge-theme-opt input[type="radio"]').forEach(function(r) {
             r.checked = r.value === 'default';
             r.closest('.sv-badge-theme-opt').classList.toggle('sv-badge-theme-opt--sel', r.checked);
@@ -2035,7 +1891,7 @@ function resetDefaults() {
     }
 
     if (activeTab === 'plex') {
-        // Plex uses OAuth — reset the OAuth UI to initial state
+
         var step1   = document.getElementById('svPlexOauthStep1');
         var step2   = document.getElementById('svPlexOauthStep2');
         var oauthMsg = document.getElementById('svPlexOauthMsg');
@@ -2046,13 +1902,8 @@ function resetDefaults() {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// INIT
-// ══════════════════════════════════════════════════════════════════════════════
-
 (function () {
 
-    // ── Load existing servers from PHP ───────────────────────────────────────
     (window.svServers || []).forEach(function(srv, idx) {
         cards.push({
             cardIndex: idx + 1,
@@ -2069,30 +1920,24 @@ function resetDefaults() {
     });
     renderAllCards();
 
-    // ── Plex OAuth sign-in button ─────────────────────────────────────────
     var plexSignInBtn = document.getElementById('svPlexSignInBtn');
     if (plexSignInBtn) plexSignInBtn.addEventListener('click', startPlexOauth);
 
     var plexCancelBtn = document.getElementById('svPlexCancelBtn');
     if (plexCancelBtn) plexCancelBtn.addEventListener('click', cancelPlexOauth);
 
-    // ── Local Plex container mismatch detection (persistent banner) ───────
     checkLocalPlexMismatch();
 
-
-    // ── Jellyfin buttons ────────────────────────────────────────────────────
     var jfTestBtn = document.getElementById('svJfTestBtn');
     var jfAddBtn  = document.getElementById('svJfAddBtn');
     if (jfTestBtn) jfTestBtn.addEventListener('click', testJellyfinServer);
     if (jfAddBtn)  jfAddBtn.addEventListener('click',  addJellyfinServer);
 
-    // ── Emby buttons ─────────────────────────────────────────────────────────
     var embyTestBtn = document.getElementById('svEmbyTestBtn');
     var embyAddBtn  = document.getElementById('svEmbyAddBtn');
     if (embyTestBtn) embyTestBtn.addEventListener('click', testEmbyServer);
     if (embyAddBtn)  embyAddBtn.addEventListener('click',  addEmbyServer);
 
-    // ── Accordion toggles (server lists) ──────────────────────────────────────
     ['svPlexServersAccordionHd','svJfServersAccordionHd','svEmbyServersAccordionHd'].forEach(function(hdId) {
         var hd = document.getElementById(hdId);
         if (!hd) return;
@@ -2102,14 +1947,12 @@ function resetDefaults() {
         });
     });
 
-    // ── Section header toggles (new sv-sec sections) ──────────────────────────
     document.querySelectorAll('.sv-sec-hd').forEach(function(hd) {
         hd.addEventListener('click', function() {
             this.closest('.sv-sec').classList.toggle('closed');
         });
     });
 
-    // ── Toggle switch wiring ─────────────────────────────────────────────────
     document.querySelectorAll('.sv-toggle input[type="checkbox"]').forEach(function(cb) {
         cb.addEventListener('change', function() {
             var name = this.dataset.svToggle;
@@ -2126,12 +1969,6 @@ function resetDefaults() {
         });
     });
 
-    // ── Badge theme radio buttons ──────────────────────────────────────────
-    // There are now two independent badge theme groups: the Widget (radio
-    // name="_sv_badge_theme", hidden input "BADGE_THEME") and the Live tab
-    // (radio name="_sv_live_badge_theme", hidden input "LIVE_BADGE_THEME").
-    // The handler dispatches by radio name and only updates the matching
-    // hidden input and the selected-state of options within the same group.
     var BADGE_GROUPS = {
         '_sv_badge_theme':      'BADGE_THEME',
         '_sv_live_badge_theme': 'LIVE_BADGE_THEME',
@@ -2143,7 +1980,7 @@ function resetDefaults() {
             if (!hiddenName) return;
             var hidden = document.querySelector('input[type="hidden"][name="' + hiddenName + '"]');
             if (hidden) hidden.value = this.value;
-            // Toggle "selected" class only on options inside the same group
+
             document.querySelectorAll('.sv-badge-theme-opt input[name="' + groupName + '"]').forEach(function(r) {
                 r.closest('.sv-badge-theme-opt').classList.toggle('sv-badge-theme-opt--sel', r.checked);
             });
@@ -2151,7 +1988,6 @@ function resetDefaults() {
         });
     });
 
-    // ── Card section toggles (Dashboard Widget panels - legacy, kept for Plex/JF/Emby) ──
     document.querySelectorAll('.sv-card-hd--toggle').forEach(function(hd) {
         hd.addEventListener('click', function() {
             var card = this.closest('.sv-card');
@@ -2164,7 +2000,6 @@ function resetDefaults() {
         });
     });
 
-    // ── Tab buttons ──────────────────────────────────────────────────────────
     ['Widget', 'Plex', 'Jellyfin', 'Emby'].forEach(function(t) {
         var el = document.getElementById('svTab' + t);
         if (!el) return;
@@ -2172,15 +2007,12 @@ function resetDefaults() {
         el.addEventListener('keydown', function(e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setTab(t.toLowerCase()); } });
     });
 
-    // ── Intercept form submit via AJAX (prevents browser save-password prompt) ──
     var form     = document.querySelector('form[name="streamviewer_settings"]');
     var applyBtn = document.getElementById('svApplyBtn');
 
-    // Store original DB path to detect changes
     var _origDbPath = (document.querySelector('input[name="STATS_DB_PATH"]') || {}).value || '';
     var _hasExistingDb = (document.querySelector('input[name="STATS_DB_PATH"]') || {}).dataset.hasDb === '1';
 
-    // Show red warning when DB path is changed (only if a database already exists)
     var dbPathEl = document.querySelector('input[name="STATS_DB_PATH"]');
     var dbPathWarn = document.getElementById('svDbPathWarn');
     if (dbPathEl && dbPathWarn) {
@@ -2195,7 +2027,6 @@ function resetDefaults() {
         if (e) e.preventDefault();
         syncAllToHidden();
 
-        // Warn if DB path changed (existing data won't be migrated to new location)
         var dbPathInput = document.querySelector('input[name="STATS_DB_PATH"]');
         var newDbPath = dbPathInput ? dbPathInput.value.replace(/\/+$/, '') : '';
         var origPath = _origDbPath.replace(/\/+$/, '');
@@ -2212,12 +2043,10 @@ function resetDefaults() {
             }
         }
 
-        // Disable apply button while saving
         if (applyBtn) { applyBtn.disabled = true; applyBtn.innerHTML = '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i> Saving\u2026'; }
 
-        // Serialize the form to URL-encoded string (works reliably with Unraid .page files)
         var params = $(form).serialize();
-        params += '&%23apply=apply';  // add #apply (URL-encoded)
+        params += '&%23apply=apply';
 
         $.ajax({
             url:      window.location.pathname,
@@ -2245,11 +2074,9 @@ function resetDefaults() {
     }
     if (form) form.addEventListener('submit', ajaxSubmitForm);
 
-    // ── Reset button ─────────────────────────────────────────────────────────
     var resetBtn = document.getElementById('svResetBtn');
     if (resetBtn) resetBtn.addEventListener('click', resetDefaults);
 
-    // ── Credits modal ────────────────────────────────────────────────────────
     var modal  = document.getElementById('svCreditsModal');
     var cLink  = document.getElementById('svCreditsLink');
     var okBtn  = document.getElementById('svCreditsOkBtn');
@@ -2260,7 +2087,6 @@ function resetDefaults() {
         document.addEventListener('keydown', function(e) { if (e.key === 'Escape') modal.style.display = 'none'; });
     }
 
-    // ── Reset success modal ─────────────────────────────────────────────────
     var resetModal = document.getElementById('svResetModal');
     var resetOk    = document.getElementById('svResetOkBtn');
     if (resetOk && resetModal) resetOk.addEventListener('click', function() { resetModal.style.display = 'none'; });
@@ -2269,7 +2095,6 @@ function resetDefaults() {
         document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && resetModal.style.display !== 'none') resetModal.style.display = 'none'; });
     }
 
-    // ── Restore active tab ───────────────────────────────────────────────────
     var hash     = (window.location.hash || '').replace('#', '');
     var postTab  = (document.getElementById('svActiveTabInput') || {}).value || '';
     var savedTab = '';
@@ -2278,19 +2103,13 @@ function resetDefaults() {
     var target   = valid.includes(hash) ? hash : valid.includes(postTab) ? postTab : valid.includes(savedTab) ? savedTab : 'widget';
     setTab(target);
 
-    // ── FOUC reveal ──────────────────────────────────────────────────────────
     var s = document.querySelector('.streamviewer-settings');
     if (s) s.style.visibility = '';
 })();
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// DANGER ZONE: Erase-on-uninstall toggle + Wipe statistics DB button
-// Both gated by a confirm modal so the user can't enable/trigger by mistake.
-// ══════════════════════════════════════════════════════════════════════════════
 (function () {
     function showWarn(opts) {
-        // opts: { title, msg, confirmText, onConfirm, onCancel }
+
         var overlay = document.createElement('div');
         overlay.className = 'sv-warn-modal';
         overlay.innerHTML =
@@ -2331,13 +2150,11 @@ function resetDefaults() {
         document.body.appendChild(overlay);
     }
 
-    // ── Erase-on-uninstall toggle: gate the OFF→ON transition with a warning.
-    // We use a click capture on the wrapper to intercept the state change.
     var eraseToggle = document.querySelector('input[name="ERASE_ON_UNINSTALL"]');
     if (eraseToggle) {
         eraseToggle.addEventListener('change', function(e) {
-            if (!eraseToggle.checked) return; // turning OFF is harmless, allow
-            // Turning ON — undo and ask first.
+            if (!eraseToggle.checked) return;
+
             eraseToggle.checked = false;
             showWarn({
                 title: 'Erase data on uninstall?',
@@ -2351,7 +2168,6 @@ function resetDefaults() {
         }, true);
     }
 
-    // ── Wipe DB button: confirm, then POST to the wipe endpoint.
     var wipeBtn = document.getElementById('sv-wipe-db-btn');
     if (wipeBtn) {
         wipeBtn.addEventListener('click', function() {
@@ -2406,12 +2222,7 @@ function resetDefaults() {
 </script>
 
 <script>
-/*
- * Page width unlocker (same approach as StreamViewerTool.page).
- * Walks up from .streamviewer-settings to body and removes any max-width
- * constraint on ancestors narrower than the viewport. No-op outside the
- * standalone settings page.
- */
+
 (function() {
     'use strict';
     function unlockAncestors() {

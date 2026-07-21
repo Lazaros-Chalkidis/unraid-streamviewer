@@ -1,12 +1,19 @@
 <?php
-// StreamViewer for Unraid - Copyright (C) 2026 Lazaros Chalkidis - License: GPLv3
+/* ============================================================================
+   STREAM VIEWER
+   Copyright (C) 2026 Lazaros Chalkidis
+   License: GPLv3
+   ========================================================================= */
+
 header('Content-Type: application/json');
 header('Cache-Control: no-cache');
 $cfg = @parse_ini_file('/boot/config/plugins/streamviewer/streamviewer.cfg') ?: [];
+// badge off, just return zero
 if (((string)($cfg['HEADER_SHOW_BADGE'] ?? '1')) === '0') {
     echo '{"count":0}';
     exit;
 }
+// the count is written by the poll daemon, we only read it here
 $f = '/tmp/streamviewer_cache/header_count';
 $count = @is_file($f) ? max(0, (int)trim((string)@file_get_contents($f))) : 0;
 echo '{"count":' . $count . '}';

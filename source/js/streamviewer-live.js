@@ -1,32 +1,20 @@
-/* ═══════════════════════════════════════════════════════════════════════════
-   Stream Viewer  —  streamviewer-live.js
+/* ============================================================================
+   STREAM VIEWER
    Copyright (C) 2026 Lazaros Chalkidis
    License: GPLv3
-
-   Bootstrap for the Statistics page Live tab.
-
-   Differs from streamviewer-widget.js in two ways:
-     1. It does NOT auto-start. Polling begins only when the user actually
-        opens the Live tab (streamviewer-tool.js calls window.SVLive.start())
-        and stops when they navigate away (window.SVLive.stop()). This keeps
-        the page from polling servers in the background while the user is
-        browsing other stats tabs.
-     2. It reads its config from window.svLiveConfig (built from the LIVE_*
-        settings in StreamViewerSettings) instead of window.streamviewerConfig.
-
-   Exposed as window.SVLive = { start, stop, refresh, isStarted }.
-   ═══════════════════════════════════════════════════════════════════════════ */
-/* global $ */
+   ========================================================================= */
 
 (function () {
 'use strict';
 
+// guard against double bootstrap
 if (window.__svLiveBootstrapped) return;
 window.__svLiveBootstrapped = true;
 
 var _instance = null;
 var _started  = false;
 
+// the live tab reuses the same core as the widget, just a different container
 function ensureInstance() {
     if (_instance) return _instance;
     if (!window.SVCore || typeof window.SVCore.create !== 'function') return null;
@@ -38,8 +26,9 @@ function ensureInstance() {
     return _instance;
 }
 
+// poll until core and $ exist, then run
 function whenReady(cb) {
-    // Wait for SVCore + jQuery before invoking cb
+
     if (window.SVCore && typeof window.SVCore.create === 'function' && typeof $ !== 'undefined') {
         cb();
     } else {

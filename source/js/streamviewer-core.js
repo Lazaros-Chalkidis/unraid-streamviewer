@@ -1,29 +1,8 @@
-/* ═══════════════════════════════════════════════════════════════════════════
-   Stream Viewer  —  streamviewer-core.js
+/* ============================================================================
+   STREAM VIEWER
    Copyright (C) 2026 Lazaros Chalkidis
    License: GPLv3
-
-   Shared core used by both the dashboard widget (streamviewer-widget.js) and,
-   in a later batch, the Statistics page Live tab (streamviewer-live.js).
-
-   Exposed as window.SVCore with a single factory function:
-       var inst = window.SVCore.create({
-           config:              {...},     // resolved tile config from PHP
-           containerSelector:   '.sv-widget-wrap',
-           fallbackContainerId: 'db-streamviewer',
-       });
-       inst.start();    // begins polling and rendering
-       inst.stop();     // tears down timers
-       inst.refresh();  // forces a one-shot fetch
-       inst.reinit(c);  // restarts with a fresh config
-
-   Each create() returns its own closure state, so multiple instances can
-   coexist (e.g. widget on Dashboard vs. Live tab on Statistics page) without
-   stepping on each other's polling, sessions or DOM references.
-
-   Depends on: jQuery (already present in Unraid webgui)
-   ═══════════════════════════════════════════════════════════════════════════ */
-/* global $ */
+   ========================================================================= */
 
 window.SVCore = (function () {
 'use strict';
@@ -31,40 +10,24 @@ window.SVCore = (function () {
 function create(_opts) {
 _opts = _opts || {};
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 1. MODULE STATE
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── State & Configuration ──────────────────────────────────────────────────
-var _cfg          = {};       // resolved, sanitised config
-var _sessions     = [];       // last-fetched sessions (all servers combined)
-var _serverStats  = [];       // last-fetched per-server status objects
+var _cfg          = {};
+var _sessions     = [];
+var _serverStats  = [];
 var _pollTimer    = null;
 var _inFlight     = false;
-var _backoffUntil = 0;        // timestamp ms — skip fetch until this time
-var _errorCount   = 0;        // consecutive fetch errors (for self-healing backoff)
-var _initialized  = false;    // true after first successful fetch
-var _reloadScheduled = false; // true when 403 auto-reload is pending
-var _lastActiveStreams = 0;   // track active streams for docker stats mini-poll
-var _dockerPollTimer  = null; // independent docker stats polling timer
-var _emptyStateEl     = null; // preserved reference to empty state element
+var _backoffUntil = 0;
+var _errorCount   = 0;
+var _initialized  = false;
+var _reloadScheduled = false;
+var _lastActiveStreams = 0;
+var _dockerPollTimer  = null;
+var _emptyStateEl     = null;
 
-// Bandwidth history per session — used by the Live tab to draw a small
-// chart at the bottom of each stream card. Keyed by session_id (or a stable
-// fingerprint when no session_id is available). Each entry is an array of
-// recent {t, kbps} samples capped at HISTORY_MAX. Updated on every fetch.
-// The chart Y-axis is derived from the peak inside the visible window, so the
-// scale follows current activity rather than locking to a sticky session-wide
-// peak.
+// rolling bandwidth samples per session, feeds the live tab sparklines
 var _bandwidthHistory = {};
 var HISTORY_MAX = 30;
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 2. DOM HELPERS  (lazy — always look up fresh so re-mounts work)
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── DOM Cache ──────────────────────────────────────────────────────────────
+// look these up fresh each time so the widget survives a re-mount
 var DOM = {
     container:  function() { return document.getElementById('sv-streams-container'); },
     emptyState: function() { return document.getElementById('sv-empty-state');       },
@@ -78,12 +41,6 @@ var DOM = {
     dockerStats:function() { return document.getElementById('sv-docker-stats');      },
 };
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 3. FORMATTERS
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── Utility Functions ──────────────────────────────────────────────────────
 function pad2(n) { return n < 10 ? '0' + n : String(n); }
 
 function fmtMs(ms) {
@@ -164,15 +121,10 @@ function fmtBitrate(kbps) {
     return kbps >= 1000 ? (kbps / 1000).toFixed(1) + ' Mbps' : kbps + ' kbps';
 }
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 3b. DOMINANT COLOR EXTRACTION (canvas-based, for synopsis tinting)
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── Dominant Color Extraction ─────────────────────────────────────────────
 var _colorCache = {};
 var _colorCanvas = null;
 
+// average the poster's mid-tone pixels (skip near-black/white) to tint the synopsis
 function getDominantColor(img) {
     if (!_colorCanvas) {
         _colorCanvas = document.createElement('canvas');
@@ -189,7 +141,7 @@ function getDominantColor(img) {
     for (var i = 0; i < data.length; i += 4) {
         var r = data[i], g = data[i+1], b = data[i+2];
         var brightness = r * 0.299 + g * 0.587 + b * 0.114;
-        if (brightness < 20 || brightness > 235) continue;
+        if (brightness < 20 || brightness > 235) continue;  // ignore very dark and very bright pixels, they wash out the average
         rSum += r; gSum += g; bSum += b; count++;
     }
     if (count === 0) return null;
@@ -199,8 +151,6 @@ function getDominantColor(img) {
 function applyDominantColors(container) {
     if (!container) return;
 
-    // Widget layout — poster sits inside the collapsible row3-bd, alongside
-    // the synopsis description; tint both pieces.
     container.querySelectorAll('.sv-stream__thumb-img').forEach(function(img) {
         var row3bd = img.closest('.sv-stream__row3-bd');
         if (row3bd) {
@@ -224,12 +174,9 @@ function applyDominantColors(container) {
             };
             if (img.complete && img.naturalWidth > 0) { apply(); }
             else { img.addEventListener('load', apply, { once: true }); }
-            return; // already handled this image
+            return;
         }
 
-        // Live tab layout — poster lives in its own left column, synopsis is a
-        // sibling block in the main column. Find the row root, then the
-        // synopsis description, and tint its background.
         var row = img.closest('.sv-stream--large');
         if (!row) return;
         var applyLarge = function() {
@@ -250,12 +197,6 @@ function applyDominantColors(container) {
     });
 }
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 4. SESSION SORTING
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── Session Sorting ───────────────────────────────────────────────────────
 var SORT_PT = { transcode: 0, direct_stream: 1, direct_play: 2 };
 
 function sortSessions(sessions) {
@@ -269,42 +210,21 @@ function sortSessions(sessions) {
     });
 }
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 5. RENDER — single stream row
-// ══════════════════════════════════════════════════════════════════════════════
-
-// Stable lookup key for a session's bandwidth history. Falls back to a
-// composite when session_id is missing (e.g. some Jellyfin variants).
+// session_id when present, otherwise a composite (some jellyfin sessions lack one)
 function bandwidthKey(s) {
     if (!s) return '';
     return s.session_id
         || (s.server_name + '|' + (s.session_key || '') + '|' + (s.user || '') + '|' + (s.title || ''));
 }
 
-// Build a smoothed bandwidth chart from the rolling history of a session.
-// Layout (Option D):
-//   [0..30]    : left gutter, holds Y-axis labels (0, peak/2, peak in Mbps)
-//   [30..300]  : plot area
-//   chart height: 60px total
-// The Y-axis is anchored at 0 and topped by the slow-moving peak — that keeps
-// a steady direct-play stream as a flat low line, while preventing tiny
-// transcode fluctuations from looking like an earthquake.
+// y-axis tracks a slow-moving peak so a steady stream stays flat and transcode jitter doesn't spike it
 function buildSparkline(history) {
     if (!Array.isArray(history) || history.length < 2) return '';
 
-    // Layout splits between two pieces:
-    //   - HTML labels (Y-axis ticks + unit) live on the left and keep their
-    //     pixel size regardless of how wide the chart stretches
-    //   - SVG plot area (grid lines, area, line) scales horizontally
     var W = 300, H = 60;
     var padT = 2, padB = 2;
     var plotH = H - padT - padB;
 
-    // Y-axis ceiling = peak inside the visible rolling buffer (the same
-    // samples being drawn). When the stream pauses or drops to a lower
-    // bitrate, the ceiling shrinks with it after old high samples roll out
-    // of the window, so the chart always reflects current real values.
     var windowPeak = 0;
     for (var pi = 0; pi < history.length; pi++) {
         if (history[pi].kbps > windowPeak) windowPeak = history[pi].kbps;
@@ -312,7 +232,6 @@ function buildSparkline(history) {
     var ceiling = Math.max(windowPeak, 100) * 1.05;
     var mid = ceiling / 2;
 
-    // Map data → pixel coordinates inside the plot area (SVG viewBox)
     var points = [];
     var stepX = W / (history.length - 1);
     for (var i = 0; i < history.length; i++) {
@@ -321,7 +240,6 @@ function buildSparkline(history) {
         points.push({ x: x, y: y });
     }
 
-    // Catmull-Rom-ish cubic smoothing between consecutive points.
     var tension = 0.20;
     var linePath = 'M' + points[0].x.toFixed(1) + ',' + points[0].y.toFixed(1);
     for (var j = 0; j < points.length - 1; j++) {
@@ -337,13 +255,12 @@ function buildSparkline(history) {
                 +  ' ' + c2x.toFixed(1) + ',' + c2y.toFixed(1)
                 +  ' ' + p2.x.toFixed(1) + ',' + p2.y.toFixed(1);
     }
-    // Area path = same curve + close at baseline
+
     var baseline = padT + plotH;
     var areaPath = linePath
                  + ' L' + points[points.length - 1].x.toFixed(1) + ',' + baseline.toFixed(1)
                  + ' L' + points[0].x.toFixed(1) + ',' + baseline.toFixed(1) + ' Z';
 
-    // Axis labels in Mbps (HTML — keep fixed pixel size)
     function fmtAxis(kbps) {
         if (kbps >= 1000) return (kbps / 1000).toFixed(1);
         return Math.round(kbps).toString();
@@ -356,7 +273,7 @@ function buildSparkline(history) {
         +   '<span>0</span>'
         + '</div>'
         + '<svg class="sv-chart__plot" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">'
-        // Grid lines across plot area
+
         +   '<g class="sv-spark-grid" stroke-width="1" vector-effect="non-scaling-stroke">'
         +     '<line x1="0" y1="' + padT.toFixed(1) + '" x2="' + W + '" y2="' + padT.toFixed(1) + '"/>'
         +     '<line x1="0" y1="' + (padT + plotH / 2).toFixed(1) + '" x2="' + W + '" y2="' + (padT + plotH / 2).toFixed(1) + '"/>'
@@ -368,23 +285,19 @@ function buildSparkline(history) {
         + '</div>';
 }
 
-// ── Stream Rendering ──────────────────────────────────────────────────────
 function renderRow(s) {
     var cfg      = _cfg;
     var ptm      = playTypeMeta(s.play_type);
     var isPaused = (s.state || '').toLowerCase() === 'paused';
     var barMod   = isPaused ? 'paused' : ptm.bar;
 
-    // Row classes
     var rowClass = 'sv-stream';
     if (isPaused)           rowClass += ' sv-stream--paused';
     else if (ptm.bar === 'trans') rowClass += ' sv-stream--transcode';
     if (cfg.largeView)      rowClass += ' sv-stream--large';
 
-    // Left indicator bar
     var barHtml = '<div class="sv-stream__bar sv-stream__bar--' + esc(barMod) + '" aria-hidden="true"></div>';
 
-    // Row 1 left: media icon + state icon (play/pause) + kill button + title
     var stateIcon = isPaused
         ? '<i class="fa fa-pause sv-stream__state-icon sv-stream__state-icon--paused" title="Paused" aria-hidden="true"></i>'
         : '<i class="fa fa-play sv-stream__state-icon sv-stream__state-icon--playing" title="Playing" aria-hidden="true"></i>';
@@ -408,7 +321,6 @@ function renderRow(s) {
         + '<span class="sv-stream__title" title="' + esc(s.title) + '">' + esc(s.title) + '</span>'
         + '</div>';
 
-    // Badges row -- LEFT: quality + live bitrate  |  RIGHT: server type + name + transcode
     var bt = BADGE_THEMES[cfg.badgeTheme] || BADGE_THEMES['default'];
     var serverBadge = '<span class="sv-stream__server-badge" title="' + esc(s.server_name) + '"'
         + ' style="background:' + bt.bg + ';color:' + bt.c + ';border:' + bt.br + ';">'
@@ -431,7 +343,6 @@ function renderRow(s) {
             + esc(tLabel) + resSuffix + speedSuffix + '</span>';
     }
 
-    // Left group: quality + live bitrate
     var badgesLeftHtml = '';
     if (cfg.showQuality && s.quality) {
         badgesLeftHtml += '<span class="sv-stream__quality">' + esc(s.quality) + '</span>';
@@ -448,7 +359,6 @@ function renderRow(s) {
         + '<div class="sv-stream__badges-right">' + serverTypeBadge + serverBadge + transHtml + '</div>'
         + '</div>';
 
-    // Row 3: collapsible thumbnail preview
     var thumbSrc = s.thumb_url
         ? '/plugins/streamviewer/include/streamviewer_api.php?action=get_thumb&_svt='
           + encodeURIComponent(_cfg.svToken || '')
@@ -471,7 +381,6 @@ function renderRow(s) {
             + '</div>';
     }
 
-    // Row 2: user · device · IP  +  progress
     var userHtml = '<span class="sv-stream__user">' + esc(s.user || 'Unknown') + '</span>';
 
     var deviceHtml = '';
@@ -488,8 +397,6 @@ function renderRow(s) {
         ipHtml = '<span class="sv-stream__sep">·</span>'
             + '<span class="sv-stream__ip">' + esc(s.ip_address) + '</span>';
     }
-
-
 
     var progressHtml = '';
     if (cfg.showProgress && s.duration_ms > 0) {
@@ -512,7 +419,6 @@ function renderRow(s) {
         + progressHtml
         + '</div>';
 
-    // Row 4: technical details (codecs)
     var detailsHtml = '';
     if (cfg.showDetails) {
         var tags = [];
@@ -616,21 +522,14 @@ function buildSkeletons() {
         + '</div>';
 }
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 6. RENDER — streams list
-// ══════════════════════════════════════════════════════════════════════════════
-
-// Patch a single existing stream row with updated dynamic data (no DOM replacement).
-// Returns true if a full rebuild is needed (e.g. title changed = different media).
+// returns true if the row changed enough to need a full re-render, otherwise we patch in place
 function patchRow(el, s) {
-    // Full rebuild if title or quality changed (different media)
+
     var titleEl = el.querySelector('.sv-stream__title');
     if (titleEl && titleEl.title !== (s.title || '')) return true;
     if (el.dataset.quality   !== (s.quality   || '')) return true;
     if (el.dataset.bandwidth  !== (s.bandwidth_kbps > 0 ? '1' : '0')) return true;
 
-    // play_type or state changed: rebuild but preserve details open state
     var needRebuild = false;
     if (el.dataset.state    !== (s.state     || '')) needRebuild = true;
     if (el.dataset.playType !== (s.play_type || '')) needRebuild = true;
@@ -643,14 +542,12 @@ function patchRow(el, s) {
     var ptm      = playTypeMeta(s.play_type);
     var barMod   = isPaused ? 'paused' : ptm.bar;
 
-    // Row classes
     var wantClass = 'sv-stream';
     if (isPaused)              wantClass += ' sv-stream--paused';
     else if (ptm.bar === 'trans') wantClass += ' sv-stream--transcode';
     if (_cfg.largeView)        wantClass += ' sv-stream--large';
     if (el.className !== wantClass) el.className = wantClass;
 
-    // Refresh the bandwidth chart on each tick (widget + Live tab, when enabled)
     if (_cfg.showChart) {
         var chartEl = el.querySelector('.sv-chart');
         var newChart = buildSparkline(_bandwidthHistory[bandwidthKey(s)] || []);
@@ -664,9 +561,7 @@ function patchRow(el, s) {
                 chartEl.parentNode.removeChild(chartEl);
             }
         } else if (newChart) {
-            // Chart absent from this row (e.g. just toggled on). Find the
-            // anchor block (card-footer in largeView, chart-row in widget)
-            // and inject the chart after its leading label.
+
             var anchor = el.querySelector('.sv-stream__card-footer, .sv-stream__chart-row');
             var lbl    = anchor ? anchor.querySelector('.sv-stream__sparkline-label, .sv-stream__chart-row-label') : null;
             if (anchor && lbl) {
@@ -682,14 +577,12 @@ function patchRow(el, s) {
         }
     }
 
-    // Left indicator bar
     var bar = el.querySelector('.sv-stream__bar');
     if (bar) {
         var wantBarClass = 'sv-stream__bar sv-stream__bar--' + barMod;
         if (bar.className !== wantBarClass) bar.className = wantBarClass;
     }
 
-    // Progress bar width + time
     var progBar = el.querySelector('.sv-stream__progress-bar');
     if (progBar) {
         var pct = Math.min(100, Math.max(0, s.progress_pct || 0));
@@ -702,21 +595,19 @@ function patchRow(el, s) {
         if (timeEl.textContent !== wantTime) timeEl.textContent = wantTime;
     }
 
-    // Transcode badge label + modifier class (preserve nested speed span)
     var trans = el.querySelector('.sv-stream__transcode');
     if (trans) {
         var tLabel = isPaused ? 'Paused' : ptm.label;
         var tMod   = isPaused ? 'paused' : ptm.badge;
         var wantTransClass = 'sv-stream__transcode sv-stream__transcode--' + tMod;
         if (trans.className !== wantTransClass) trans.className = wantTransClass;
-        // Update only the text node, not the speed span
+
         var textNode = trans.firstChild;
         if (textNode && textNode.nodeType === 3) {
             if (textNode.textContent !== tLabel) textNode.textContent = tLabel;
         }
     }
 
-    // State icon (play/pause) in title row
     var mainDiv   = el.querySelector('.sv-stream__main');
     var stateIcon = el.querySelector('.sv-stream__main .sv-stream__state-icon');
     if (mainDiv) {
@@ -740,28 +631,24 @@ function patchRow(el, s) {
         }
     }
 
-    // IP address update (changes when user switches network)
     var ipEl = el.querySelector('.sv-stream__ip');
     if (ipEl && s.ip_address !== undefined) {
         var wantIp = s.ip_address || '';
         if (ipEl.textContent !== wantIp) ipEl.textContent = wantIp;
     }
 
-    // Live bitrate update (left badges group)
     var bitrateEl = el.querySelector('.sv-stream__badges-left .sv-stream__bitrate');
     if (bitrateEl) {
         var wantBitrate = (s.bandwidth_kbps > 0) ? fmtBitrate(s.bandwidth_kbps) : '';
         if (bitrateEl.textContent !== wantBitrate) bitrateEl.textContent = wantBitrate;
     }
 
-    // Live transcode speed update (inside transcode badge) — keep last known value when API returns 0
     var speedEl = el.querySelector('.sv-stream__transcode .sv-stream__transcode-speed');
     if (speedEl && s.transcode_speed > 0) {
         var wantSpeed = s.transcode_speed.toFixed(1) + 'x';
         if (speedEl.textContent !== wantSpeed) speedEl.textContent = wantSpeed;
     }
 
-    // Live transcode buffer update (inside details)
     var bufferTags = el.querySelectorAll('.sv-dtag');
     bufferTags.forEach(function(tag) {
         if (tag.textContent.indexOf('Buffer:') === 0 && s.transcode_buffer_pct > 0) {
@@ -770,7 +657,7 @@ function patchRow(el, s) {
         }
     });
 
-    return false; // no rebuild needed
+    return false;
 }
 
 function renderStreams(sessions, lastActivity) {
@@ -803,13 +690,11 @@ function renderStreams(sessions, lastActivity) {
 
     if (emptyState) emptyState.style.display = 'none';
 
-    // Build a map of existing rows by session_id
     var existingMap = {};
     container.querySelectorAll('.sv-stream[data-session-id]').forEach(function(el) {
         existingMap[el.dataset.sessionId] = el;
     });
 
-    // Preserve open thumbnail panels
     var openSessions = {};
     container.querySelectorAll('.sv-stream__row3:not(.sv-stream__row3--collapsed)').forEach(function(r) {
         var row = r.closest('.sv-stream');
@@ -826,10 +711,10 @@ function renderStreams(sessions, lastActivity) {
         newIds[sid] = true;
 
         if (existingMap[sid] && !patchRow(existingMap[sid], s)) {
-            // Row exists and media is same — reuse patched row
+
             fragment.appendChild(existingMap[sid]);
         } else {
-            // New session — create fresh row
+
             var tmp = document.createElement('div');
             tmp.innerHTML = renderRow(s);
             var newEl = tmp.firstElementChild;
@@ -841,11 +726,9 @@ function renderStreams(sessions, lastActivity) {
         }
     });
 
-    // Swap container contents in one operation (single reflow)
     container.innerHTML = '';
     container.appendChild(fragment);
 
-    // Restore open thumbnail panels for rows that survived
     Object.keys(openSessions).forEach(function(sid) {
         var row = container.querySelector('.sv-stream[data-session-id="' + sid + '"]');
         if (row) {
@@ -859,17 +742,6 @@ function renderStreams(sessions, lastActivity) {
     applyDominantColors(container);
 }
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 7. KILL SESSION
-// ══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Resolve a server_index (1-based config slot) from a server display name.
- * PHP injects _cfg.servers = [{index, type, name}, ...] from the cfg file.
- */
-
-// ── Kill Session ─────────────────────────────────────────────────────────
 function resolveServerIndex(serverName) {
     var servers = _cfg.servers || [];
     for (var i = 0; i < servers.length; i++) {
@@ -878,10 +750,6 @@ function resolveServerIndex(serverName) {
     return null;
 }
 
-// ── Confirmation modal (replaces native browser confirm) ─────────────────────
-// Returns a Promise that resolves to true if the user clicks OK, false otherwise.
-// Falls back to native confirm() if the modal markup is missing from the DOM
-// (e.g. embedded contexts where the widget renders without our template).
 function svWidgetConfirm(opts) {
     opts = opts || {};
     var modal     = document.getElementById('svWidgetConfirmModal');
@@ -976,9 +844,7 @@ function doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSession
         dataType: 'json',
         success: function(data) {
             if (data && data.ok) {
-                // Fix Αιτία Δ: αμέσως αφαίρεσε από _sessions ώστε το
-                // renderStreams() να μην ξαναβάλει τη σκοτωμένη ταινία
-                // πριν φτάσει το επόμενο server fetch.
+
                 var killId = sessionId || sessionKey;
                 if (killId) {
                     _sessions = _sessions.filter(function(s) {
@@ -996,9 +862,7 @@ function doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSession
                         updateBadge(remaining);
                     }, 380);
                 }
-                // Fix Αιτία ΣΤ: 3500ms δίνει στο Plex/Jellyfin χρόνο να κλείσει
-                // τη session πριν κάνουμε re-fetch. Επίσης reset polling ώστε
-                // το interval να μετράει από το φρέσκο fetch.
+
                 stopPolling();
                 setTimeout(function() {
                     fetchSessions(function() { startPolling(); });
@@ -1019,12 +883,6 @@ function doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSession
     });
 }
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 8. STATUS UPDATES
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── UI Updates (badge, timestamp, pulse, errors) ─────────────────────────
 function updateBadge(count) {
     var bc  = DOM.badgeCount();
     var dot = DOM.badgeDot();
@@ -1055,22 +913,21 @@ function updateErrorIndicator(stats) {
     var ec = DOM.errCount();
     if (eb) eb.style.display = errCount > 0 ? '' : 'none';
     if (ec) ec.textContent   = String(errCount);
-    // Update dot: all servers down → red, otherwise restore based on session count
+
     var dot = DOM.badgeDot();
     if (dot) {
         if (errCount > 0 && errCount === totalCount) {
             dot.className = 'sv-badge-dot sv-badge-dot--error';
         } else if (errCount === 0) {
-            // Restore to active/idle based on current session count
+
             var count = parseInt((DOM.badgeCount() || {}).textContent || '0', 10);
             dot.className = 'sv-badge-dot ' + (count > 0 ? 'sv-badge-dot--active' : 'sv-badge-dot--idle');
         }
-        // partial errors: keep current dot state
+
     }
 }
 
-// ── Docker Stats ─────────────────────────────────────────────────────────
-var _lastDockerHtml = '';  // persist across Unraid tile re-renders
+var _lastDockerHtml = '';
 
 function updateDockerStats(stats, activeStreams) {
     if (!_cfg.showDocker || activeStreams === 0 || !Array.isArray(stats) || stats.length === 0) {
@@ -1120,21 +977,14 @@ function updateDockerStats(stats, activeStreams) {
     applyDockerHtml();
 }
 
-// Aggregate the bitrate of every active session and render it as a third
-// docker-style stat (alongside CPU/RAM) in the footer of the Live tab. The
-// widget renders this too, but harmlessly: when there is nothing playing the
-// helper returns an empty string.
 function buildBandwidthStat() {
     var total = 0;
     for (var i = 0; i < _sessions.length; i++) {
         if (_sessions[i].bandwidth_kbps > 0) total += _sessions[i].bandwidth_kbps;
     }
     if (total <= 0) return '';
-    // Ceiling comes from the user-configured network capacity (WIDGET_BW_CAPACITY,
-    // 50/100/200/500/1000 Mbps). The bar fills proportionally to that, which
-    // gives a stable visual that does not "lock" at 100% on a steady stream.
-    // (The Active Stream/s tab no longer renders a docker-stats footer.)
-    var ceiling = _cfg.bwCapacityKbps > 0 ? _cfg.bwCapacityKbps : 1000000; // 1 Gbps fallback
+
+    var ceiling = _cfg.bwCapacityKbps > 0 ? _cfg.bwCapacityKbps : 1000000;
     var pct = Math.min(100, (total / ceiling) * 100);
     return '<span class="sv-docker-stat sv-docker-stat--bw">'
         + '<span class="sv-docker-stat__label">TOTAL BW</span>'
@@ -1148,8 +998,6 @@ function applyDockerHtml() {
     if (el && _lastDockerHtml) el.innerHTML = _lastDockerHtml;
 }
 
-// Unraid dashboard re-renders the tile every few seconds, wiping our innerHTML.
-// This interval re-applies cached docker stats HTML if the element was emptied.
 setInterval(function() {
     if (_lastDockerHtml) {
         var el = DOM.dockerStats();
@@ -1157,7 +1005,6 @@ setInterval(function() {
     }
 }, 2000);
 
-// Independent docker stats polling (every 5s, lightweight endpoint)
 var _dockerFetching = false;
 
 function fetchDockerStats() {
@@ -1182,25 +1029,13 @@ function fetchDockerStats() {
     });
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Live overview (Statistics page Live tab only)
-//
-// The Live tab markup includes a 5-card overview row (Total Stream/s Live,
-// Total CPU, Total RAM, Total Bandwidth, Unique Users) and a play-type
-// breakdown row (Direct play / Direct stream / Transcode / Remote). This
-// helper rewrites those nodes on every fetch + docker mini-poll so they tick
-// in lockstep with the rest of the page. It silently noops when the DOM
-// elements are absent (i.e. in the Dashboard widget).
-// ──────────────────────────────────────────────────────────────────────────
 function updateLiveOverview(dockerStats) {
     var totalEl = document.getElementById('svll-total-streams');
-    if (!totalEl) return; // overview row not present (widget tile, not Live tab)
+    if (!totalEl) return;
 
     var sessions = _sessions || [];
     var totalStreams = sessions.length;
 
-    // Aggregate docker CPU/RAM. Note: docker_stats.mem_used is reported in
-    // bytes (same field used by updateDockerStats for the footer indicator).
     var cpuPct = 0, memBytes = 0;
     if (Array.isArray(dockerStats)) {
         for (var d = 0; d < dockerStats.length; d++) {
@@ -1209,7 +1044,6 @@ function updateLiveOverview(dockerStats) {
         }
     }
 
-    // Aggregate live bandwidth (sum of real per-stream values) and average
     var totalKbps = 0;
     var streamsWithFlow = 0;
     var bufferingCount = 0;
@@ -1230,11 +1064,9 @@ function updateLiveOverview(dockerStats) {
         if (s.is_remote || s.is_relay) typeCounts.remote++;
     }
     var uniqueCount = Object.keys(unique).length;
-    // Average is computed over streams that are actually transmitting (>0),
-    // so a paused stream doesn't drag the average towards zero.
+
     var avgKbps = streamsWithFlow > 0 ? Math.round(totalKbps / streamsWithFlow) : 0;
 
-    // 7 stat cards
     totalEl.textContent = totalStreams.toString();
     setText('svll-unique-users', uniqueCount.toString());
     setText('svll-avg-bitrate', avgKbps > 0 ? fmtBitrate(avgKbps) : '0 kbps');
@@ -1245,7 +1077,6 @@ function updateLiveOverview(dockerStats) {
         : Math.round(memBytes / 1048576) + ' MB');
     setText('svll-total-bw', totalKbps > 0 ? fmtBitrate(totalKbps) : '0 kbps');
 
-    // Play-type breakdown bars (percent of active streams)
     var base = Math.max(1, totalStreams);
     var pctDirect    = (typeCounts.direct    / base) * 100;
     var pctStream    = (typeCounts.stream    / base) * 100;
@@ -1279,16 +1110,10 @@ function stopDockerPoll() {
     if (_dockerPollTimer) { clearInterval(_dockerPollTimer); _dockerPollTimer = null; }
 }
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 9. API FETCH
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── Session Fetching ──────────────────────────────────────────────────────
 function fetchSessions(onDone) {
+    // still backing off after an error, show the countdown and skip
     if (Date.now() < _backoffUntil) {
-        // Fix Αιτία Α: ανανέωσε το timestamp ακόμα και σε backoff
-        // ώστε ο χρήστης να ξέρει ότι το polling τρέχει (σε αναμονή).
+
         var ts = DOM.timestamp();
         if (ts) {
             var remaining = Math.ceil((_backoffUntil - Date.now()) / 1000);
@@ -1297,17 +1122,16 @@ function fetchSessions(onDone) {
         if (typeof onDone === 'function') onDone('backoff', null);
         return;
     }
-    if (_inFlight) return;
+    if (_inFlight) return;  // one request at a time
     _inFlight    = true;
     _lastFetchAt = Date.now();
-    // Fix Αιτία Β: safety timeout > AJAX timeout (38s) για να αποφύγουμε
-    // πρόωρη απελευθέρωση του _inFlight lock και overlapping requests.
-    var _inFlightTimeout = setTimeout(function() { _inFlight = false; }, 40000);
+
+    var _inFlightTimeout = setTimeout(function() { _inFlight = false; }, 40000);  // safety net: clear the in-flight flag if the request never completes
 
     $.ajax({
         url:      '/plugins/streamviewer/include/streamviewer_api.php',
         method:   'GET',
-        timeout:  38000,  // worst case: 5 servers × 7s timeout + margin
+        timeout:  38000,
         headers:  { 'X-Requested-With': 'XMLHttpRequest' },
         data: {
             action:  'get_sessions',
@@ -1322,12 +1146,6 @@ function fetchSessions(onDone) {
             _sessions    = Array.isArray(data.sessions) ? data.sessions : [];
             _serverStats = Array.isArray(data.servers)  ? data.servers  : [];
 
-            // Track bandwidth history per active session for the Live tab
-            // chart. We keep a small rolling buffer (HISTORY_MAX points).
-            // Real bandwidth values are pushed verbatim — when a stream pauses
-            // and the server reports 0, the chart drops to 0. The Y-axis
-            // ceiling is computed on-the-fly inside buildSparkline() from the
-            // peak of these visible samples.
             var now = Date.now();
             var activeKeys = {};
             for (var bi = 0; bi < _sessions.length; bi++) {
@@ -1341,7 +1159,7 @@ function fetchSessions(onDone) {
                 hist.push({ t: now, kbps: kbps });
                 if (hist.length > HISTORY_MAX) hist.splice(0, hist.length - HISTORY_MAX);
             }
-            // Drop history for sessions that have ended
+
             for (var hk in _bandwidthHistory) {
                 if (Object.prototype.hasOwnProperty.call(_bandwidthHistory, hk) && !activeKeys[hk]) {
                     delete _bandwidthHistory[hk];
@@ -1366,7 +1184,6 @@ function fetchSessions(onDone) {
             var msg = (xhr.responseJSON && xhr.responseJSON.error)
                 ? xhr.responseJSON.error : (status || 'Request failed');
 
-            // Token expired/invalid: page reload is the only way to get a fresh nonce
             if (xhr.status === 403 && !_reloadScheduled) {
                 _reloadScheduled = true;
                 setTimeout(function() { location.reload(); }, 2000);
@@ -1374,7 +1191,7 @@ function fetchSessions(onDone) {
             }
 
             _errorCount = (_errorCount || 0) + 1;
-            // Backoff: 15s -> 45s, then reset after 4 failures (self-healing)
+
             if (_errorCount >= 4) {
                 _errorCount   = 0;
                 _backoffUntil = Date.now() + 15000;
@@ -1392,14 +1209,8 @@ function fetchSessions(onDone) {
     });
 }
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 10. POLLING
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── Polling & Visibility ──────────────────────────────────────────────────
-var _lastFetchAt   = 0;      // timestamp of last successful fetch attempt
-var _watchdogTimer = null;   // detects stalled polling and recovers
+var _lastFetchAt   = 0;
+var _watchdogTimer = null;
 
 function startPolling() {
     stopPolling();
@@ -1413,14 +1224,13 @@ function stopPolling() {
     if (_watchdogTimer){ clearInterval(_watchdogTimer); _watchdogTimer = null; }
 }
 
-// Watchdog: if no fetch has been attempted in 3× the interval, something is stuck → recover
 function startWatchdog() {
     if (_watchdogTimer) clearInterval(_watchdogTimer);
     _watchdogTimer = setInterval(function() {
         if (!_cfg.refreshEnabled) return;
         var staleMs = (_cfg.refreshInterval || 30000) * 3;
         if (_lastFetchAt > 0 && (Date.now() - _lastFetchAt) > staleMs) {
-            // Polling has stalled — full recovery
+
             _backoffUntil = 0;
             _errorCount   = 0;
             _inFlight     = false;
@@ -1430,7 +1240,7 @@ function startWatchdog() {
 }
 
 function initVisibilityHandling() {
-    // visibilitychange: tab hidden → stop, tab visible → resume
+
     document.addEventListener('visibilitychange', function() {
         if (document.hidden) {
             stopPolling();
@@ -1444,9 +1254,6 @@ function initVisibilityHandling() {
         }
     });
 
-    // Fix Αιτία Γ: browsers throttle setInterval σε background/low-power mode
-    // ακόμα κι όταν το tab δεν είναι hidden. Ο window focus event δεν υπόκειται
-    // στο ίδιο throttling — τον χρησιμοποιούμε ως safety net.
     window.addEventListener('focus', function() {
         if (document.hidden) return;
         var staleMs = (_cfg.refreshInterval || 30000) * 2;
@@ -1457,11 +1264,6 @@ function initVisibilityHandling() {
         }
     });
 }
-
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 11. REFRESH BUTTONS
-// ══════════════════════════════════════════════════════════════════════════════
 
 function wireRefreshBtn(el) {
     if (!el) return;
@@ -1479,10 +1281,8 @@ function wireRefreshBtn(el) {
     });
 }
 
-// ── Row 3 Toggle (synopsis/thumbnail expand) ────────────────────────────
 function bindRow3Toggles(container) {
-    // Use a single delegated listener on the container to avoid
-    // duplicate listeners accumulating on every refresh cycle
+
     if (container._row3DelegateAttached) return;
     container._row3DelegateAttached = true;
 
@@ -1494,11 +1294,6 @@ function bindRow3Toggles(container) {
     });
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// 12. "NO SERVERS" STATE
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── No-servers State & Config ─────────────────────────────────────────────
 function renderNoServers() {
     var container = DOM.container();
     if (!container) return;
@@ -1513,15 +1308,9 @@ function renderNoServers() {
     if (_emptyStateEl) _emptyStateEl.style.display = 'none';
 }
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 13. CONFIG RESOLUTION
-// ══════════════════════════════════════════════════════════════════════════════
-
 function resolveConfig() {
     var raw = _opts.config || {};
 
-    // refreshInterval comes from PHP already in ms (seconds * 1000)
     var ri = parseInt(raw.refreshInterval, 10) || 30000;
     ri = Math.max(5000, Math.min(ri, 600000));
 
@@ -1550,12 +1339,6 @@ function resolveConfig() {
     };
 }
 
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 14. THEME DETECTION (light/dark)
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ── Initialization ───────────────────────────────────────────────────────
 function detectTheme() {
     var bg = getComputedStyle(document.body).backgroundColor || '';
     var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
@@ -1567,11 +1350,6 @@ function detectTheme() {
     var wrap = document.querySelector(sel) || document.getElementById(fallbackId);
     if (wrap) wrap.classList.toggle('sv-light', isLight);
 }
-
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 15. INIT
-// ══════════════════════════════════════════════════════════════════════════════
 
 function init() {
     detectTheme();
@@ -1585,7 +1363,6 @@ function init() {
     wireRefreshBtn(DOM.manualBtn());
     initVisibilityHandling();
 
-    // Loading skeleton
     var container  = DOM.container();
     _emptyStateEl  = DOM.emptyState();
     if (container)       container.innerHTML      = buildSkeletons();
@@ -1593,11 +1370,6 @@ function init() {
 
     fetchSessions(function() { startPolling(); });
 }
-
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 15. PUBLIC INSTANCE API
-// ══════════════════════════════════════════════════════════════════════════════
 
 return {
     start: function start() {
@@ -1627,7 +1399,7 @@ return {
     getSessions: function() { return _sessions.slice(); },
 };
 
-} // ── end of create() ──
+}
 
 return { create: create };
 })();

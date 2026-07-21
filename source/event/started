@@ -1,8 +1,13 @@
 #!/bin/bash
-# Start poll daemon after array is fully started
-# Called automatically by Unraid's event system
+# ============================================================================
+# STREAM VIEWER
+# Copyright (C) 2026 Lazaros Chalkidis
+# License: GPLv3
+# =========================================================================
+
+# start the poll daemon once the array is up (unraid runs this on array start)
 (
-    # Extra safety: wait for user shares to be fully mounted
+    # wait for the shares before launching
     while ! mountpoint -q /mnt/user 2>/dev/null; do
         sleep 5
     done

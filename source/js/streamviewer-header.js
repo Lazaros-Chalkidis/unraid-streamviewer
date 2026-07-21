@@ -1,6 +1,10 @@
-// StreamViewer header indicator
-// Copyright (C) 2026 Lazaros Chalkidis - License: GPLv3
-// Click handler (called by Unraid button onclick)
+/* ============================================================================
+   STREAM VIEWER
+   Copyright (C) 2026 Lazaros Chalkidis
+   License: GPLv3
+   ========================================================================= */
+
+// navbar button click handler, opens the stats page
 function StreamViewerButton(){
     location.href = '/Tools/StreamViewerTool';
 }
@@ -13,12 +17,10 @@ function StreamViewerButton(){
 
     function setup(){
         navItem = document.querySelector('.nav-item.StreamViewerButton');
-        if(!navItem){ setTimeout(setup, 500); return; }
+        if(!navItem){ setTimeout(setup, 500); return; }  // nav item not in the dom yet, retry shortly
 
-        // Hide initially
         navItem.style.display = 'none';
 
-        // Replace <img> with inline SVG so currentColor works with all themes
         var link = navItem.querySelector('a');
         if(link){
             var img = link.querySelector('img, b.system, i.system, b.fa');
@@ -33,16 +35,14 @@ function StreamViewerButton(){
                 svg.setAttribute('stroke-linecap','round');
                 svg.setAttribute('stroke-linejoin','round');
                 svg.setAttribute('class','system');
-                // Play triangle (Tabler ti-player-play). Filled so it reads as a
-                // solid marker rather than an outlined wedge.
+
                 var p = document.createElementNS('http://www.w3.org/2000/svg','path');
                 p.setAttribute('d','M7 4v16l13 -8z');
                 p.setAttribute('fill','currentColor');
                 svg.appendChild(p);
                 img.parentNode.replaceChild(svg, img);
 
-                // Match icon color to theme
-                var iconColor = getComputedStyle(link).color || '#ccc';
+                var iconColor = getComputedStyle(link).color || '#ccc';  // tint the play glyph to match the navbar text colour
                 svg.setAttribute('stroke', iconColor);
             }
 
@@ -60,10 +60,8 @@ function StreamViewerButton(){
             link.appendChild(badge);
         }
 
-        // Start polling. Faster cadence than the dashboard tile (10s vs 30s)
-        // so the badge in the global header reflects new streams promptly.
         poll();
-        setInterval(poll, 10000);
+        setInterval(poll, 10000);  // refresh the stream count every 10s
     }
 
     function poll(){

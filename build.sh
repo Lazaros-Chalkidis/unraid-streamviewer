@@ -1,5 +1,5 @@
 #!/bin/bash
-# StreamViewer — build.sh
+# StreamViewer - build.sh
 # Copyright (C) 2026 Lazaros Chalkidis - License: GPLv3
 # Packages the plugin source into a .txz and generates the .plg file.
 #
@@ -110,7 +110,7 @@ if command -v md5sum &>/dev/null; then
 elif command -v md5 &>/dev/null; then
     PACKAGE_MD5="$(md5 -q "${PACKAGE_PATH}")"
 else
-    echo "⚠️  md5sum/md5 not found — MD5 will be empty in PLG!"
+    echo "⚠️  md5sum/md5 not found - MD5 will be empty in PLG!"
     PACKAGE_MD5=""
 fi
 echo "🔑 MD5: ${PACKAGE_MD5}"
@@ -264,7 +264,7 @@ if [[ "$LOCAL_INSTALL" == "local" ]]; then
         pluginURL="&selfURL;" launch="&launch;"
         icon="img/streamviewerplugin.png"
         min="7.2.0"
-        support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
+        support="https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues">
 
 <DESCRIPTION>
 ${PLG_DESCRIPTION}
@@ -341,7 +341,7 @@ else
         pluginURL="&selfURL;" launch="&launch;"
         icon="img/streamviewerplugin.png"
         min="7.2.0"
-        support="https://forums.unraid.net/topic/197757-plugin-stream-viewer/">
+        support="https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues">
 
 <DESCRIPTION>
 ${PLG_DESCRIPTION}
