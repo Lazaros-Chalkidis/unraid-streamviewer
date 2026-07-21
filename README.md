@@ -6,7 +6,6 @@ A real time media stream monitor and statistics tracker for Unraid. View active 
   <img src="https://img.shields.io/github/v/release/Lazaros-Chalkidis/unraid-streamviewer?label=Latest%20Version&color=blue" style="margin: 4px;" />&nbsp;
   <img src="https://img.shields.io/github/last-commit/Lazaros-Chalkidis/unraid-streamviewer?label=Last%20Update" style="margin: 4px;" />&nbsp;
   <img src="https://img.shields.io/github/issues/Lazaros-Chalkidis/unraid-streamviewer?label=Issues" style="margin: 4px;" />&nbsp;
-  <img src="https://img.shields.io/github/downloads/Lazaros-Chalkidis/unraid-streamviewer/total?label=Downloads&color=brightgreen" style="margin: 4px;" />&nbsp;
   <img src="https://img.shields.io/github/license/Lazaros-Chalkidis/unraid-streamviewer?label=License" style="margin: 4px;" />
 </p>
 
@@ -224,7 +223,7 @@ See [CHANGELOG.md](https://github.com/Lazaros-Chalkidis/unraid-streamviewer/blob
 
 ## Issues and Support
 
-To suggest features, report bugs or share feedback, open an issue on [GitHub](https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues) or post on the [Unraid Forum](https://forums.unraid.net/topic/197757-plugin-stream-viewer/).
+To suggest features, report bugs or share feedback, open an issue on [GitHub](https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues).
 
 ## Author
 
