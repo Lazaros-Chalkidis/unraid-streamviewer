@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "streamviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.07.21">
+ <!ENTITY version   "2026.07.22">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "300e0b08ea68d968d761e3fb53d8f5ba">
+ <!ENTITY md5       "9b9245a208c43bd71041b6da41c254f2">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
@@ -24,6 +24,15 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 <CHANGES>
 
 # Stream Viewer
+
+## v2026.07.22
+
+### Bug Fixes
+- Music played on Jellyfin and Emby was recorded but never counted in Statistics (Music chart, user breakdowns and the Music history filter always showed zero). New plays are now counted correctly and a one-time cleanup on upgrade repairs the existing history.
+- The "Wipe statistics database" button always failed with "Wipe failed". It now works as intended.
+
+### Improvements
+- The cover image proxy now requires the same security token as every other plugin request, closing a gap where images could be requested without one.
 
 ## 2026.07.21
 

@@ -2181,8 +2181,11 @@ function resetDefaults() {
                     wipeBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Wiping...';
                     fetch('/plugins/streamviewer/include/streamviewer_api.php', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: 'action=wipe_stats'
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        },
+                        body: 'action=wipe_stats&_svt=' + encodeURIComponent(window.svToken || '')
                     }).then(function(r) { return r.json(); })
                       .then(function(data) {
                         wipeBtn.disabled = false;

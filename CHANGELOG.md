@@ -1,6 +1,15 @@
 
 # Stream Viewer
 
+## v2026.07.22
+
+### Bug Fixes
+- Music played on Jellyfin and Emby was recorded but never counted in Statistics (Music chart, user breakdowns and the Music history filter always showed zero). New plays are now counted correctly and a one-time cleanup on upgrade repairs the existing history.
+- The "Wipe statistics database" button always failed with "Wipe failed". It now works as intended.
+
+### Improvements
+- The cover image proxy now requires the same security token as every other plugin request, closing a gap where images could be requested without one.
+
 ## 2026.07.21
 
 Changed: support links now point to GitHub Issues, and the README wording was tightened

@@ -38,7 +38,7 @@ final class StreamViewerEndpoint
     private const STATS_DEFAULT_PATH   = '/mnt/user/appdata/Stream-Viewer';
     private const STATS_RETENTION_DAYS = 90;
     private const STATS_PRUNE_CHANCE   = 50;
-    private const STATS_SCHEMA_VER     = 6;
+    private const STATS_SCHEMA_VER     = 7;
     private const STATS_BUSY_TIMEOUT   = 3000;
     private const STATS_MERGE_WINDOW_DEFAULT_MIN = 60;
     private const STATS_MERGE_WINDOW_MAX_MIN     = 1440;
@@ -433,6 +433,12 @@ final class StreamViewerEndpoint
                         $del->close();
                     }
                 }
+            },
+
+            7 => function(\SQLite3 $db) {
+                // older builds stored jellyfin/emby music as "audio", stats key on "track"
+                @$db->exec("UPDATE watch_history  SET media_type = 'track' WHERE media_type = 'audio'");
+                @$db->exec("UPDATE active_sessions SET media_type = 'track' WHERE media_type = 'audio'");
             },
         ];
 
@@ -913,6 +919,7 @@ final class StreamViewerEndpoint
         $action = (string)($_GET['action'] ?? '');
 
         if ($action === 'get_thumb') {
+            $this->verifyNonceReadOnly();
             $this->replyGetThumb();
             return;
         }
@@ -1406,6 +1413,10 @@ final class StreamViewerEndpoint
             $progressMs = (int)(((int)($playState['PositionTicks'] ?? 0)) / 10000);
             $state      = ($playState['IsPaused'] ?? false) ? 'paused' : 'playing';
 
+            // jellyfin/emby call music "audio", the stats layer keys everything on "track"
+            $mediaType = strtolower((string)($nowPlaying['Type'] ?? 'video'));
+            if ($mediaType === 'audio') $mediaType = 'track';
+
             $videoCodec = $audioCodec = $container = $quality = '';
             $audioSpatial = $subLang = $subCodec = '';
             $bitrate = $audioChannels = $bitDepth = 0;
@@ -1535,7 +1546,7 @@ final class StreamViewerEndpoint
                 'transcode_reasons'     => $transcodeReasons,
                 'transcode_buffer_pct'  => $transcodeBufPct,
                 'thumb_url'             => $thumbUrl,
-                'media_type'            => strtolower((string)($nowPlaying['Type'] ?? 'video')),
+                'media_type'            => $mediaType,
                 'summary'               => (string)($nowPlaying['Overview']      ?? ''),
             ]);
         }
