@@ -3,7 +3,7 @@ Name="Stream Viewer Statistics and Active Stream/s"
 Icon="img/streamviewer.png"
 Type="xmenu"
 Tabs="false"
-Title="Stream Viewer Statistics and Active Stream/s"
+Title="Stream Viewer"
 ---
 <?php
 /* ============================================================================

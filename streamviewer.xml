@@ -8,6 +8,7 @@
   <Project>https://github.com/Lazaros-Chalkidis/unraid-streamviewer</Project>
   <ReadMe>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/README.md</ReadMe>
   <Category>MediaServer:Video MediaApp:Video</Category>
+  <MinVer>7.2.0</MinVer>
   <Icon>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/source/img/streamviewerplugin.png</Icon>
   <License>GPL v3</License>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-streamviewer/main/screenshots/pc/widget3.png</Screenshot>

@@ -126,6 +126,8 @@
   max-width: 100%;
   overflow: hidden;
   box-sizing: border-box;
+  /* query container so breakpoints follow the tile, not the viewport */
+  container-type: inline-size;
 }
 .sv-body {
   display: flex; flex-direction: column;
@@ -133,6 +135,8 @@
   width: 100%;
   overflow: hidden;
   box-sizing: border-box;
+  /* second container: sv-body exists in both the tile and legacy tbody paths */
+  container-type: inline-size;
 }
 
 /* stream cards */
@@ -149,11 +153,15 @@
   padding: 1.1rem .5rem;
   color: var(--sv-c-text-faint); font-size: .85em; font-style: italic;
   flex-wrap: wrap;
+  min-width: 0; max-width: 100%; box-sizing: border-box;
 }
 .sv-empty-icon { font-size: 1em; }
 .sv-last-activity {
-  width: 100%; text-align: center;
+  width: 100%; max-width: 100%; text-align: center;
   font-size: .9em; font-style: normal; color: var(--sv-c-text-faint); opacity: .7;
+  /* min-width auto would force the full title width and widen the tile */
+  min-width: 0; box-sizing: border-box;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 .sv-stream {
@@ -326,7 +334,8 @@
 
 .sv-stream__progress-wrap {
   display: flex; align-items: center; gap: .35rem;
-  flex: 0 0 264px; min-width: 0; max-width: 264px;
+  /* shrinks instead of being clipped; max-width keeps it from growing */
+  flex: 0 1 264px; min-width: 60px; max-width: 264px;
 }
 .sv-stream__progress {
   flex: 1; height: 4px;
@@ -641,6 +650,48 @@
   .sv-stream__time { font-size: .65em; }
 }
 
+/* same steps keyed on the tile width, thresholds rescaled from viewport to tile.
+   these come after the media queries so they win when both match. */
+@container (max-width: 520px) {
+  .sv-stream__device { max-width: 100px; }
+  .sv-stream__progress-wrap { flex-basis: 216px; max-width: 216px; }
+  .sv-docker-stat__bar { width: 29px; }
+  .sv-header-meta { padding-left: calc(32px + 1rem); }
+}
+
+@container (max-width: 400px) {
+  .sv-header-meta { padding-left: .5rem; }
+  .sv-stream__progress-wrap { flex-basis: 168px; max-width: 168px; }
+  .sv-stream__device { max-width: 80px; }
+  .sv-stream__ip { font-size: .8em; padding: .1em .2em; }
+  .sv-docker-stat__bar { width: 22px; }
+  .sv-footer { flex-wrap: wrap; gap: .3rem; }
+  .sv-stream__thumb-col { width: 65px; max-width: 65px; padding-right: .4rem; }
+  .sv-stream__thumb-img { height: 85px; }
+  .sv-stream__desc { font-size: .7em; padding: .2rem .4rem .2rem .5rem; }
+  .sv-stream__badges-row { gap: .15rem; }
+  .sv-stream__transcode-speed { min-width: auto; }
+  .sv-stream__server-type { font-size: .6em; }
+  .sv-stream__sub { flex-wrap: wrap; gap: .25rem; }
+}
+
+@container (max-width: 320px) {
+  .sv-header-meta { padding-left: .25rem; }
+  .sv-stream__sub { flex-wrap: wrap; gap: .25rem; }
+  .sv-stream__progress-wrap { flex-basis: 144px; max-width: 144px; }
+  .sv-stream__device-wrap { display: none; }
+  .sv-docker-stats { gap: .3rem; }
+  .sv-docker-stat__bar { width: 18px; }
+  .sv-stream__thumb-col { width: 55px; max-width: 55px; }
+  .sv-stream__thumb-img { height: 72px; }
+  .sv-stream__desc { font-size: .68em; border-right: none; padding: .2rem 0 .2rem .4rem; }
+  .sv-stream__badges-row { gap: .12rem; }
+  .sv-stream__badges-right { gap: .15rem; }
+  .sv-stream__badges-left  { gap: .15rem; }
+  .sv-stream__server-type { font-size: .55em; }
+  .sv-stream__time { font-size: .65em; }
+}
+
 /* kill confirm modal */
 .sv-w-modal-host {
 
@@ -851,6 +902,11 @@
 .sv-light .sv-stream__chart-row .sv-chart__plot .sv-spark-baseline { stroke: rgba(0,0,0,.18); }
 
 @media (max-width: 480px) {
+  .sv-stream__chart-row .sv-chart { height: 29px; }
+  .sv-stream__chart-row .sv-chart__yaxis { min-width: 18px; font-size: 7px; }
+}
+
+@container (max-width: 400px) {
   .sv-stream__chart-row .sv-chart { height: 29px; }
   .sv-stream__chart-row .sv-chart__yaxis { min-width: 18px; font-size: 7px; }
 }

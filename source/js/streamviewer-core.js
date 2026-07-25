@@ -679,8 +679,10 @@ function renderStreams(sessions, lastActivity) {
             if (laEl) {
                 if (lastActivity && lastActivity.user && lastActivity.title) {
                     laEl.textContent = 'Last stream ' + lastActivity.ago + ' by ' + lastActivity.user + ' \u2013 ' + lastActivity.title;
+                    laEl.title = laEl.textContent;   // shown truncated, full text on hover
                     laEl.style.display = '';
                 } else {
+                    laEl.removeAttribute('title');
                     laEl.style.display = 'none';
                 }
             }

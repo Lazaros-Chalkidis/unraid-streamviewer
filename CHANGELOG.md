@@ -1,6 +1,15 @@
 
 # Stream Viewer
 
+## v2026.07.25
+
+### Bug Fixes
+- A long "Last stream" title in the dashboard widget stretched the whole tile and left the dashboard with a horizontal scrollbar. The title is now truncated with an ellipsis, and the full text is shown on hover.
+
+### Improvements
+- The dashboard widget now sizes its layout from the width of its own tile instead of the width of the browser window. On wide screens a narrow tile previously kept the full-width layout, since the old breakpoints only reacted to the window.
+- The stream progress bar now shrinks when space is tight instead of being cut off.
+
 ## v2026.07.22
 
 ### Bug Fixes
@@ -12,7 +21,8 @@
 
 ## 2026.07.21
 
-Changed: support links now point to GitHub Issues, and the README wording was tightened
+### Fixed
+- Support links now point to GitHub Issues, and the README wording was tightened
 
 ## v2026.05.28
 

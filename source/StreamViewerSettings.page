@@ -912,7 +912,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
 
   <div class="sv-footer-row">
     <span class="sv-support-links">
-      <a href="https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues" class="sv-support-link" target="_blank" rel="noopener">GitHub Issues</a>
+      <a href="https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues" class="sv-support-link" target="_blank" rel="noopener">Support</a>
       <span class="sv-support-sep" aria-hidden="true"></span>
       <a href="#" id="svCreditsLink" class="sv-support-link">Credits</a>
     </span>
@@ -929,7 +929,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <img src="/plugins/streamviewer/img/avatar.png" alt="Lazaros Chalkidis" class="sv-credits-avatar">
           </div>
           <div class="sv-credits-name">Lazaros Chalkidis</div>
-          <div class="sv-credits-role">Developer</div>
+          <div class="sv-credits-role">Author</div>
         </div>
 
         <div class="sv-credits-right">
@@ -968,7 +968,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
               <i class="fa fa-github"></i><span>GitHub Profile</span><i class="fa fa-external-link sv-credits-link-ext"></i>
             </a>
             <a href="https://github.com/Lazaros-Chalkidis/unraid-streamviewer/issues" target="_blank" rel="noopener" class="sv-credits-link">
-              <i class="fa fa-bug"></i><span>GitHub Issues</span><i class="fa fa-external-link sv-credits-link-ext"></i>
+              <i class="fa fa-exclamation-circle"></i><span>Support</span><i class="fa fa-external-link sv-credits-link-ext"></i>
             </a>
           </div>
         </div>
