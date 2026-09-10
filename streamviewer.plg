@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "streamviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.07.25">
+ <!ENTITY version   "2026.09.10">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "c9ec90cc98212d33c6c5754e5989180d">
+ <!ENTITY md5       "5b2bdc44be993a15e11457ed92963b47">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
@@ -24,6 +24,32 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 <CHANGES>
 
 # Stream Viewer
+
+## v2026.09.10
+
+### Bug Fixes
+- Jellyfin 12 broke every connection with "Authentication failed - check your token". Jellyfin turned off the older login methods the plugin was using. It now uses the method Jellyfin recommends, which also works on 10.8 and later, so there is nothing to change on your side. Your existing API key is fine. Emby is unaffected.
+- Uninstalling always deleted your servers and your statistics, even with "Erase data on uninstall" turned off. That setting is now respected, and off is the default. Note that this only applies from the next uninstall onward, since Unraid runs the removal script from the version you already have installed.
+- After an update the pages could keep using the old stylesheet from the browser cache, which made parts of the settings page and the credits box look misaligned. Files are now versioned so the browser picks up the new ones on its own.
+- Your saved servers were hidden behind a closed panel on the Plex, Jellyfin and Emby tabs, so they looked like they were gone. The panel now opens when you have servers of that type, and opens by itself right after you add one.
+- Adding a server you already had gave you a second copy of it. The URL is now checked before it is added.
+- Server names with an apostrophe or quote were shown as `&#039;` and similar. A name containing a backslash before a quote could also make the whole settings file unreadable, resetting everything on the next page load.
+- Searching the watch history for a title containing `%` or `_` always came back empty.
+- The Database path field was drawn as a bare underline instead of a box, and the hint under it now sits beside it like every other setting.
+- Several setting descriptions were wrong. "Verify SSL certificates" said to turn it on for self-signed certificates when it is the opposite, "Show transcode info" and "Show technical details" did not match what they actually display, and "Anonymize IPs" only mentioned IPv4 although IPv6 is handled too.
+
+### Security
+- Stopping a stream was only blocked in the interface. "Allow killing sessions" is now enforced by the server as well.
+- Media server tokens no longer travel inside URLs, where they ended up in the browser and in the web server log.
+- Wiping statistics and switching a server to its local address can no longer be triggered by a plain link.
+- Several checks around image loading, request limits and the database path were tightened.
+
+### Improvements
+- Stream Viewer moved under the new Viewers Suite menu.
+- The stream counter in the Unraid header no longer polls in background tabs.
+- The Statistics page is faster on a long history.
+- The dashboard widget can no longer widen its column, whatever the stream titles or server names contain.
+- The Plex sign-in notice is now shown as a proper notice box.
 
 ## v2026.07.25
 
@@ -427,11 +453,6 @@ if grep -q "streamviewer_cron" /var/spool/cron/crontabs/root 2>/dev/null; then
     sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root
 fi
 
-# Clean orphaned dirs under /mnt/user from failed mounts (previous boot)
-if ! mountpoint -q /mnt/user 2>/dev/null; then
-    rm -rf /mnt/user/* 2>/dev/null
-fi
-
 # Daemon is started by event/started after array is fully mounted
 # But if array is already running (live update), start it now
 VARINI="/var/local/emhttp/var.ini"
@@ -456,28 +477,63 @@ echo ""
 
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
-# Stop poll daemon
-if [[ -f /var/run/streamviewer_poll.pid ]]; then
-    kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
-    rm -f /var/run/streamviewer_poll.pid
-fi
-
-# Clean orphaned dirs under /mnt/user from failed mounts
-if ! mountpoint -q /mnt/user 2>/dev/null; then
-    rm -rf /mnt/user/* 2>/dev/null
+# Stop poll daemon, checking the pid really is ours before killing it
+PIDFILE=/var/run/streamviewer_poll.pid
+if [[ -f "$PIDFILE" ]]; then
+    PID=$(cat "$PIDFILE" 2>/dev/null)
+    if [[ "$PID" =~ ^[0-9]+$ ]]; then
+        if grep -qs streamviewer_poll "/proc/$PID/cmdline"; then
+            kill "$PID" 2>/dev/null
+        fi
+    fi
+    rm -f "$PIDFILE"
 fi
 
 # Remove old cron entry (from previous versions)
 sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root 2>/dev/null
 
+# read the user choice before anything is deleted
+CFG=/boot/config/plugins/&name;/&name;.cfg
+ERASE="0"
+DBDIR=""
+if [[ -f "$CFG" ]]; then
+    ERASE=$(grep -m1 "^ERASE_ON_UNINSTALL=" "$CFG" | cut -d\" -f2)
+    DBDIR=$(grep -m1 "^STATS_DB_PATH=" "$CFG" | cut -d\" -f2)
+fi
+
 removepkg &name;-&version;
 rm -rf /usr/local/emhttp/plugins/&name;
-rm -rf /boot/config/plugins/&name;
 rm -rf /tmp/streamviewer_cache
+
+# the downloaded package is not user data, it goes either way
+rm -f /boot/config/plugins/&name;/&name;-*.txz /boot/config/plugins/&name;/&name;-*.txz.b64 /boot/config/plugins/&name;/&name;.cfg.bak
+
+if [[ "$ERASE" == "1" ]]; then
+    if [[ -z "$DBDIR" ]]; then DBDIR="/mnt/user/appdata/Stream-Viewer"; fi
+    # DBDIR comes straight out of the cfg
+    case "$DBDIR" in
+        *..*) ;;
+        /mnt/*)
+            if [[ -d "$DBDIR" ]]; then
+                rm -f "$DBDIR/streamviewer.db" "$DBDIR/streamviewer.db-wal" "$DBDIR/streamviewer.db-shm"
+                rmdir "$DBDIR" 2>/dev/null  # stays if other apps keep data in there
+            fi
+            ;;
+    esac
+    rm -rf /boot/config/plugins/&name;
+fi
 
 echo ""
 echo "----------------------------------------------------"
 echo " &name; has been removed."
+if [[ "$ERASE" == "1" ]]; then
+echo " Settings and statistics database erased."
+else
+echo " Settings kept : /boot/config/plugins/&name;"
+if [[ -n "$DBDIR" ]]; then
+echo " Statistics kept: $DBDIR"
+fi
+fi
 echo "----------------------------------------------------"
 echo ""
 </INLINE>

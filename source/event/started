@@ -6,18 +6,31 @@
 # =========================================================================
 
 # start the poll daemon once the array is up (unraid runs this on array start)
+PIDFILE=/var/run/streamviewer_poll.pid
+
+# a stale pidfile plus pid reuse would have us killing an unrelated root process
+kill_stale_poll() {
+    [[ -f "$PIDFILE" ]] || return 0
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    if [[ "$pid" =~ ^[0-9]+$ ]] && grep -qs streamviewer_poll "/proc/$pid/cmdline"; then
+        kill "$pid" 2>/dev/null
+    fi
+    rm -f "$PIDFILE"
+}
+
 (
-    # wait for the shares before launching
+    # give up rather than spin forever on a server with no user share
+    waited=0
     while ! mountpoint -q /mnt/user 2>/dev/null; do
         sleep 5
+        waited=$((waited + 5))
+        [[ $waited -ge 600 ]] && exit 0
     done
     sleep 10
     CFG=/boot/config/plugins/streamviewer/streamviewer.cfg
     if grep -q 'STATS_ENABLED="1"' "$CFG" 2>/dev/null; then
-        if [[ -f /var/run/streamviewer_poll.pid ]]; then
-            kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
-            rm -f /var/run/streamviewer_poll.pid
-        fi
+        kill_stale_poll
         nohup /usr/local/emhttp/plugins/streamviewer/include/streamviewer_poll.sh >/dev/null 2>/dev/null &
     fi
 ) &

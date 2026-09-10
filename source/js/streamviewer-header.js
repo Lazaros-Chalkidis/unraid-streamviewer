@@ -61,7 +61,12 @@ function StreamViewerButton(){
         }
 
         poll();
-        setInterval(poll, 10000);  // refresh the stream count every 10s
+        setInterval(function(){
+            if (!document.hidden) poll();  // every open unraid tab runs this, no point polling the hidden ones
+        }, 10000);
+        document.addEventListener('visibilitychange', function(){
+            if (!document.hidden) poll();
+        });
     }
 
     function poll(){

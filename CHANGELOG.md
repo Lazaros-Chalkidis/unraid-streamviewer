@@ -1,6 +1,32 @@
 
 # Stream Viewer
 
+## v2026.09.10
+
+### Bug Fixes
+- Jellyfin 12 broke every connection with "Authentication failed - check your token". Jellyfin turned off the older login methods the plugin was using. It now uses the method Jellyfin recommends, which also works on 10.8 and later, so there is nothing to change on your side. Your existing API key is fine. Emby is unaffected.
+- Uninstalling always deleted your servers and your statistics, even with "Erase data on uninstall" turned off. That setting is now respected, and off is the default. Note that this only applies from the next uninstall onward, since Unraid runs the removal script from the version you already have installed.
+- After an update the pages could keep using the old stylesheet from the browser cache, which made parts of the settings page and the credits box look misaligned. Files are now versioned so the browser picks up the new ones on its own.
+- Your saved servers were hidden behind a closed panel on the Plex, Jellyfin and Emby tabs, so they looked like they were gone. The panel now opens when you have servers of that type, and opens by itself right after you add one.
+- Adding a server you already had gave you a second copy of it. The URL is now checked before it is added.
+- Server names with an apostrophe or quote were shown as `&#039;` and similar. A name containing a backslash before a quote could also make the whole settings file unreadable, resetting everything on the next page load.
+- Searching the watch history for a title containing `%` or `_` always came back empty.
+- The Database path field was drawn as a bare underline instead of a box, and the hint under it now sits beside it like every other setting.
+- Several setting descriptions were wrong. "Verify SSL certificates" said to turn it on for self-signed certificates when it is the opposite, "Show transcode info" and "Show technical details" did not match what they actually display, and "Anonymize IPs" only mentioned IPv4 although IPv6 is handled too.
+
+### Security
+- Stopping a stream was only blocked in the interface. "Allow killing sessions" is now enforced by the server as well.
+- Media server tokens no longer travel inside URLs, where they ended up in the browser and in the web server log.
+- Wiping statistics and switching a server to its local address can no longer be triggered by a plain link.
+- Several checks around image loading, request limits and the database path were tightened.
+
+### Improvements
+- Stream Viewer moved under the new Viewers Suite menu.
+- The stream counter in the Unraid header no longer polls in background tabs.
+- The Statistics page is faster on a long history.
+- The dashboard widget can no longer widen its column, whatever the stream titles or server names contain.
+- The Plex sign-in notice is now shown as a proper notice box.
+
 ## v2026.07.25
 
 ### Bug Fixes

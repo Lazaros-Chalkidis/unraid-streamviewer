@@ -2,4 +2,7 @@ Menu="Buttons:0"
 Title="Active Streams"
 Icon="cast.svg"
 ---
-<script src="/plugins/streamviewer/js/streamviewer-header.js"></script>
+<?php
+require_once '/usr/local/emhttp/plugins/streamviewer/include/streamviewer_api.php';
+?>
+<script src="/plugins/streamviewer/js/streamviewer-header.js<?= StreamViewerEndpoint::assetVer() ?>"></script>

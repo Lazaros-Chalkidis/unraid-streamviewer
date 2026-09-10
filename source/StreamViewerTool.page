@@ -1,5 +1,5 @@
-Menu="SystemInformation"
-Name="Stream Viewer Statistics and Active Stream/s"
+Menu="ViewersSuite"
+Name="Stream Viewer"
 Icon="img/streamviewer.png"
 Type="xmenu"
 Tabs="false"
@@ -16,6 +16,7 @@ require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
 require_once '/usr/local/emhttp/plugins/streamviewer/include/streamviewer_api.php';
 
 $cfg = @parse_plugin_cfg('streamviewer', true) ?: [];
+$asset_ver = StreamViewerEndpoint::assetVer();
 
 $statsEnabled = (($cfg['STATS_ENABLED'] ?? '0') === '1');  // the whole stats UI only renders when recording is on
 
@@ -35,7 +36,8 @@ $tile_config = [
     'libSectionsOpen' => (($cfg['LIB_SECTIONS_OPEN'] ?? '0') === '1'),
     'activeServerTypes' => StreamViewerEndpoint::activeServerTypes(),
 ];
-$tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES);
+// a server name holding </script> would close the block early
+$tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG);
 
 $live_servers = [];
 for ($i = 1; $i <= 8; $i++) {
@@ -43,7 +45,7 @@ for ($i = 1; $i <= 8; $i++) {
     if (!$enabled) continue;
     $live_servers[] = [
         'index' => $i,
-        'name'  => (string)($cfg["SERVER{$i}_NAME"] ?? "Server {$i}"),
+        'name'  => StreamViewerEndpoint::serverName($cfg["SERVER{$i}_NAME"] ?? '', "Server {$i}"),
         'type'  => (string)($cfg["SERVER{$i}_TYPE"] ?? ''),
     ];
 }
@@ -68,11 +70,11 @@ $live_config = [
     'badgeTheme'          => (string)($cfg['LIVE_BADGE_THEME'] ?? 'default'),
     'largeView'           => true,
 ];
-$live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
+$live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG);
 ?>
 
-<link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/widget.css">
-<link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/tool.css">
+<link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/widget.css<?= $asset_ver ?>">
+<link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/tool.css<?= $asset_ver ?>">
 <script>window.svToolConfig = <?= $tile_config_json ?>;</script>
 
 <div class="svt-wrapper<?= $lightClass ?>">
@@ -814,11 +816,11 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES);
   </div>
 </div>
 
-<script src="/plugins/streamviewer/js/chart.min.js"></script>
+<script src="/plugins/streamviewer/js/chart.min.js<?= $asset_ver ?>"></script>
 <script>window.svLiveConfig = <?= $live_config_json ?>;</script>
-<script defer src="/plugins/streamviewer/js/streamviewer-core.js"></script>
-<script defer src="/plugins/streamviewer/js/streamviewer-live.js"></script>
-<script defer src="/plugins/streamviewer/js/streamviewer-tool.js"></script>
+<script defer src="/plugins/streamviewer/js/streamviewer-core.js<?= $asset_ver ?>"></script>
+<script defer src="/plugins/streamviewer/js/streamviewer-live.js<?= $asset_ver ?>"></script>
+<script defer src="/plugins/streamviewer/js/streamviewer-tool.js<?= $asset_ver ?>"></script>
 
 <script>
 

@@ -59,9 +59,13 @@
   max-width: 100% !important;
   box-sizing: border-box !important;
 }
+/* a table cell is sized by its content and ignores overflow, max-width 0 is what keeps
+   the dashboard column from being widened, the cell still fills the column */
+#db-streamviewer > tr > td { max-width: 0 !important; }
 
 /* 7.2 header */
-.sv-header { display: flex; width: 100%; align-items: flex-start; overflow: hidden; box-sizing: border-box; max-width: 100%; }
+/* containment, not overflow, is what stops a table cell from being widened by its content */
+.sv-header { display: flex; width: 100%; align-items: flex-start; overflow: hidden; box-sizing: border-box; max-width: 100%; container-type: inline-size; }
 .sv-header__left,
 .sv-header .tile-header-left  { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .2rem; overflow: hidden; }
 .sv-header__right { flex-shrink: 0; display: flex; align-items: flex-start; }
@@ -74,6 +78,7 @@
 .sv-legacy-header {
   display: flex; justify-content: space-between; align-items: flex-start;
   padding: .3rem 0; width: 100%; overflow: hidden; box-sizing: border-box;
+  container-type: inline-size;
 }
 .sv-legacy-header__left  { display: flex; flex-direction: column; gap: .25rem; flex: 1; min-width: 0; overflow: hidden; }
 .sv-legacy-header__top   { display: flex; align-items: center; gap: .4rem; min-width: 0; overflow: hidden; }

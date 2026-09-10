@@ -1512,7 +1512,9 @@ var _bgRecordIntervalMs = 15000;
 function startBackgroundRecording() {
     if (_bgRecordTimer) return;
     bgRecordPoll();
-    _bgRecordTimer = setInterval(bgRecordPoll, _bgRecordIntervalMs);
+    _bgRecordTimer = setInterval(function() {
+        if (!document.hidden) bgRecordPoll();  // nothing to record for a tab nobody is looking at
+    }, _bgRecordIntervalMs);
 }
 
 // keep recording sessions while the stats page is open, even if the live tab isn't

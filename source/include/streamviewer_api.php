@@ -43,6 +43,8 @@ final class StreamViewerEndpoint
     private const STATS_MERGE_WINDOW_DEFAULT_MIN = 60;
     private const STATS_MERGE_WINDOW_MAX_MIN     = 1440;
     private const LIBRARY_CACHE_TTL    = 300;
+    private const JF_DEVICE_ID         = 'unraid-streamviewer';
+    private const JF_CLIENT_VERSION    = '1.0';
 
     private bool $verifySsl = false;
     private ?array $cfgCache = null;
@@ -101,6 +103,99 @@ final class StreamViewerEndpoint
         return $this->cfgCache;
     }
 
+    public static function serverName($v, string $fallback = ''): string
+    {
+        $v = html_entity_decode(trim((string)$v), ENT_QUOTES, 'UTF-8');  // older versions stored the name html escaped
+        $v = preg_replace('/[\x00-\x1F\x7F]/', '', $v);
+        $v = str_replace('${', '{', $v);  // parse_ini_file expands ${VAR} out of the environment
+        $v = preg_replace('/^(.{0,64}).*/su', '$1', $v) ?? substr($v, 0, 64);
+        return $v !== '' ? $v : $fallback;
+    }
+
+    // parse_ini_file only treats \" as an escape, so a value ending in a backslash would swallow the closing quote
+    public static function iniValue($v): string
+    {
+        return str_replace(['\\', '"'], ['\\\\', '\\"'], (string)$v);
+    }
+
+    // the cfg lives on the usb flash, which wears out
+    public static function writeCfgFile(string $ini): bool
+    {
+        if (@file_get_contents(self::CFG_FILE) === $ini) return true;
+
+        $dir = dirname(self::CFG_FILE);
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
+
+        $tmp = self::CFG_FILE . '.' . getmypid() . '.tmp';
+        if (@file_put_contents($tmp, $ini, LOCK_EX) === false) return false;
+        // keep whatever mode the file already had, this one holds api tokens
+        $mode = @fileperms(self::CFG_FILE);
+        @chmod($tmp, $mode !== false ? ($mode & 0777) : 0600);
+
+        if (!@rename($tmp, self::CFG_FILE)) {
+            @unlink($tmp);
+            return false;
+        }
+        return true;
+    }
+
+    // four pages need this for cache busting, the fallbacks cover a half installed plugin
+    public static function pluginVersion(): string
+    {
+        static $ver = null;
+        if ($ver !== null) return $ver;
+
+        $ver = trim((string)@file_get_contents('/usr/local/emhttp/plugins/' . self::PLUGIN_NAME . '/VERSION'));
+
+        if ($ver === '') {
+            $plg = @file_get_contents('/boot/config/plugins/' . self::PLUGIN_NAME . '.plg');
+            if ($plg && preg_match('/<!ENTITY\s+version\s+"([^"]+)"/i', $plg, $m)) $ver = $m[1];
+        }
+        if ($ver === '') {
+            $txz = @glob('/boot/config/plugins/' . self::PLUGIN_NAME . '/' . self::PLUGIN_NAME . '-*.txz');
+            if ($txz && preg_match('/-(\d{4}\.\d{2}\.\d{2}[a-z]?)/', basename(end($txz)), $m)) $ver = $m[1];
+        }
+        if ($ver === '') {
+            $pkgs = @glob('/var/log/packages/' . self::PLUGIN_NAME . '-*');
+            if ($pkgs && preg_match('/-(\d{4}\.\d{2}\.\d{2}[a-z]?)/', basename(end($pkgs)), $m)) $ver = $m[1];
+        }
+        if ($ver === '') $ver = 'dev';
+
+        return $ver;
+    }
+
+    // appended to css and js urls, a plain filename keeps serving the previous release from cache
+    public static function assetVer(): string
+    {
+        return '?v=' . rawurlencode(self::pluginVersion());
+    }
+
+    // jellyfin 12 turns off the legacy methods, X-Emby-Token and api_key= both 401 there.
+    // emby is a separate product and still wants the old header, so the two are split.
+    private function mediaAuthHeaders(string $type, string $token): array
+    {
+        if ($type === 'emby') {
+            return ['X-Emby-Token' => $token, 'Accept' => 'application/json'];
+        }
+        return [
+            'Authorization' => 'MediaBrowser Client="Stream Viewer", Device="Unraid",'
+                             . ' DeviceId="' . self::JF_DEVICE_ID . '",'
+                             . ' Version="' . self::JF_CLIENT_VERSION . '",'
+                             . ' Token="' . rawurlencode($token) . '"',
+            'Accept'        => 'application/json',
+        ];
+    }
+
+    // the db path comes from the cfg, three call sites were checking it differently or not at all
+    public static function statsDirOrNull($dir): ?string
+    {
+        $dir = rtrim(trim((string)$dir), '/');
+        if ($dir === '') $dir = rtrim(self::STATS_DEFAULT_PATH, '/');
+        if (strncmp($dir, '/mnt/', 5) !== 0) return null;
+        if (strpos($dir, '..') !== false) return null;
+        return $dir;
+    }
+
     // only the server types the user actually configured, used to filter charts
     public static function activeServerTypes(): array
     {
@@ -118,9 +213,11 @@ final class StreamViewerEndpoint
             if (in_array($t, self::VALID_TYPES, true)) $set[$t] = true;
         }
 
-        if (($cfg['STATS_ENABLED'] ?? '0') === '1') {
-            $dir = trim((string)($cfg['STATS_DB_PATH'] ?? self::STATS_DEFAULT_PATH));
-            if ($dir === '') $dir = self::STATS_DEFAULT_PATH;
+        $dir = ($cfg['STATS_ENABLED'] ?? '0') === '1'
+            ? self::statsDirOrNull($cfg['STATS_DB_PATH'] ?? '')
+            : null;
+
+        if ($dir !== null) {
             $dbPath = $dir . '/' . self::STATS_DB_NAME;
             if (is_file($dbPath)) {
                 try {
@@ -155,14 +252,11 @@ final class StreamViewerEndpoint
 
     private function statsDbDir(): ?string
     {
-        $cfg  = $this->loadCfg();
+        $cfg = $this->loadCfg();
         if (($cfg['STATS_ENABLED'] ?? '0') !== '1') return null;
 
-        $dir = trim((string)($cfg['STATS_DB_PATH'] ?? ''));
-        if ($dir === '') $dir = self::STATS_DEFAULT_PATH;
-
-        if (strncmp($dir, '/mnt/', 5) !== 0) return null;
-        if (strpos($dir, '..') !== false) return null;
+        $dir = self::statsDirOrNull($cfg['STATS_DB_PATH'] ?? '');
+        if ($dir === null) return null;
 
         if (!is_dir($dir)) {
 
@@ -858,20 +952,44 @@ final class StreamViewerEndpoint
         $file = self::RATE_LIMIT_FILE . '_' . hash('sha256', $ip);
         $now  = time();
 
-        $data = ['count' => 0, 'window' => $now];
-        if (is_file($file)) {
-            $raw = @json_decode((string)@file_get_contents($file), true);
-            if (is_array($raw)) $data = $raw;
-        }
-        if (($now - (int)$data['window']) >= 60) {
+        // read and write under one lock, separate calls let concurrent requests overwrite each other's count
+        $fp = @fopen($file, 'c+');
+        if ($fp === false) return;
+        if (!flock($fp, LOCK_EX)) { fclose($fp); return; }
+
+        $raw  = stream_get_contents($fp);
+        $data = @json_decode((string)$raw, true);
+        if (!is_array($data) || ($now - (int)($data['window'] ?? 0)) >= 60) {
             $data = ['count' => 0, 'window' => $now];
         }
-        $data['count']++;
-        @file_put_contents($file, json_encode($data), LOCK_EX);
+        $data['count'] = (int)$data['count'] + 1;
 
-        if ((int)$data['count'] > self::RATE_LIMIT_MAX) {
+        rewind($fp);
+        ftruncate($fp, 0);
+        fwrite($fp, json_encode($data));
+        fflush($fp);
+        flock($fp, LOCK_UN);
+        fclose($fp);
+
+        $this->pruneRateLimitFiles();
+
+        if ($data['count'] > self::RATE_LIMIT_MAX) {
             header('Retry-After: 60');
             $this->json(['error' => 'Rate limit exceeded'], 429);
+        }
+    }
+
+    // one file per client ip piles up until reboot, sweep the dead ones now and then
+    private function pruneRateLimitFiles(): void
+    {
+        if (random_int(1, 200) !== 1) return;
+
+        $files = @glob(self::RATE_LIMIT_FILE . '_*');
+        if (!is_array($files)) return;
+
+        $cutoff = time() - 300;
+        foreach ($files as $f) {
+            if (@filemtime($f) < $cutoff) @unlink($f);
         }
     }
 
@@ -919,7 +1037,10 @@ final class StreamViewerEndpoint
         $action = (string)($_GET['action'] ?? '');
 
         if ($action === 'get_thumb') {
+            // no ajax check, the browser loads this as an <img> and sends no X-Requested-With
+            $this->enforceLocalOrigin();
             $this->verifyNonceReadOnly();
+            $this->enforceRateLimit();
             $this->replyGetThumb();
             return;
         }
@@ -981,7 +1102,7 @@ final class StreamViewerEndpoint
             $type  = (string)($cfg["SERVER{$i}_TYPE"]  ?? '');
             $url   = rtrim(trim((string)($cfg["SERVER{$i}_URL"]   ?? '')), '/');
             $token = trim((string)($cfg["SERVER{$i}_TOKEN"] ?? ''));
-            $name  = trim((string)($cfg["SERVER{$i}_NAME"]  ?? "Server {$i}"));
+            $name  = self::serverName($cfg["SERVER{$i}_NAME"] ?? '', "Server {$i}");
 
             if (!in_array($type, self::VALID_TYPES, true)) continue;
             if ($url === '' || $token === '') continue;
@@ -1183,7 +1304,7 @@ final class StreamViewerEndpoint
             ],
             default => [
                 $srv['url'] . '/Sessions?ActiveWithinSeconds=960',
-                ['X-Emby-Token' => $srv['token'], 'X-MediaBrowser-Token' => $srv['token'], 'Accept' => 'application/json'],
+                $this->mediaAuthHeaders($srv['type'], $srv['token']),
             ],
         };
     }
@@ -1382,11 +1503,7 @@ final class StreamViewerEndpoint
     private function fetchJellyfinSessions(array $srv): array
     {
         $url = $srv['url'] . '/Sessions?ActiveWithinSeconds=960';
-        [$body, $httpCode, $err] = $this->httpGet($url, [
-            'X-Emby-Token'         => $srv['token'],
-            'X-MediaBrowser-Token' => $srv['token'],
-            'Accept'               => 'application/json',
-        ]);
+        [$body, $httpCode, $err] = $this->httpGet($url, $this->mediaAuthHeaders($srv['type'], $srv['token']));
 
         if ($err !== null) return ['ok' => false, 'sessions' => [], 'error' => $err];
         if ($httpCode === 401) return ['ok' => false, 'sessions' => [], 'error' => 'Invalid API key'];
@@ -1492,7 +1609,7 @@ final class StreamViewerEndpoint
 
             $imageId  = $nowPlaying['SeriesId'] ?? $nowPlaying['SeasonId'] ?? $nowPlaying['Id'] ?? null;
             $thumbUrl = ($imageId && $srv['url'] !== '')
-                ? rtrim($srv['url'], '/') . '/Items/' . urlencode($imageId) . '/Images/Primary?maxHeight=600&maxWidth=400&quality=96&api_key=' . urlencode($srv['token'])
+                ? rtrim($srv['url'], '/') . '/Items/' . urlencode($imageId) . '/Images/Primary?maxHeight=600&maxWidth=400&quality=96'
                 : '';
 
             $jfResConversion = '';
@@ -1674,12 +1791,6 @@ final class StreamViewerEndpoint
 
     private function replyGetThumb(): void
     {
-        $referer = $_SERVER['HTTP_REFERER'] ?? '';
-        $host    = $_SERVER['HTTP_HOST']    ?? '';
-        if ($host !== '' && $referer !== '' && strpos($referer, $host) === false) {
-            http_response_code(403); exit('Forbidden');
-        }
-
         $url = trim((string)($_GET['u'] ?? ''));
         if ($url === '') { http_response_code(400); exit('No URL'); }
 
@@ -1691,7 +1802,8 @@ final class StreamViewerEndpoint
         $reqHost = strtolower((string)(parse_url($url, PHP_URL_HOST) ?: ''));
         $reqPort = parse_url($url, PHP_URL_PORT);
 
-        $allowed = false;
+        $allowed  = false;
+        $authHead = [];
         $cfg = $this->loadCfg();
         for ($i = 1; $i <= self::MAX_SERVERS; $i++) {
             $srvUrl = rtrim(trim((string)($cfg["SERVER{$i}_URL"] ?? '')), '/');
@@ -1700,12 +1812,24 @@ final class StreamViewerEndpoint
             $srvPort = parse_url($srvUrl, PHP_URL_PORT);
             if ($srvHost !== '' && $srvHost === $reqHost && $srvPort === $reqPort) {
                 $allowed = true;
+                $srvType = (string)($cfg["SERVER{$i}_TYPE"] ?? '');
+                // the token used to ride along in the image url, which put it in the browser and the access log
+                if ($srvType === 'jellyfin' || $srvType === 'emby') {
+                    foreach ($this->mediaAuthHeaders($srvType, (string)($cfg["SERVER{$i}_TOKEN"] ?? '')) as $k => $v) {
+                        if ($k !== 'Accept') $authHead[] = $k . ': ' . $v;
+                    }
+                }
                 break;
             }
         }
 
-        if (!$allowed && preg_match('#^[a-z0-9-]+\.plex\.direct$#i', $reqHost)) {
-            $allowed = true;
+        // the real form is 10-0-0-5.hash.plex.direct, the old one-label pattern never matched anything
+        if (!$allowed
+            && preg_match('/^(\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3})\.[a-f0-9]+\.plex\.direct$/i', $reqHost, $pm)) {
+            $embedded = str_replace('-', '.', $pm[1]);
+            // private ranges only, link-local would let this reach cloud metadata addresses
+            $allowed = filter_var($embedded, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE) === false
+                    && filter_var($embedded, FILTER_VALIDATE_IP) !== false;
         }
         if (!$allowed) { http_response_code(403); exit('URL not allowed'); }
 
@@ -1720,7 +1844,11 @@ final class StreamViewerEndpoint
             CURLOPT_SSL_VERIFYPEER => $verify,
             CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
             CURLOPT_USERAGENT      => 'StreamViewer/1.0 Unraid',
+            // MAXFILESIZE only fires on a Content-Length header, a chunked response would run until memory ran out
+            CURLOPT_NOPROGRESS     => false,
+            CURLOPT_PROGRESSFUNCTION => static fn($c, $dlTotal, $dlNow) => $dlNow > self::THUMB_MAX_BYTES ? 1 : 0,
         ]);
+        if ($authHead) curl_setopt($ch, CURLOPT_HTTPHEADER, $authHead);
         $body   = curl_exec($ch);
         $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $mime   = (string)(curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?: 'image/jpeg');
@@ -1750,7 +1878,7 @@ final class StreamViewerEndpoint
             $type  = (string)($cfg["SERVER{$i}_TYPE"]  ?? '');
             $url   = trim((string)($cfg["SERVER{$i}_URL"]  ?? ''));
             $token = trim((string)($cfg["SERVER{$i}_TOKEN"] ?? ''));
-            $name  = trim((string)($cfg["SERVER{$i}_NAME"]  ?? ''));
+            $name  = self::serverName($cfg["SERVER{$i}_NAME"] ?? '');
 
             if ($type === '' && $url === '' && $name === '') continue;
 
@@ -1769,7 +1897,7 @@ final class StreamViewerEndpoint
 
     private function replyTestConnection(): void
     {
-        $index = (int)($_GET['server'] ?? 0);
+        $index = (int)($_POST['server'] ?? $_GET['server'] ?? 0);
 
         if ($index >= 1 && $index <= self::MAX_SERVERS) {
 
@@ -1777,12 +1905,16 @@ final class StreamViewerEndpoint
             $type  = (string)($cfg["SERVER{$index}_TYPE"]  ?? '');
             $url   = rtrim(trim((string)($cfg["SERVER{$index}_URL"]   ?? '')), '/');
             $token = trim((string)($cfg["SERVER{$index}_TOKEN"] ?? ''));
-            $name  = trim((string)($cfg["SERVER{$index}_NAME"]  ?? "Server {$index}"));
+            $name  = self::serverName($cfg["SERVER{$index}_NAME"] ?? '', "Server {$index}");
         } else {
 
-            $type  = (string)($_GET['type']  ?? '');
-            $url   = rtrim(trim((string)($_GET['url']   ?? '')), '/');
-            $token = trim((string)($_GET['token'] ?? ''));
+            // POST only, this form carries the api token and a query string lands in the webserver log
+            if ((string)($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+                $this->json(['ok' => false, 'error' => 'Method not allowed'], 405);
+            }
+            $type  = (string)($_POST['type']  ?? '');
+            $url   = rtrim(trim((string)($_POST['url']   ?? '')), '/');
+            $token = trim((string)($_POST['token'] ?? ''));
             $name  = 'Test';
         }
 
@@ -1792,7 +1924,7 @@ final class StreamViewerEndpoint
 
         [$testUrl, $headers] = match($type) {
             'plex'             => [$url . '/', ['X-Plex-Token' => $token, 'Accept' => 'application/json']],
-            'jellyfin', 'emby' => [$url . '/System/Info', ['X-Emby-Token' => $token, 'Accept' => 'application/json']],
+            'jellyfin', 'emby' => [$url . '/System/Info', $this->mediaAuthHeaders($type, $token)],
             default            => [$url, []],
         };
 
@@ -2058,7 +2190,8 @@ final class StreamViewerEndpoint
             $binds[':mt'] = [$filterMedia, SQLITE3_TEXT];
         }
         if ($filterSearch !== '') {
-            $safeSearch = str_replace(['%', '_', '\\'], ['\\%', '\\_', '\\\\'], $filterSearch);
+            // backslash first, otherwise it escapes the backslashes this very call adds
+            $safeSearch = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $filterSearch);
             $where .= " AND title LIKE :search ESCAPE '\\'";
             $binds[':search'] = ['%' . $safeSearch . '%', SQLITE3_TEXT];
         }
@@ -2075,15 +2208,19 @@ final class StreamViewerEndpoint
         $totalSec = (int)($sumRow['total_sec'] ?? 0);
         $avgSec   = $total > 0 ? (int)round($totalSec / $total) : 0;
 
+        // group in sqlite, pulling one row per stream into php was a full scan on a long history
         $remStmt = $db->prepare("
-            SELECT ip_address FROM watch_history WHERE {$where} AND ip_address != ''
+            SELECT ip_address, COUNT(*) AS n FROM watch_history
+            WHERE {$where} AND ip_address != ''
+            GROUP BY ip_address
         ");
         foreach ($binds as $k => [$v, $t]) $remStmt->bindValue($k, $v, $t);
         $remRes = $remStmt->execute();
         $ipCount = 0; $remoteCount = 0;
         while ($rr = $remRes->fetchArray(SQLITE3_ASSOC)) {
-            $ipCount++;
-            if (!$this->isPrivateIp((string)$rr['ip_address'])) $remoteCount++;
+            $n = (int)$rr['n'];
+            $ipCount += $n;
+            if (!$this->isPrivateIp((string)$rr['ip_address'])) $remoteCount += $n;
         }
         $remStmt->close();
         $remotePct = ($ipCount > 0) ? (int)round(($remoteCount / $ipCount) * 100) : 0;
@@ -2643,10 +2780,13 @@ final class StreamViewerEndpoint
 
     private function replyWipeStats(): void
     {
-        $cfg = $this->loadCfg();
-        $dir = trim((string)($cfg['STATS_DB_PATH'] ?? self::STATS_DEFAULT_PATH));
+        if ((string)($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            $this->json(['error' => 'Method not allowed'], 405);
+        }
 
-        if ($dir === '' || strncmp($dir, '/mnt/', 5) !== 0 || strpos($dir, '..') !== false) {
+        $cfg = $this->loadCfg();
+        $dir = self::statsDirOrNull($cfg['STATS_DB_PATH'] ?? '');
+        if ($dir === null) {
             $this->json(['ok' => false, 'error' => 'Invalid database path'], 400);
             return;
         }
@@ -3178,11 +3318,7 @@ final class StreamViewerEndpoint
     private function fetchJfLibraries(array $srv): ?array
     {
         $url = $srv['url'] . '/Library/VirtualFolders';
-        [$body, $code, $err] = $this->httpGet($url, [
-            'X-Emby-Token'         => $srv['token'],
-            'X-MediaBrowser-Token' => $srv['token'],
-            'Accept'                => 'application/json',
-        ]);
+        [$body, $code, $err] = $this->httpGet($url, $this->mediaAuthHeaders($srv['type'], $srv['token']));
         if ($body === null || $code < 200 || $code >= 300) return null;
 
         $folders = @json_decode($body, true);
@@ -3209,11 +3345,7 @@ final class StreamViewerEndpoint
 
             $countUrl = $srv['url'] . '/Items?ParentId=' . rawurlencode($libId)
                       . '&Recursive=true&Limit=0&Fields=BasicSyncInfo';
-            [$cBody, $cCode] = $this->httpGet($countUrl, [
-                'X-Emby-Token'         => $srv['token'],
-                'X-MediaBrowser-Token' => $srv['token'],
-                'Accept'                => 'application/json',
-            ]);
+            [$cBody, $cCode] = $this->httpGet($countUrl, $this->mediaAuthHeaders($srv['type'], $srv['token']));
             $totalItems = 0;
             $episodeCount = 0;
             if ($cBody !== null && $cCode >= 200 && $cCode < 300) {
@@ -3224,11 +3356,7 @@ final class StreamViewerEndpoint
             if ($libType === 'show' && $totalItems > 0) {
                 $epUrl = $srv['url'] . '/Items?ParentId=' . rawurlencode($libId)
                        . '&Recursive=true&IncludeItemTypes=Episode&Limit=0';
-                [$eBody, $eCode] = $this->httpGet($epUrl, [
-                    'X-Emby-Token'         => $srv['token'],
-                    'X-MediaBrowser-Token' => $srv['token'],
-                    'Accept'                => 'application/json',
-                ]);
+                [$eBody, $eCode] = $this->httpGet($epUrl, $this->mediaAuthHeaders($srv['type'], $srv['token']));
                 if ($eBody !== null && $eCode >= 200 && $eCode < 300) {
                     $eData = @json_decode($eBody, true);
                     $episodeCount = (int)($eData['TotalRecordCount'] ?? 0);
@@ -3252,11 +3380,7 @@ final class StreamViewerEndpoint
         $url = $srv['url'] . '/Items?SortBy=DateCreated&SortOrder=Descending&Limit=10'
              . '&Recursive=true&IncludeItemTypes=Movie,Episode,Season,Audio,MusicAlbum'
              . '&Fields=DateCreated';
-        [$body, $code, $err] = $this->httpGet($url, [
-            'X-Emby-Token'         => $srv['token'],
-            'X-MediaBrowser-Token' => $srv['token'],
-            'Accept'                => 'application/json',
-        ]);
+        [$body, $code, $err] = $this->httpGet($url, $this->mediaAuthHeaders($srv['type'], $srv['token']));
         if ($body === null || $code < 200 || $code >= 300) return null;
 
         $data  = @json_decode($body, true);
@@ -3320,6 +3444,12 @@ final class StreamViewerEndpoint
             $this->json(['error' => 'Method not allowed'], 405);
         }
 
+        $cfg = $this->loadCfg();
+        // the widget and the tools page have their own toggle, the request does not say which one it came from
+        if (($cfg['TOOL_ALLOW_KILL'] ?? '0') !== '1' && ($cfg['LIVE_ALLOW_KILL'] ?? '0') !== '1') {
+            $this->json(['error' => 'Killing sessions is disabled'], 403);
+        }
+
         $serverIndex = (int)($_POST['server_index']      ?? 0);
         $sessionId   = trim((string)($_POST['session_id']     ?? ''));
         $sessionKey  = trim((string)($_POST['session_key']    ?? ''));
@@ -3329,7 +3459,6 @@ final class StreamViewerEndpoint
         if ($serverIndex < 1 || $serverIndex > self::MAX_SERVERS) $this->json(['error' => 'Invalid server'], 400);
         if ($sessionId === '' && $sessionKey === '') $this->json(['error' => 'Missing session identifier'], 400);
 
-        $cfg   = $this->loadCfg();
         $type  = (string)($cfg["SERVER{$serverIndex}_TYPE"]  ?? '');
         $url   = rtrim(trim((string)($cfg["SERVER{$serverIndex}_URL"]   ?? '')), '/');
         $token = trim((string)($cfg["SERVER{$serverIndex}_TOKEN"] ?? ''));
@@ -3340,7 +3469,7 @@ final class StreamViewerEndpoint
 
         $result = match($type) {
             'plex'             => $this->killPlexSession($url, $token, $sessionKey, $plexUuid, $reason),
-            'jellyfin', 'emby' => $this->killJfSession($url, $token, $sessionId, $reason),
+            'jellyfin', 'emby' => $this->killJfSession($type, $url, $token, $sessionId, $reason),
             default            => ['ok' => false, 'error' => 'Unsupported'],
         };
         $this->json($result);
@@ -3373,24 +3502,21 @@ final class StreamViewerEndpoint
         return ['ok' => false, 'error' => "HTTP {$httpCode}"];
     }
 
-    private function killJfSession(string $url, string $token, string $sessionId, string $reason): array
+    private function killJfSession(string $type, string $url, string $token, string $sessionId, string $reason): array
     {
         if ($sessionId === '') return ['ok' => false, 'error' => 'No session ID provided'];
 
-        $stopUrl = $url . '/Sessions/' . rawurlencode($sessionId) . '/Playing/Stop?api_key=' . urlencode($token);
-        [$body, $httpCode, $err] = $this->httpPostJson($stopUrl, '{}', [
-            'X-Emby-Token'         => $token,
-            'X-MediaBrowser-Token' => $token,
-        ]);
+        // token goes in the header only, jellyfin ignores one of the two if both are sent
+        $headers = $this->mediaAuthHeaders($type, $token);
+
+        $stopUrl = $url . '/Sessions/' . rawurlencode($sessionId) . '/Playing/Stop';
+        [$body, $httpCode, $err] = $this->httpPostJson($stopUrl, '{}', $headers);
         if ($err !== null) return ['ok' => false, 'error' => $err];
         if ($httpCode >= 200 && $httpCode < 300) return ['ok' => true];
 
         if ($httpCode === 404) {
-            $cmdUrl = $url . '/Sessions/' . rawurlencode($sessionId) . '/Command/Stop?api_key=' . urlencode($token);
-            [$body, $httpCode, $err] = $this->httpPostJson($cmdUrl, '{}', [
-                'X-Emby-Token'         => $token,
-                'X-MediaBrowser-Token' => $token,
-            ]);
+            $cmdUrl = $url . '/Sessions/' . rawurlencode($sessionId) . '/Command/Stop';
+            [$body, $httpCode, $err] = $this->httpPostJson($cmdUrl, '{}', $headers);
             if ($err !== null) return ['ok' => false, 'error' => $err];
             if ($httpCode >= 200 && $httpCode < 300) return ['ok' => true];
         }
@@ -3438,8 +3564,13 @@ final class StreamViewerEndpoint
             $this->json(['ok' => false, 'error' => "Bad PIN response from plex.tv (HTTP {$code})"], 502);
         }
 
+        // plex bounces the browser here after login, so it must not be able to point anywhere else
         $forwardUrl = trim((string)($_GET['forward_url'] ?? ''));
-        if (!preg_match('#^https?://#i', $forwardUrl) || stripos($forwardUrl, 'plex.tv') !== false) {
+        $fwdHost    = (string)(parse_url($forwardUrl, PHP_URL_HOST) ?: '');
+        $reqHost    = (string)(parse_url('http://' . ($_SERVER['HTTP_HOST'] ?? ''), PHP_URL_HOST) ?: '');
+        if (!preg_match('#^https?://#i', $forwardUrl)
+            || $reqHost === ''
+            || strcasecmp($fwdHost, $reqHost) !== 0) {
             $forwardUrl = 'https://unraid.net/';
         }
 
@@ -3896,7 +4027,7 @@ final class StreamViewerEndpoint
             if (($cfg["SERVER{$i}_TYPE"]    ?? '') !== 'plex') continue;
 
             $url  = rtrim(trim((string)($cfg["SERVER{$i}_URL"]  ?? '')), '/');
-            $name = trim((string)($cfg["SERVER{$i}_NAME"] ?? "Server {$i}"));
+            $name = self::serverName($cfg["SERVER{$i}_NAME"] ?? '', "Server {$i}");
             if ($url === '') continue;
             if ($this->isLocalUrl($url)) continue;
 
@@ -3917,7 +4048,11 @@ final class StreamViewerEndpoint
 
     private function replyApplyLocalUrl(): void
     {
-        $index = (int)($_POST['index'] ?? $_GET['index'] ?? 0);
+        if ((string)($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            $this->json(['error' => 'Method not allowed'], 405);
+        }
+
+        $index = (int)($_POST['index'] ?? 0);
         if ($index <= 0 || $index > self::MAX_SERVERS) {
             $this->json(['ok' => false, 'error' => 'Invalid server index'], 400);
         }
@@ -3965,16 +4100,14 @@ final class StreamViewerEndpoint
         if ($raw === false) return false;
 
         $key     = "SERVER{$index}_URL";
-        $escaped = str_replace('"', '\"', rtrim(trim($newUrl), '/'));
+        $escaped = self::iniValue(rtrim(trim($newUrl), '/'));
         $pattern = '/^(' . preg_quote($key, '/') . ')=".*"$/m';
         $replace = $key . '="' . $escaped . '"';
         $new     = preg_match($pattern, $raw)
             ? preg_replace($pattern, $replace, $raw)
             : rtrim($raw) . "\n" . $replace . "\n";
 
-        $tmp = self::CFG_FILE . '.' . getmypid() . '.tmp';
-        if (@file_put_contents($tmp, $new, LOCK_EX) === false) return false;
-        return (bool)@rename($tmp, self::CFG_FILE);
+        return self::writeCfgFile($new);
     }
 
     private function httpGet(string $url, array $headers = [], bool $forceVerify = false): array

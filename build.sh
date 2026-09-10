@@ -58,6 +58,25 @@ else
 ${CHANGES_TEXT}"
 fi
 
+# the plg ships the top of this file as its release notes
+RELEASE_VERSION="${BASE_VERSION}${LETTER_SUFFIX}"
+CHANGELOG_TOP=""
+if [[ -f "$CHANGELOG_MD_FILE" ]]; then
+    CHANGELOG_TOP=$(grep -m1 -E '^#{1,3}[[:space:]]+v?[0-9]{4}\.[0-9]{2}\.[0-9]{2}[a-z]?[[:space:]]*$' "$CHANGELOG_MD_FILE" \
+                    | sed -E 's/^#+[[:space:]]+v?//; s/[[:space:]]+$//')
+fi
+
+if [[ "$CHANGELOG_TOP" != "$RELEASE_VERSION" ]]; then
+    if [[ "$BRANCH" == "main" ]]; then
+        echo "Build stopped."
+        echo "  CHANGELOG.md top entry : ${CHANGELOG_TOP:-none found}"
+        echo "  Version being built    : ${RELEASE_VERSION}"
+        echo "  Add the ${RELEASE_VERSION} entry at the top of CHANGELOG.md, then build again."
+        exit 1
+    fi
+    echo "Warning: CHANGELOG.md top entry is '${CHANGELOG_TOP:-none found}', building ${VERSION} anyway (${BRANCH} build)."
+fi
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 echo "=============================================="
 echo " StreamViewer build"
@@ -99,10 +118,10 @@ echo "Creating package: ${FILENAME}.txz ..."
 tar -C "${PACKAGE_DIR_TEMP}" -cJf "${PACKAGE_PATH}" usr
 
 if [[ ! -f "${PACKAGE_PATH}" ]]; then
-    echo "❌ Package creation failed!"
+    echo "Package creation failed."
     exit 1
 fi
-echo "✅ Package: $(du -h "${PACKAGE_PATH}" | cut -f1)  →  ${PACKAGE_PATH}"
+echo "Package: $(du -h "${PACKAGE_PATH}" | cut -f1)  ->  ${PACKAGE_PATH}"
 
 # ── MD5 ───────────────────────────────────────────────────────────────────────
 if command -v md5sum &>/dev/null; then
@@ -110,10 +129,10 @@ if command -v md5sum &>/dev/null; then
 elif command -v md5 &>/dev/null; then
     PACKAGE_MD5="$(md5 -q "${PACKAGE_PATH}")"
 else
-    echo "⚠️  md5sum/md5 not found - MD5 will be empty in PLG!"
+    echo "Warning: md5sum/md5 not found, MD5 will be empty in the plg."
     PACKAGE_MD5=""
 fi
-echo "🔑 MD5: ${PACKAGE_MD5}"
+echo "MD5: ${PACKAGE_MD5}"
 
 # ── Base64 helper (portable: GNU -w0 vs BSD no-newline) ───────────────────────
 b64_nolf() {
@@ -191,11 +210,6 @@ if grep -q "streamviewer_cron" /var/spool/cron/crontabs/root 2>/dev/null; then
     sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root
 fi
 
-# Clean orphaned dirs under /mnt/user from failed mounts (previous boot)
-if ! mountpoint -q /mnt/user 2>/dev/null; then
-    rm -rf /mnt/user/* 2>/dev/null
-fi
-
 # Daemon is started by event/started after array is fully mounted
 # But if array is already running (live update), start it now
 VARINI="/var/local/emhttp/var.ini"
@@ -216,28 +230,63 @@ echo " Settings: Settings > Stream Viewer"
 echo "----------------------------------------------------"
 echo ""'
 
-PLG_REMOVE_SCRIPT='# Stop poll daemon
-if [[ -f /var/run/streamviewer_poll.pid ]]; then
-    kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
-    rm -f /var/run/streamviewer_poll.pid
-fi
-
-# Clean orphaned dirs under /mnt/user from failed mounts
-if ! mountpoint -q /mnt/user 2>/dev/null; then
-    rm -rf /mnt/user/* 2>/dev/null
+PLG_REMOVE_SCRIPT='# Stop poll daemon, checking the pid really is ours before killing it
+PIDFILE=/var/run/streamviewer_poll.pid
+if [[ -f "$PIDFILE" ]]; then
+    PID=$(cat "$PIDFILE" 2>/dev/null)
+    if [[ "$PID" =~ ^[0-9]+$ ]]; then
+        if grep -qs streamviewer_poll "/proc/$PID/cmdline"; then
+            kill "$PID" 2>/dev/null
+        fi
+    fi
+    rm -f "$PIDFILE"
 fi
 
 # Remove old cron entry (from previous versions)
 sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root 2>/dev/null
 
+# read the user choice before anything is deleted
+CFG=/boot/config/plugins/&name;/&name;.cfg
+ERASE="0"
+DBDIR=""
+if [[ -f "$CFG" ]]; then
+    ERASE=$(grep -m1 "^ERASE_ON_UNINSTALL=" "$CFG" | cut -d\" -f2)
+    DBDIR=$(grep -m1 "^STATS_DB_PATH=" "$CFG" | cut -d\" -f2)
+fi
+
 removepkg &name;-&version;
 rm -rf /usr/local/emhttp/plugins/&name;
-rm -rf /boot/config/plugins/&name;
 rm -rf /tmp/streamviewer_cache
+
+# the downloaded package is not user data, it goes either way
+rm -f /boot/config/plugins/&name;/&name;-*.txz /boot/config/plugins/&name;/&name;-*.txz.b64 /boot/config/plugins/&name;/&name;.cfg.bak
+
+if [[ "$ERASE" == "1" ]]; then
+    if [[ -z "$DBDIR" ]]; then DBDIR="/mnt/user/appdata/Stream-Viewer"; fi
+    # DBDIR comes straight out of the cfg
+    case "$DBDIR" in
+        *..*) ;;
+        /mnt/*)
+            if [[ -d "$DBDIR" ]]; then
+                rm -f "$DBDIR/streamviewer.db" "$DBDIR/streamviewer.db-wal" "$DBDIR/streamviewer.db-shm"
+                rmdir "$DBDIR" 2>/dev/null  # stays if other apps keep data in there
+            fi
+            ;;
+    esac
+    rm -rf /boot/config/plugins/&name;
+fi
 
 echo ""
 echo "----------------------------------------------------"
 echo " &name; has been removed."
+if [[ "$ERASE" == "1" ]]; then
+echo " Settings and statistics database erased."
+else
+echo " Settings kept : /boot/config/plugins/&name;"
+if [[ -n "$DBDIR" ]]; then
+echo " Statistics kept: $DBDIR"
+fi
+fi
 echo "----------------------------------------------------"
 echo ""'
 
@@ -392,10 +441,10 @@ rm -rf "${PACKAGE_DIR_TEMP}"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
-echo "🎉 Build complete!"
-echo "   📦 Package : ${PACKAGE_PATH}  ($(du -h "${PACKAGE_PATH}" | cut -f1))"
-echo "   📄 PLG     : ${PLUGIN_NAME}.plg"
-echo "   🔑 MD5     : ${PACKAGE_MD5}"
-echo "   🏷  Version : ${VERSION}"
-echo "   🌿 Branch  : ${BRANCH}"
+echo "Build complete."
+echo "   Package : ${PACKAGE_PATH}  ($(du -h "${PACKAGE_PATH}" | cut -f1))"
+echo "   PLG     : ${PLUGIN_NAME}.plg"
+echo "   MD5     : ${PACKAGE_MD5}"
+echo "   Version : ${VERSION}"
+echo "   Branch  : ${BRANCH}"
 echo ""

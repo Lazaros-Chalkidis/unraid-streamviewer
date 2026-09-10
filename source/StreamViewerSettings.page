@@ -17,19 +17,24 @@ const SV_CFG_FILE    = '/boot/config/plugins/streamviewer/streamviewer.cfg';
 const SV_MAX_SERVERS = 10;
 const SV_VALID_TYPES = ['plex', 'jellyfin', 'emby'];
 
+// a stale pidfile plus pid reuse would have us killing an unrelated root process
+function sv_poll_pid(string $pidFile): int
+{
+    if (!is_file($pidFile)) return 0;
+    $pid = (int)trim((string)@file_get_contents($pidFile));
+    if ($pid <= 0) return 0;
+
+    $cmdline = (string)@file_get_contents("/proc/{$pid}/cmdline");
+    return strpos($cmdline, 'streamviewer_poll') !== false ? $pid : 0;
+}
+
 // start or stop the poll daemon to match the stats toggle
 function sv_manage_poll(bool $statsEnabled): void
 {
     $pidFile  = '/var/run/streamviewer_poll.pid';
     $script   = '/usr/local/emhttp/plugins/streamviewer/include/streamviewer_poll.sh';
-    $running  = false;
 
-    if (file_exists($pidFile)) {
-        $pid = (int)trim((string)@file_get_contents($pidFile));
-        if ($pid > 0 && @file_exists("/proc/{$pid}")) {
-            $running = true;
-        }
-    }
+    $pid = sv_poll_pid($pidFile);
 
     $cronFile = '/var/spool/cron/crontabs/root';
     if (file_exists($cronFile)) {
@@ -40,12 +45,11 @@ function sv_manage_poll(bool $statsEnabled): void
         }
     }
 
-    if ($statsEnabled && !$running) {
+    if ($statsEnabled && $pid === 0) {
         @chmod($script, 0755);
-        exec("nohup {$script} >/dev/null 2>&1 &");
-    } elseif (!$statsEnabled && $running) {
-        $pid = (int)trim((string)@file_get_contents($pidFile));
-        if ($pid > 0) @exec("kill {$pid}");
+        exec('nohup ' . escapeshellarg($script) . ' >/dev/null 2>&1 &');
+    } elseif (!$statsEnabled && $pid > 0) {
+        @exec('kill ' . (int)$pid);
         @unlink($pidFile);
     }
 }
@@ -67,10 +71,7 @@ $sanitize_token = static function($v): string {
     return preg_replace('/[^\x20-\x21\x23-\x5B\x5D-\x7E]/u', '', $v);
 };
 
-$sanitize_name = static function($v): string {
-    $v = trim((string)($v ?? ''));
-    return substr(htmlspecialchars($v, ENT_QUOTES, 'UTF-8'), 0, 64);
-};
+$sanitize_name = static fn($v) => StreamViewerEndpoint::serverName($v);
 
 $sanitize_type = static fn($v) => in_array((string)$v, SV_VALID_TYPES, true) ? (string)$v : '';
 
@@ -84,8 +85,8 @@ $clamp_max_streams = static function($v): string {
     return in_array((string)$v, $allowed, true) ? (string)$v : '10';
 };
 
-// the # in the field name gets url-encoded by some setups, so check all three forms
-if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'] ?? '') === 'apply') {
+// the # in the field name arrives url-encoded from some setups
+if (isset($_POST['#apply']) || ($_POST['%23apply'] ?? '') === 'apply') {
     $existing = @parse_plugin_cfg(SV_PLUGIN, true) ?: [];
     $new_cfg  = [];
 
@@ -164,8 +165,7 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     $statsPath = trim((string)($_POST['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer'));
     if ($statsPath === '') $statsPath = '/mnt/user/appdata/Stream-Viewer';
 
-    if (strncmp($statsPath, '/mnt/', 5) !== 0) $statsPath = '/mnt/user/appdata/Stream-Viewer';
-    $new_cfg['STATS_DB_PATH'] = rtrim($statsPath, '/');
+    $new_cfg['STATS_DB_PATH'] = StreamViewerEndpoint::statsDirOrNull($statsPath) ?? '/mnt/user/appdata/Stream-Viewer';
 
     $retDays = (int)($_POST['STATS_RETENTION_DAYS'] ?? 90);
 
@@ -184,23 +184,20 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
     if (!in_array($tab, ['widget', 'plex', 'jellyfin', 'emby'], true)) $tab = 'widget';
     $new_cfg['SV_ACTIVE_TAB'] = $tab;
 
-    // escape embedded quotes so no value can break out of the ini
     $ini = '';
     foreach ($new_cfg as $k => $v) {
-        $v   = str_replace('"', '\\"', (string)$v);
-        $ini .= "{$k}=\"{$v}\"\n";
+        $ini .= "{$k}=\"" . StreamViewerEndpoint::iniValue($v) . "\"\n";
     }
-    @mkdir(dirname(SV_CFG_FILE), 0755, true);
-    $written = file_put_contents(SV_CFG_FILE, $ini);
+    $written = StreamViewerEndpoint::writeCfgFile($ini);
 
-    if ($written !== false) {
+    if ($written) {
         sv_manage_poll($new_cfg['STATS_ENABLED'] === '1');  // cfg saved, bring the daemon in line with the new setting
     }
 
     if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) || !empty($_POST['_svAjax'])) {
         header('Content-Type: application/json');
-        if ($written === false) {
-            echo json_encode(['ok' => false, 'error' => 'Could not write config file. Check permissions on ' . SV_CFG_FILE]);
+        if (!$written) {
+            echo json_encode(['ok' => false, 'error' => 'Could not write the config file']);
         } else {
             echo json_encode(['ok' => true]);
         }
@@ -216,7 +213,7 @@ if (isset($_POST['#apply']) || isset($_POST['#apply_btn']) || ($_POST['%23apply'
 $servers_data = [];
 for ($i = 1; $i <= SV_MAX_SERVERS; $i++) {
     $type  = (string)($cfg["SERVER{$i}_TYPE"]    ?? '');
-    $name  = (string)($cfg["SERVER{$i}_NAME"]    ?? '');
+    $name  = StreamViewerEndpoint::serverName($cfg["SERVER{$i}_NAME"] ?? '');
     $url   = (string)($cfg["SERVER{$i}_URL"]     ?? '');
     $token = (string)($cfg["SERVER{$i}_TOKEN"]   ?? '');
     $en    = (string)($cfg["SERVER{$i}_ENABLED"] ?? '0');
@@ -234,28 +231,18 @@ for ($i = 1; $i <= SV_MAX_SERVERS; $i++) {
     }
 }
 
+// an accordion that hides saved servers reads as data loss, so it only starts closed when empty
+$srv_count = ['plex' => 0, 'jellyfin' => 0, 'emby' => 0];
+foreach ($servers_data as $sd) {
+    if (isset($srv_count[$sd['type']])) $srv_count[$sd['type']]++;
+}
+$collapsed = static fn(string $t): string => $srv_count[$t] > 0 ? '' : ' sv-accordion--collapsed';
+
 $active_tab = (string)($cfg['SV_ACTIVE_TAB'] ?? 'servers');
 if (!in_array($active_tab, ['widget', 'plex', 'jellyfin', 'emby'], true)) $active_tab = 'widget';
 
-$plugin_version = '';
-$_pvFile = '/usr/local/emhttp/plugins/streamviewer/VERSION';
-if (is_readable($_pvFile)) {
-    $_pvRead = trim((string)@file_get_contents($_pvFile));
-    if ($_pvRead !== '') $plugin_version = $_pvRead;
-}
-if ($plugin_version === '') {
-    $plg = @file_get_contents('/boot/config/plugins/streamviewer/streamviewer.plg');
-    if ($plg && preg_match('/<!ENTITY\s+version\s+"([^"]+)"/i', $plg, $m)) {
-        $plugin_version = $m[1];
-    }
-}
-if ($plugin_version === '') {
-    $txz_files = glob('/boot/config/plugins/streamviewer/streamviewer-*.txz');
-    if ($txz_files && preg_match('/streamviewer-(\d{4}\.\d{2}\.\d{2}[a-z]?)/', basename(end($txz_files)), $m)) {
-        $plugin_version = $m[1];
-    }
-}
-if ($plugin_version === '') $plugin_version = 'dev';
+$plugin_version = StreamViewerEndpoint::pluginVersion();
+$asset_ver      = StreamViewerEndpoint::assetVer();
 ?>
 
 <?php
@@ -268,7 +255,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
 ?>
 
 <style>.streamviewer-settings{visibility:hidden;}</style>
-<link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/settings.css">
+<link rel="stylesheet" type="text/css" href="/plugins/streamviewer/css/settings.css<?= $asset_ver ?>">
 
 <form name="streamviewer_settings" method="post" class="streamviewer-settings<?= $lightClass ?>" autocomplete="off">
 
@@ -404,14 +391,14 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <div class="sv-r-label">Show transcode info</div>
             <div class="sv-r-field">
               <?= $toggleShow('WIDGET_SHOW_TRANSCODE', $cfg['WIDGET_SHOW_TRANSCODE'] ?? '1') ?>
-              <span class="sv-r-desc">Transcode speed and type</span>
+              <span class="sv-r-desc">Direct play, direct stream or transcode</span>
             </div>
           </div>
           <div class="sv-r">
             <div class="sv-r-label">Show technical details</div>
             <div class="sv-r-field">
               <?= $toggleShow('WIDGET_SHOW_DETAILS', $cfg['WIDGET_SHOW_DETAILS'] ?? '1') ?>
-              <span class="sv-r-desc">Codec, audio, container, subs, HW</span>
+              <span class="sv-r-desc">Codec, HDR, audio, container, subs, hardware</span>
             </div>
           </div>
           <div class="sv-r">
@@ -425,7 +412,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <div class="sv-r-label">Show bandwidth chart</div>
             <div class="sv-r-field">
               <?= $toggleShow('WIDGET_SHOW_CHART', $cfg['WIDGET_SHOW_CHART'] ?? '1') ?>
-              <span class="sv-r-desc">Mini chart inside each stream</span>
+              <span class="sv-r-desc">Mini bandwidth chart in each stream</span>
             </div>
           </div>
           <div class="sv-r">
@@ -445,7 +432,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
                 <?= mk_option($cfg['WIDGET_BW_CAPACITY'] ?? '1000', '500',  _('500 Mbps')) ?>
                 <?= mk_option($cfg['WIDGET_BW_CAPACITY'] ?? '1000', '1000', _('1000 Mbps - Default')) ?>
               </select>
-              <span class="sv-r-desc">Ceiling for the TOTAL BW bar in the footer</span>
+              <span class="sv-r-desc">Ceiling for the TOTAL BW bar, needs Docker stats on</span>
             </div>
           </div>
           <div class="sv-r">
@@ -576,28 +563,28 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <div class="sv-r-label">Show transcode info</div>
             <div class="sv-r-field">
               <?= $toggleShow('LIVE_SHOW_TRANSCODE', $cfg['LIVE_SHOW_TRANSCODE'] ?? '1') ?>
-              <span class="sv-r-desc">Transcode speed and type</span>
+              <span class="sv-r-desc">Direct play, direct stream or transcode</span>
             </div>
           </div>
           <div class="sv-r">
             <div class="sv-r-label">Show technical details</div>
             <div class="sv-r-field">
               <?= $toggleShow('LIVE_SHOW_DETAILS', $cfg['LIVE_SHOW_DETAILS'] ?? '1') ?>
-              <span class="sv-r-desc">Codec, audio, container, subs, HW</span>
+              <span class="sv-r-desc">Codec, HDR, audio, container, subs, hardware</span>
             </div>
           </div>
           <div class="sv-r">
             <div class="sv-r-label">Show media summary</div>
             <div class="sv-r-field">
               <?= $toggleShow('LIVE_SHOW_SUMMARY', $cfg['LIVE_SHOW_SUMMARY'] ?? '1') ?>
-              <span class="sv-r-desc">Thumbnail and description</span>
+              <span class="sv-r-desc">Description under each stream</span>
             </div>
           </div>
           <div class="sv-r">
             <div class="sv-r-label">Show bandwidth chart</div>
             <div class="sv-r-field">
               <?= $toggleShow('LIVE_SHOW_CHART', $cfg['LIVE_SHOW_CHART'] ?? '1') ?>
-              <span class="sv-r-desc">Mini chart at the bottom of each stream card</span>
+              <span class="sv-r-desc">Mini bandwidth chart in each stream</span>
             </div>
           </div>
           <div class="sv-r">
@@ -639,8 +626,8 @@ $lightClass   = $sv_light ? ' sv-light' : '';
           </div>
           <div class="sv-r">
             <div class="sv-r-label">Database path</div>
-            <div class="sv-r-field" style="flex-direction:column;align-items:stretch;gap:4px;">
-              <input type="text" name="STATS_DB_PATH" class="sv-input" style="max-width:260px;"
+            <div class="sv-r-field">
+              <input type="text" name="STATS_DB_PATH" class="sv-input"
                      value="<?= htmlspecialchars($cfg['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer', ENT_QUOTES, 'UTF-8') ?>"
                      placeholder="/mnt/user/appdata/Stream-Viewer"
                      data-has-db="<?= is_file(rtrim((string)($cfg['STATS_DB_PATH'] ?? '/mnt/user/appdata/Stream-Viewer'), '/') . '/streamviewer.db') ? '1' : '0' ?>">
@@ -690,7 +677,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <div class="sv-r-label">Anonymize IPs</div>
             <div class="sv-r-field">
               <?= $toggle('STATS_ANONYMIZE_IP', $cfg['STATS_ANONYMIZE_IP'] ?? '0', '0') ?>
-              <span class="sv-r-desc">Zero last IPv4 octet</span>
+              <span class="sv-r-desc">Mask the last part of the IP before storing it</span>
             </div>
           </div>
           <div class="sv-r">
@@ -723,7 +710,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <div class="sv-r-label">Verify SSL certificates</div>
             <div class="sv-r-field">
               <?= $toggle('VERIFY_SSL', $cfg['VERIFY_SSL'] ?? '0', '0') ?>
-              <span class="sv-r-desc">For self-signed certs on LAN</span>
+              <span class="sv-r-desc">Turn off for self-signed certificates</span>
             </div>
           </div>
         </div>
@@ -744,12 +731,15 @@ $lightClass   = $sv_light ? ' sv-light' : '';
           <div class="sv-row">
             <div>
               <div class="sv-label">Sign in with Plex</div>
-              <div class="sv-desc">
-                Click the button below to sign in securely via plex.tv.
-                A new tab will open, where you log in and authorize Stream Viewer.
-                Your Plex servers will be discovered automatically.<br>
-                <strong>No token is ever stored.</strong> Only the per-server access keys
-                retrieved during discovery are saved.
+              <div class="sv-note">
+                <i class="fa fa-info-circle" aria-hidden="true"></i>
+                <span>
+                  Click the button below to sign in securely via plex.tv.
+                  A new tab will open, where you log in and authorize Stream Viewer.
+                  Your Plex servers will be discovered automatically.<br>
+                  <b>No token is ever stored.</b> Only the per-server access keys
+                  retrieved during discovery are saved.
+                </span>
               </div>
             </div>
           </div>
@@ -775,7 +765,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
           </div>
           <div id="svDiscoveryError" class="sv-test-err" style="display:none;margin-top:.75rem;"></div>
 
-          <div class="sv-accordion sv-accordion--collapsed" id="svPlexServersAccordion" style="margin-top:1rem;">
+          <div class="sv-accordion<?= $collapsed('plex') ?>" id="svPlexServersAccordion" style="margin-top:1rem;">
             <div class="sv-accordion-hd" id="svPlexServersAccordionHd">
               <span>Configured Plex Servers</span>
               <span class="sv-pill sv-pill--count" id="svPlexCountPill">0</span>
@@ -823,7 +813,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <span id="svJfTestResult" class="sv-inline-result" style="display:none;"></span>
           </div>
 
-          <div class="sv-accordion sv-accordion--collapsed" id="svJfServersAccordion" style="margin-top:1rem;">
+          <div class="sv-accordion<?= $collapsed('jellyfin') ?>" id="svJfServersAccordion" style="margin-top:1rem;">
             <div class="sv-accordion-hd" id="svJfServersAccordionHd">
               <span>Configured Jellyfin Servers</span>
               <span class="sv-pill sv-pill--count" id="svJfCountPill">0</span>
@@ -871,7 +861,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <span id="svEmbyTestResult" class="sv-inline-result" style="display:none;"></span>
           </div>
 
-          <div class="sv-accordion sv-accordion--collapsed" id="svEmbyServersAccordion" style="margin-top:1rem;">
+          <div class="sv-accordion<?= $collapsed('emby') ?>" id="svEmbyServersAccordion" style="margin-top:1rem;">
             <div class="sv-accordion-hd" id="svEmbyServersAccordionHd">
               <span>Configured Emby Servers</span>
               <span class="sv-pill sv-pill--count" id="svEmbyCountPill">0</span>
@@ -935,32 +925,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         <div class="sv-credits-right">
           <div class="sv-credits-title-row">
             <span class="sv-credits-title">Stream Viewer</span>
-            <span class="sv-credits-version">v<?php
-              $_svPluginVer = '';
-
-              $_svVersionFile = '/usr/local/emhttp/plugins/streamviewer/VERSION';
-              if (is_readable($_svVersionFile)) {
-                  $_svRead = trim((string)@file_get_contents($_svVersionFile));
-                  if ($_svRead !== '') {
-                      $_svPluginVer = $_svRead;
-                  }
-              }
-
-              if ($_svPluginVer === '') {
-                  $_svPkgs = @glob('/var/log/packages/streamviewer-*');
-                  if (is_array($_svPkgs) && !empty($_svPkgs)) {
-                      usort($_svPkgs, function($a, $b) {
-                          return @filemtime($b) - @filemtime($a);
-                      });
-                      $_svBase = basename($_svPkgs[0]);
-                      if (preg_match('/^streamviewer-([^-]+(?:-[^-]+)?)/', $_svBase, $_svM)) {
-                          $_svPluginVer = $_svM[1];
-                      }
-                  }
-              }
-
-              echo htmlspecialchars($_svPluginVer ?: '');
-            ?></span>
+            <span class="sv-credits-suite">part of VIEWERS Suite</span>
           </div>
           <div class="sv-credits-desc">Real-time media stream monitor and statistics tracker for Plex, Jellyfin and Emby.</div>
           <div class="sv-credits-links">
@@ -974,7 +939,10 @@ $lightClass   = $sv_light ? ' sv-light' : '';
         </div>
       </div>
       <div class="sv-credits-footer">
-        <span class="sv-credits-copy">Copyright &copy; 2026 Stream Viewer - Lazaros Chalkidis</span>
+        <div class="sv-credits-footer-info">
+          <span class="sv-credits-version">v<?= htmlspecialchars($plugin_version) ?></span>
+          <span class="sv-credits-copy">Copyright &copy; 2026 Stream Viewer - Lazaros Chalkidis</span>
+        </div>
         <button type="button" id="svCreditsOkBtn" class="sv-credits-ok-btn">OK</button>
       </div>
     </div>
@@ -999,7 +967,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
 
 <script>
 window.svToken    = <?= json_encode(StreamViewerEndpoint::generateNonce()) ?>;
-window.svServers  = <?= json_encode($servers_data, JSON_UNESCAPED_SLASHES) ?>;
+window.svServers  = <?= json_encode($servers_data, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) ?>;
 window.svMaxServers = <?= SV_MAX_SERVERS ?>;
 </script>
 
@@ -1027,11 +995,8 @@ function escHtml(s) {
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// flag unsaved changes so we can warn before leaving
+// hand the change to unraid's tracker, our own Apply button is never disabled so there is nothing to enable here
 function markDirty() {
-    var apply = document.querySelector('input[name="#apply_btn"]');
-    if (!apply) return;
-    apply.disabled = false;
     if (typeof window.checkChanges === 'function') { try { window.checkChanges(); } catch(_) {} }
 }
 
@@ -1173,7 +1138,7 @@ function showDiscoveryError(msg) {
     el.style.display = '';
 }
 
-// rank a discovered connection as local vs remote so we can prefer the LAN address
+// sort key plus the label and help text shown per connection, lowest priority wins so the LAN path is picked first
 function classifyConnection(conn, hasLocalContainer) {
     hasLocalContainer = !!hasLocalContainer;
     if (conn.container_detected) {
@@ -1311,7 +1276,7 @@ function addDiscoveredServer(btn, servers) {
         return;
     }
 
-    addCard({
+    var clash = addCard({
         type:              'plex',
         name:              srv.name || 'Plex Server',
         url:               url,
@@ -1320,6 +1285,10 @@ function addDiscoveredServer(btn, servers) {
 
         token_placeholder: srv.accessToken || '',
     });
+    if (clash) {
+        alert('That URL is already configured as "' + (clash.data.name || 'a server') + '".');
+        return;
+    }
 
     btn.disabled = true;
     btn.innerHTML = '<i class="fa fa-check"></i> Added';
@@ -1337,7 +1306,7 @@ function addDiscoveredServer(btn, servers) {
     markDirty();
 }
 
-// warn if a plex server is reachable on the LAN but configured with a remote url
+// offer the local address when a configured plex server turns out to be a container on this unraid
 function checkLocalPlexMismatch() {
     var banner = document.getElementById('svLocalMismatchBanner');
     if (!banner) return;
@@ -1446,7 +1415,7 @@ function addJellyfinServer() {
         return;
     }
 
-    addCard({
+    var clash = addCard({
         type:              type,
         name:              name,
         url:               url.replace(/\/$/, ''),
@@ -1454,6 +1423,11 @@ function addJellyfinServer() {
         has_token:         true,
         token_placeholder: token,
     });
+    if (clash) {
+        showResult(document.getElementById('svJfTestResult'), false,
+                   'That URL is already configured as "' + (clash.data.name || 'a server') + '".');
+        return;
+    }
 
     document.getElementById('svJfName').value  = '';
     document.getElementById('svJfUrl').value   = '';
@@ -1484,7 +1458,7 @@ function testJellyfinServer() {
 
     $.ajax({
         url:      '/plugins/streamviewer/include/streamviewer_api.php',
-        method:   'GET',
+        method:   'POST',
         timeout:  12000,
         headers:  { 'X-Requested-With': 'XMLHttpRequest' },
         data: {
@@ -1514,10 +1488,33 @@ function testJellyfinServer() {
     });
 }
 
+var SV_ACCORDIONS = { plex: 'svPlexServersAccordion', jellyfin: 'svJfServersAccordion', emby: 'svEmbyServersAccordion' };
+
+function openAccordion(type) {
+    var acc = document.getElementById(SV_ACCORDIONS[type] || '');
+    if (acc) acc.classList.remove('sv-accordion--collapsed');
+}
+
+function normUrl(u) {
+    return String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+}
+
+function findCardByUrl(url) {
+    var n = normUrl(url);
+    if (!n) return null;
+    return cards.find(function(c) { return !c.removed && normUrl(c.data.url) === n; }) || null;
+}
+
+// returns the clashing card instead of adding, callers decide how to tell the user
 function addCard(data) {
+    var clash = findCardByUrl(data.url);
+    if (clash) { openAccordion(clash.data.type); return clash; }
+
     var ci = Date.now() + Math.floor(Math.random() * 1000);
     cards.push({ cardIndex: ci, removed: false, data: data });
     renderAllCards();
+    openAccordion(data.type);
+    return null;
 }
 
 function buildServerCard(data, cardIndex) {
@@ -1641,7 +1638,7 @@ function showResult(el, ok, msg) {
             || lower.indexOf('failed to connect') !== -1
             || lower.indexOf('connection refused') !== -1
             || lower.indexOf('timed out') !== -1) {
-            networkHint = '\n💡 If your media server uses a custom Docker network (ipvlan/macvlan), '
+            networkHint = '\nIf your media server uses a custom Docker network (ipvlan/macvlan), '
                 + 'you need to enable: Settings → Docker → Host access to custom networks. '
                 + '(Stop Docker first, switch to Advanced View.)';
         }
@@ -1672,7 +1669,7 @@ function testEmbyServer() {
 
     $.ajax({
         url:      SV_API,
-        method:   'GET',
+        method:   'POST',
         timeout:  12000,
         headers:  { 'X-Requested-With': 'XMLHttpRequest' },
         data: {
@@ -1710,7 +1707,7 @@ function addEmbyServer() {
         showResult(res, false, 'Maximum ' + window.svMaxServers + ' servers reached.'); return;
     }
 
-    addCard({
+    var clash = addCard({
         type:              'emby',
         name:              name,
         url:               url.replace(/\/$/, ''),
@@ -1718,6 +1715,10 @@ function addEmbyServer() {
         has_token:         true,
         token_placeholder: token,
     });
+    if (clash) {
+        showResult(res, false, 'That URL is already configured as "' + (clash.data.name || 'a server') + '".');
+        return;
+    }
 
     document.getElementById('svEmbyName').value  = '';
     document.getElementById('svEmbyUrl').value   = '';

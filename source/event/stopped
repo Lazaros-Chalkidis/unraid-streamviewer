@@ -5,8 +5,18 @@
 # License: GPLv3
 # =========================================================================
 
+PIDFILE=/var/run/streamviewer_poll.pid
+
+# a stale pidfile plus pid reuse would have us killing an unrelated root process
+kill_stale_poll() {
+    [[ -f "$PIDFILE" ]] || return 0
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    if [[ "$pid" =~ ^[0-9]+$ ]] && grep -qs streamviewer_poll "/proc/$pid/cmdline"; then
+        kill "$pid" 2>/dev/null
+    fi
+    rm -f "$PIDFILE"
+}
+
 # stop the poll daemon on array stop
-if [[ -f /var/run/streamviewer_poll.pid ]]; then
-    kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
-    rm -f /var/run/streamviewer_poll.pid
-fi
+kill_stale_poll

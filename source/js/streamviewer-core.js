@@ -1000,11 +1000,11 @@ function applyDockerHtml() {
     if (el && _lastDockerHtml) el.innerHTML = _lastDockerHtml;
 }
 
+// unraid repaints the tile footer on its own schedule and wipes our html, put it back
 setInterval(function() {
-    if (_lastDockerHtml) {
-        var el = DOM.dockerStats();
-        if (el && el.innerHTML === '') applyDockerHtml();
-    }
+    if (document.hidden || !_lastDockerHtml) return;
+    var el = DOM.dockerStats();
+    if (el && el.innerHTML === '') applyDockerHtml();
 }, 2000);
 
 var _dockerFetching = false;
