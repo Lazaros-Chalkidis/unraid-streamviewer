@@ -38,13 +38,15 @@ final class StreamViewerEndpoint
     private const STATS_DEFAULT_PATH   = '/mnt/user/appdata/Stream-Viewer';
     private const STATS_RETENTION_DAYS = 90;
     private const STATS_PRUNE_CHANCE   = 50;
-    private const STATS_SCHEMA_VER     = 7;
+    private const STATS_SCHEMA_VER     = 8;
     private const STATS_BUSY_TIMEOUT   = 3000;
     private const STATS_MERGE_WINDOW_DEFAULT_MIN = 60;
     private const STATS_MERGE_WINDOW_MAX_MIN     = 1440;
     private const LIBRARY_CACHE_TTL    = 300;
     private const JF_DEVICE_ID         = 'unraid-streamviewer';
     private const JF_CLIENT_VERSION    = '1.0';
+    private const DL_DEDUP_SEC         = 600;
+    private const DL_ACTIVITY_LIMIT    = 200;
 
     private bool $verifySsl = false;
     private ?array $cfgCache = null;
@@ -90,6 +92,7 @@ final class StreamViewerEndpoint
         $db = $this->openDb();
         if ($db !== null) {
             try { $this->resolveGeoIps($db); } catch (\Throwable $e) {  }
+            try { $this->recordDownloads($db, $servers); } catch (\Throwable $e) {  }
         }
 
         return count($sessions);
@@ -405,6 +408,30 @@ final class StreamViewerEndpoint
         $db->exec('COMMIT');
     }
 
+    private function createDownloadTable(\SQLite3 $db): void
+    {
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS download_history (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                server_index  INTEGER NOT NULL DEFAULT 0,
+                server_name   TEXT NOT NULL DEFAULT '',
+                server_type   TEXT NOT NULL DEFAULT '',
+                activity_id   INTEGER NOT NULL DEFAULT 0,
+                user_id       TEXT NOT NULL DEFAULT '',
+                user          TEXT NOT NULL DEFAULT 'Unknown',
+                item_id       TEXT NOT NULL DEFAULT '',
+                title         TEXT NOT NULL DEFAULT '',
+                series        TEXT NOT NULL DEFAULT '',
+                media_type    TEXT NOT NULL DEFAULT 'video',
+                device        TEXT NOT NULL DEFAULT '',
+                downloaded_at INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(server_index, activity_id)
+            )
+        ");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_dl_at   ON download_history(downloaded_at)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_dl_user ON download_history(user, downloaded_at)");
+    }
+
     // bump the schema one version at a time so existing dbs upgrade cleanly
     private function runMigrations(\SQLite3 $db): void
     {
@@ -533,6 +560,10 @@ final class StreamViewerEndpoint
                 // older builds stored jellyfin/emby music as "audio", stats key on "track"
                 @$db->exec("UPDATE watch_history  SET media_type = 'track' WHERE media_type = 'audio'");
                 @$db->exec("UPDATE active_sessions SET media_type = 'track' WHERE media_type = 'audio'");
+            },
+
+            8 => function(\SQLite3 $db) {
+                $this->createDownloadTable($db);
             },
         ];
 
@@ -775,6 +806,332 @@ final class StreamViewerEndpoint
         $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
         $stmt->execute();
         $stmt->close();
+
+        $stmt = $db->prepare("DELETE FROM download_history WHERE downloaded_at < :cutoff");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    // jellyfin and emby write one activity entry per download, plex has no download log
+    private function recordDownloads(\SQLite3 $db, array $servers): void
+    {
+        foreach ($servers as $srv) {
+            if ($srv['type'] === 'plex') continue;
+
+            $metaKey = 'dl_since_' . (int)$srv['index'];
+            $q = $db->prepare("SELECT val FROM sv_meta WHERE key = :k");
+            $q->bindValue(':k', $metaKey, SQLITE3_TEXT);
+            $since = (string)($q->execute()->fetchArray(SQLITE3_NUM)[0] ?? '');
+            $q->close();
+            if ($since === '' || @strtotime($since) === false) {
+                $since = gmdate('Y-m-d\TH:i:s\Z', time() - 7 * 86400);
+            }
+
+            $entries = $this->fetchActivityDownloads($srv, $since);
+            if ($entries === null) continue;
+
+            $newest = $since;
+            $rows   = [];
+            foreach ($entries as $e) {
+                $date = (string)($e['Date'] ?? '');
+                $ts   = $date !== '' ? @strtotime($date) : false;
+                if ($ts === false) continue;
+                if ($ts > (int)@strtotime($newest)) $newest = $date;
+                $aid = (int)($e['Id'] ?? 0);
+                if ($aid <= 0) $aid = crc32($date . '|' . ($e['UserId'] ?? '') . '|' . ($e['Name'] ?? ''));
+                $rows[] = [
+                    'activity_id' => $aid,
+                    'user_id'     => (string)($e['UserId'] ?? ''),
+                    'item_id'     => (string)($e['ItemId'] ?? ''),
+                    'name'        => (string)($e['Name'] ?? ''),
+                    'device'      => $this->activityDevice($srv['type'], (string)($e['ShortOverview'] ?? '')),
+                    'at'          => $ts,
+                    'user'        => 'Unknown',
+                    'title'       => '',
+                    'series'      => '',
+                    'media_type'  => 'video',
+                ];
+            }
+
+            // minDate is inclusive, so the newest entry comes back on every poll
+            $known = $db->prepare("SELECT 1 FROM download_history WHERE server_index = :srv AND activity_id = :aid");
+            $rows  = array_values(array_filter($rows, function($r) use ($known, $srv) {
+                $known->reset();
+                $known->bindValue(':srv', (int)$srv['index'], SQLITE3_INTEGER);
+                $known->bindValue(':aid', $r['activity_id'], SQLITE3_INTEGER);
+                return !$known->execute()->fetchArray(SQLITE3_NUM);
+            }));
+            $known->close();
+
+            if (!empty($rows)) {
+                $rows = $srv['type'] === 'emby'
+                    ? $this->resolveEmbyRows($db, $srv, $rows)
+                    : $this->resolveJfRows($srv, $rows);
+                $this->insertDownloads($db, $srv, $rows);
+            }
+
+            if ($newest !== $since) {
+                $stmt = $db->prepare("INSERT OR REPLACE INTO sv_meta(key,val) VALUES(:k, :v)");
+                $stmt->bindValue(':k', $metaKey, SQLITE3_TEXT);
+                $stmt->bindValue(':v', $newest,  SQLITE3_TEXT);
+                $stmt->execute();
+                $stmt->close();
+            }
+        }
+    }
+
+    private function fetchActivityDownloads(array $srv, string $since): ?array
+    {
+        $headers = $this->mediaAuthHeaders($srv['type'], $srv['token']);
+        $out     = [];
+        $start   = 0;
+        for ($page = 0; $page < 10; $page++) {
+            $url = $srv['url'] . '/System/ActivityLog/Entries?minDate=' . rawurlencode($since)
+                 . '&limit=' . self::DL_ACTIVITY_LIMIT . '&startIndex=' . $start;
+            [$body, $code] = $this->httpGet($url, $headers);
+            if ($body === null || $code < 200 || $code >= 300) return $page === 0 ? null : $out;
+
+            $data  = @json_decode($body, true);
+            $items = $data['Items'] ?? null;
+            if (!is_array($items)) return $page === 0 ? null : $out;
+
+            foreach ($items as $e) {
+                if (!is_array($e)) continue;
+                if (stripos((string)($e['Type'] ?? ''), 'download') === false) continue;
+                $out[] = $e;
+            }
+            if (count($items) < self::DL_ACTIVITY_LIMIT) break;
+            $start += self::DL_ACTIVITY_LIMIT;
+        }
+        return $out;
+    }
+
+    // jellyfin: "App: Jellyfin Android, Device: Pixel 8", emby: "From 1.2.3.4 with Emby Web on Firefox Windows"
+    private function activityDevice(string $type, string $overview): string
+    {
+        if ($type === 'emby') {
+            $pos = strpos($overview, ' with ');
+            return $pos === false ? '' : $this->sanitizeStr(substr($overview, $pos + 6));
+        }
+        if (preg_match('/App:\s*([^,]+?)\s*,\s*Device:\s*(.+)$/i', $overview, $m)) {
+            return $this->sanitizeStr(trim($m[1]) . ' / ' . trim($m[2]));
+        }
+        return '';
+    }
+
+    private function resolveJfRows(array $srv, array $rows): array
+    {
+        $users = $this->fetchJfUserNames($srv);
+        $items = $this->fetchJfItems($srv, array_unique(array_filter(array_column($rows, 'item_id'))));
+        foreach ($rows as &$r) {
+            $r['user'] = $users[$r['user_id']] ?? 'Unknown';
+            $item = $items[$r['item_id']] ?? null;
+            if ($item !== null) {
+                $r['title']      = $item['title'];
+                $r['series']     = $item['series'];
+                $r['media_type'] = $item['media_type'];
+            }
+        }
+        unset($r);
+        return $rows;
+    }
+
+    // emby gives no ItemId and a localized Name like "root is downloading The Rainmaker",
+    // so the user comes from the known user list and the title from a library search
+    private function resolveEmbyRows(\SQLite3 $db, array $srv, array $rows): array
+    {
+        $users  = array_values($this->fetchJfUserNames($srv));
+        usort($users, fn($a, $b) => strlen($b) <=> strlen($a));
+
+        $tplKey = 'dl_tpl_' . (int)$srv['index'];
+        $q = $db->prepare("SELECT val FROM sv_meta WHERE key = :k");
+        $q->bindValue(':k', $tplKey, SQLITE3_TEXT);
+        $learned = (string)($q->execute()->fetchArray(SQLITE3_NUM)[0] ?? '');
+        $q->close();
+
+        $templates = array_filter(array_unique([$learned, '{0} is downloading {1}', 'Γίνεται λήψη {1} από {0}']));
+        $cache     = [];
+        $searches  = 0;
+
+        foreach ($rows as &$r) {
+            $name = $r['name'];
+            if ($name === '') continue;
+            if (isset($cache[$name])) { $r = array_merge($r, $cache[$name]); continue; }
+
+            $user = '';
+            $text = '';
+            foreach ($templates as $tpl) {
+                if (preg_match($this->embyTemplateRegex($tpl), $name, $m)) { $user = $m['u']; $text = $m['t']; break; }
+            }
+            if ($user === '') {
+                foreach ($users as $u) {
+                    if ($u !== '' && preg_match('/(?<!\w)' . preg_quote($u, '/') . '(?!\w)/u', $name)) { $user = $u; break; }
+                }
+            }
+
+            $item = null;
+            if ($text !== '' && $searches < 20) {
+                $searches++;
+                $item = $this->embySearchExact($srv, $text);
+            } elseif ($user !== '' && $searches < 20) {
+                // template unknown: try the word runs around the user name, longest first
+                $rest  = trim(preg_replace('/(?<!\w)' . preg_quote($user, '/') . '(?!\w)/u', ' ', $name));
+                $words = preg_split('/\s+/u', $rest) ?: [];
+                $n     = count($words);
+                for ($len = min($n, 8); $len >= 1 && $item === null && $searches < 20; $len--) {
+                    for ($i = 0; $i + $len <= $n && $searches < 20; $i++) {
+                        $cand = implode(' ', array_slice($words, $i, $len));
+                        $searches++;
+                        $item = $this->embySearchExact($srv, $cand);
+                        if ($item !== null) {
+                            $text = $cand;
+                            $tpl  = str_replace([$cand, $user], ['{1}', '{0}'], $name);
+                            if ($tpl !== $learned && strpos($tpl, '{0}') !== false && strpos($tpl, '{1}') !== false) {
+                                $st = $db->prepare("INSERT OR REPLACE INTO sv_meta(key,val) VALUES(:k, :v)");
+                                $st->bindValue(':k', $tplKey, SQLITE3_TEXT);
+                                $st->bindValue(':v', $tpl,    SQLITE3_TEXT);
+                                $st->execute();
+                                $st->close();
+                                $templates[] = $tpl;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            $res = [
+                'user'       => $user !== '' ? $this->sanitizeStr($user) : 'Unknown',
+                'item_id'    => $item['id'] ?? '',
+                'title'      => $item['title'] ?? $this->sanitizeStr($text),
+                'series'     => $item['series'] ?? '',
+                'media_type' => $item['media_type'] ?? 'video',
+            ];
+            $cache[$name] = $res;
+            $r = array_merge($r, $res);
+        }
+        unset($r);
+        return $rows;
+    }
+
+    private function embyTemplateRegex(string $tpl): string
+    {
+        $re = preg_quote($tpl, '/');
+        $re = str_replace(['\{0\}', '\{1\}'], ['(?<u>.+?)', '(?<t>.+?)'], $re);
+        return '/^' . $re . '$/u';
+    }
+
+    private function embySearchExact(array $srv, string $term): ?array
+    {
+        $url = $srv['url'] . '/Items?Recursive=true&Limit=5&IncludeItemTypes=Movie,Episode,Audio'
+             . '&Fields=SeriesName,ParentIndexNumber,IndexNumber,AlbumArtist&SearchTerm=' . rawurlencode($term);
+        [$body, $code] = $this->httpGet($url, $this->mediaAuthHeaders($srv['type'], $srv['token']));
+        if ($body === null || $code < 200 || $code >= 300) return null;
+        $data = @json_decode($body, true);
+        foreach ($data['Items'] ?? [] as $item) {
+            if (!is_array($item)) continue;
+            // no mbstring on stock unraid, pcre handles the case fold
+            if (!preg_match('/^' . preg_quote($term, '/') . '$/iu', (string)($item['Name'] ?? ''))) continue;
+            $type = strtolower((string)($item['Type'] ?? 'video'));
+            return [
+                'id'         => (string)($item['Id'] ?? ''),
+                'title'      => $this->sanitizeStr($this->buildJfTitle($item)),
+                'series'     => $type === 'episode' ? $this->sanitizeStr((string)($item['SeriesName'] ?? '')) : '',
+                'media_type' => match($type) { 'audio' => 'track', 'movie', 'episode' => $type, default => 'video' },
+            ];
+        }
+        return null;
+    }
+
+    private function fetchJfUserNames(array $srv): array
+    {
+        [$body, $code] = $this->httpGet($srv['url'] . '/Users', $this->mediaAuthHeaders($srv['type'], $srv['token']));
+        if ($body === null || $code < 200 || $code >= 300) return [];
+        $list = @json_decode($body, true);
+        if (!is_array($list)) return [];
+        $map = [];
+        foreach ($list as $u) {
+            $id = (string)($u['Id'] ?? '');
+            if ($id !== '') $map[$id] = $this->sanitizeStr((string)($u['Name'] ?? ''));
+        }
+        return $map;
+    }
+
+    private function fetchJfItems(array $srv, array $ids): array
+    {
+        $map = [];
+        foreach (array_chunk(array_values($ids), 50) as $chunk) {
+            $clean = array_filter($chunk, fn($id) => preg_match('/^[A-Za-z0-9-]{1,64}$/', $id));
+            if (empty($clean)) continue;
+            $url = $srv['url'] . '/Items?Ids=' . implode(',', $clean)
+                 . '&Fields=SeriesName,ParentIndexNumber,IndexNumber,AlbumArtist';
+            [$body, $code] = $this->httpGet($url, $this->mediaAuthHeaders($srv['type'], $srv['token']));
+            if ($body === null || $code < 200 || $code >= 300) continue;
+            $data = @json_decode($body, true);
+            foreach ($data['Items'] ?? [] as $item) {
+                if (!is_array($item)) continue;
+                $id = (string)($item['Id'] ?? '');
+                if ($id === '') continue;
+                $type = strtolower((string)($item['Type'] ?? 'video'));
+                $map[$id] = [
+                    'title'      => $this->sanitizeStr($this->buildJfTitle($item)),
+                    'series'     => $type === 'episode' ? $this->sanitizeStr((string)($item['SeriesName'] ?? '')) : '',
+                    'media_type' => match($type) { 'audio' => 'track', 'movie', 'episode' => $type, default => 'video' },
+                ];
+            }
+        }
+        return $map;
+    }
+
+    private function insertDownloads(\SQLite3 $db, array $srv, array $rows): void
+    {
+        $dup = $db->prepare("
+            SELECT 1 FROM download_history
+            WHERE server_index = :srv AND user = :user
+              AND ((:iid != '' AND item_id = :iid) OR (:iid = '' AND title = :title))
+              AND downloaded_at BETWEEN :from AND :to LIMIT 1
+        ");
+        $ins = $db->prepare("
+            INSERT OR IGNORE INTO download_history
+                (server_index, server_name, server_type, activity_id, user_id, user,
+                 item_id, title, series, media_type, device, downloaded_at)
+            VALUES
+                (:srv, :sname, :stype, :aid, :uid, :user, :iid, :title, :series, :mtype, :device, :at)
+        ");
+
+        $db->exec('BEGIN');
+        foreach ($rows as $r) {
+            // clients log the same file several times per download (range requests, android retries)
+            if ($r['item_id'] !== '' || $r['title'] !== '') {
+                $dup->reset();
+                $dup->bindValue(':srv',   (int)$srv['index'], SQLITE3_INTEGER);
+                $dup->bindValue(':user',  $r['user'],    SQLITE3_TEXT);
+                $dup->bindValue(':iid',   $r['item_id'], SQLITE3_TEXT);
+                $dup->bindValue(':title', $r['title'],   SQLITE3_TEXT);
+                $dup->bindValue(':from',  $r['at'] - self::DL_DEDUP_SEC, SQLITE3_INTEGER);
+                $dup->bindValue(':to',    $r['at'] + self::DL_DEDUP_SEC, SQLITE3_INTEGER);
+                if ($dup->execute()->fetchArray(SQLITE3_NUM)) continue;
+            }
+
+            $ins->reset();
+            $ins->bindValue(':srv',    (int)$srv['index'], SQLITE3_INTEGER);
+            $ins->bindValue(':sname',  $srv['name'],  SQLITE3_TEXT);
+            $ins->bindValue(':stype',  $srv['type'],  SQLITE3_TEXT);
+            $ins->bindValue(':aid',    $r['activity_id'], SQLITE3_INTEGER);
+            $ins->bindValue(':uid',    $r['user_id'], SQLITE3_TEXT);
+            $ins->bindValue(':user',   $r['user'],       SQLITE3_TEXT);
+            $ins->bindValue(':iid',    $r['item_id'],    SQLITE3_TEXT);
+            $ins->bindValue(':title',  $r['title'],      SQLITE3_TEXT);
+            $ins->bindValue(':series', $r['series'],     SQLITE3_TEXT);
+            $ins->bindValue(':mtype',  $r['media_type'], SQLITE3_TEXT);
+            $ins->bindValue(':device', $r['device'], SQLITE3_TEXT);
+            $ins->bindValue(':at',     $r['at'], SQLITE3_INTEGER);
+            $ins->execute();
+        }
+        $db->exec('COMMIT');
+        $dup->close();
+        $ins->close();
     }
 
     private function resolveGeoIps(\SQLite3 $db): void
@@ -1070,6 +1427,7 @@ final class StreamViewerEndpoint
             'get_top_media'   => fn() => $this->replyGetTopMedia(),
             'get_top_users'   => fn() => $this->replyGetTopUsers(),
             'get_history'     => fn() => $this->replyGetHistory(),
+            'get_downloads'   => fn() => $this->replyGetDownloads(),
 
             'get_libraries'      => fn() => $this->replyGetLibraries(),
             'get_recently_added' => fn() => $this->replyGetRecentlyAdded(),
@@ -2279,6 +2637,123 @@ final class StreamViewerEndpoint
             'avg_sec'    => $avgSec,
             'remote_pct' => $remotePct,
             'user_list'  => $userList,
+        ]);
+    }
+
+    // one call feeds the whole downloads tab: cards, both leaderboards and the table
+    private function replyGetDownloads(): void
+    {
+        $db = $this->openDb();
+        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+
+        $cutoff = $this->statsPeriodCutoff();
+        $server = (string)($_GET['server'] ?? '');
+        $user   = (string)($_GET['user'] ?? '');
+        $page    = max(1, (int)($_GET['page'] ?? 1));
+        $perPage = min(100, max(5, (int)($_GET['per_page'] ?? 10)));
+        if (!in_array($server, ['', 'jellyfin', 'emby'], true)) $server = '';
+        if (strlen($user) > 128) $user = '';
+
+        $where = 'downloaded_at >= :cutoff';
+        if ($server !== '') $where .= ' AND server_type = :server';
+        if ($user !== '')   $where .= ' AND user = :user';
+        $bind = function(\SQLite3Stmt $st) use ($cutoff, $server, $user) {
+            $st->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+            if ($server !== '') $st->bindValue(':server', $server, SQLITE3_TEXT);
+            if ($user !== '')   $st->bindValue(':user',   $user,   SQLITE3_TEXT);
+        };
+
+        $st = $db->prepare("
+            SELECT COUNT(*) AS total,
+                   COUNT(DISTINCT user_id) AS users,
+                   SUM(media_type = 'episode') AS episodes,
+                   SUM(media_type = 'movie')   AS movies
+            FROM download_history WHERE $where
+        ");
+        $bind($st);
+        $tot = $st->execute()->fetchArray(SQLITE3_ASSOC) ?: [];
+        $st->close();
+
+        $st = $db->prepare("
+            SELECT CASE WHEN series != '' THEN series ELSE title END AS name,
+                   media_type, COUNT(*) AS downloads, COUNT(DISTINCT user_id) AS users
+            FROM download_history WHERE $where AND title != ''
+            GROUP BY name ORDER BY downloads DESC LIMIT 5
+        ");
+        $bind($st);
+        $res = $st->execute();
+        $top = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $top[] = [
+                'title'      => $row['name'],
+                'media_type' => $row['media_type'],
+                'downloads'  => (int)$row['downloads'],
+                'users'      => (int)$row['users'],
+            ];
+        }
+        $st->close();
+
+        $st = $db->prepare("
+            SELECT user, COUNT(*) AS downloads,
+                   GROUP_CONCAT(DISTINCT server_type) AS servers,
+                   MAX(downloaded_at) AS last_at
+            FROM download_history WHERE $where
+            GROUP BY user ORDER BY downloads DESC LIMIT 5
+        ");
+        $bind($st);
+        $res = $st->execute();
+        $users = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $users[] = [
+                'user'      => $row['user'],
+                'downloads' => (int)$row['downloads'],
+                'servers'   => (string)$row['servers'],
+                'last_at'   => (int)$row['last_at'],
+            ];
+        }
+        $st->close();
+
+        $st = $db->prepare("
+            SELECT downloaded_at, user, title, server_type, server_name, device, media_type
+            FROM download_history WHERE $where
+            ORDER BY downloaded_at DESC LIMIT :limit OFFSET :offset
+        ");
+        $bind($st);
+        $st->bindValue(':limit',  $perPage, SQLITE3_INTEGER);
+        $st->bindValue(':offset', ($page - 1) * $perPage, SQLITE3_INTEGER);
+        $res = $st->execute();
+        $recent = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $recent[] = [
+                'at'          => (int)$row['downloaded_at'],
+                'user'        => $row['user'],
+                'title'       => $row['title'],
+                'server_type' => $row['server_type'],
+                'server_name' => $row['server_name'],
+                'device'      => $row['device'],
+                'media_type'  => $row['media_type'],
+            ];
+        }
+        $st->close();
+
+        $res = $db->query("SELECT DISTINCT user FROM download_history ORDER BY user COLLATE NOCASE");
+        $names = [];
+        while ($row = $res->fetchArray(SQLITE3_NUM)) $names[] = $row[0];
+
+        $this->json([
+            'totals' => [
+                'downloads' => (int)($tot['total'] ?? 0),
+                'users'     => (int)($tot['users'] ?? 0),
+                'episodes'  => (int)($tot['episodes'] ?? 0),
+                'movies'    => (int)($tot['movies'] ?? 0),
+            ],
+            'top_media' => $top,
+            'top_users' => $users,
+            'recent'    => $recent,
+            'user_names' => $names,
+            'page'      => $page,
+            'per_page'  => $perPage,
+            'pages'     => max(1, (int)ceil((int)($tot['total'] ?? 0) / $perPage)),
         ]);
     }
 

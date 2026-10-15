@@ -380,7 +380,7 @@ function loadHistory() {
                   + '<td><i class="fa ' + titleIcon + ' svt-title-icon" aria-hidden="true"></i> ' + esc(r.title) + '</td>'
                   + '<td>' + serverBadge(r.server_type) + '</td>'
                   + '<td>' + playBadge(r.play_type) + '</td>'
-                  + '<td style="font-size:.85rem;color:var(--svt-text-dim);">' + ipHtml + '</td>'
+                  + '<td>' + ipHtml + '</td>'
                   + '<td>' + esc(r.duration) + '</td>'
                   + '</tr>';
         }
@@ -473,6 +473,7 @@ var TAB_MAP = {
     svtTabLibraries:  'svtPanelLibraries',
     svtTabUsers:      'svtPanelUsers',
     svtTabHistory:    'svtPanelHistory',
+    svtTabDownloads:  'svtPanelDownloads',
     svtTabGraphs:     'svtPanelGraphs',
     svtTabAlerts:     'svtPanelAlerts',
 };
@@ -483,6 +484,8 @@ var _usersPeriod = '30d';
 var _histTabLoaded = false;
 var _histTabPage = 1;
 var _histTabPeriod = '30d';
+var _dlLoaded = false;
+var _dlPage = 1;
 var _graphsLoaded = false;
 var _graphsPeriod = '30d';
 var _graphCharts = {};
@@ -531,6 +534,11 @@ function switchTab(tabId) {
     if (tabId === 'svtTabHistory' && !_histTabLoaded) {
         _histTabLoaded = true;
         loadHistoryTab();
+    }
+
+    if (tabId === 'svtTabDownloads' && !_dlLoaded) {
+        _dlLoaded = true;
+        loadDownloads();
     }
 
     if (tabId === 'svtTabGraphs' && !_graphsLoaded) {
@@ -812,6 +820,93 @@ function histGetFilters() {
     };
 }
 
+function loadDownloads() {
+    var period = (document.getElementById('svt-dl-period') || {}).value || '30d';
+    var server = (document.getElementById('svt-dl-server') || {}).value || '';
+    var userEl = document.getElementById('svt-dl-user');
+    var user   = (userEl || {}).value || '';
+    var extra  = 'period=' + encodeURIComponent(period) + '&page=' + _dlPage + '&per_page=10';
+    if (server) extra += '&server=' + encodeURIComponent(server);
+    if (user)   extra += '&user='   + encodeURIComponent(user);
+
+    return fetchJson('get_downloads', extra).then(function(data) {
+        var t = data.totals || {};
+        var set = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = formatNumber(v || 0); };
+        set('svt-dl-total',    t.downloads);
+        set('svt-dl-users',    t.users);
+        set('svt-dl-episodes', t.episodes);
+        set('svt-dl-movies',   t.movies);
+
+        var el = document.getElementById('svt-dl-top-media');
+        var items = data.top_media || [];
+        var html = '';
+        if (el) {
+            for (var i = 0; i < items.length; i++) {
+                var m = items[i];
+                html += '<div class="svt-list-item">'
+                      + '<div class="svt-media-icon" style="background:' + (MEDIA_COLORS[m.media_type] || MEDIA_COLOR_DEFAULT) + ';color:#fff;"><i class="fa ' + mediaTypeIcon(m.media_type) + '" aria-hidden="true"></i></div>'
+                      + '<div class="svt-list-item__info">'
+                      +   '<div class="svt-list-item__name" title="' + esc(m.title) + '">' + esc(m.title) + '</div>'
+                      +   '<div class="svt-list-item__meta">' + m.downloads + ' downloads &middot; ' + m.users + ' users</div>'
+                      + '</div>'
+                      + '<div class="svt-list-item__hours">' + m.downloads + '</div>'
+                      + '</div>';
+            }
+            el.innerHTML = html || '<div class="svt-list__empty">No data yet</div>';
+        }
+
+        el = document.getElementById('svt-dl-top-users');
+        items = data.top_users || [];
+        html = '';
+        if (el) {
+            for (var j = 0; j < items.length; j++) {
+                var u = items[j];
+                var servers = (u.servers || '').split(',').map(function(x) {
+                    x = x.trim();
+                    return '<span style="color:' + (SERVER_COLORS[x] || '#999') + ';">' + esc(x.charAt(0).toUpperCase() + x.slice(1)) + '</span>';
+                }).join(' + ');
+                html += '<div class="svt-list-item">'
+                      + '<div class="svt-avatar" style="background:' + AVATAR_COLORS[j % AVATAR_COLORS.length] + ';">' + esc(userInitials(u.user)) + '</div>'
+                      + '<div class="svt-list-item__info">'
+                      +   '<div class="svt-list-item__name" title="' + esc(u.user) + '">' + esc(u.user) + '</div>'
+                      +   '<div class="svt-list-item__meta">' + servers + ' &middot; last ' + esc(timeAgo(u.last_at)) + '</div>'
+                      + '</div>'
+                      + '<div class="svt-list-item__hours">' + u.downloads + '</div>'
+                      + '</div>';
+            }
+            el.innerHTML = html || '<div class="svt-list__empty">No data yet</div>';
+        }
+
+        var body = document.getElementById('svt-dl-body');
+        var rows = data.recent || [];
+        html = '';
+        if (body) {
+            for (var k = 0; k < rows.length; k++) {
+                var r = rows[k];
+                html += '<tr>'
+                      + '<td>' + esc(formatDate(r.at)) + '</td>'
+                      + '<td>' + esc(r.user) + '</td>'
+                      + '<td title="' + esc(r.title) + '">' + esc(r.title || 'Unknown') + '</td>'
+                      + '<td title="' + esc(r.server_name) + '">' + serverBadge(r.server_type) + '</td>'
+                      + '<td>' + esc(r.device || '—') + '</td>'
+                      + '</tr>';
+            }
+            body.innerHTML = html || '<tr><td colspan="5" class="svt-table__empty">No downloads in this period</td></tr>';
+        }
+        renderPagerFooter('svt-dl-footer', 'dlpage', data.page || 1, data.pages || 1, t.downloads || 0, data.per_page || 10);
+
+        // the user list is rebuilt from the full table, so a filtered reply never drops names
+        if (userEl && data.user_names) {
+            var names = data.user_names;
+            var opts = '<option value="">All users</option>';
+            for (var n = 0; n < names.length; n++) {
+                opts += '<option value="' + esc(names[n]) + '"' + (names[n] === user ? ' selected' : '') + '>' + esc(names[n]) + '</option>';
+            }
+            userEl.innerHTML = opts;
+        }
+    });
+}
+
 function loadHistoryTab() {
     var f = histGetFilters();
     var extra = 'page=' + _histTabPage + '&per_page=10'
@@ -885,7 +980,7 @@ function loadHistoryTab() {
             html += '<td><i class="fa ' + titleIcon + ' svt-title-icon" aria-hidden="true"></i> ' + esc(r.title) + '</td>';
             html += '<td>' + serverBadge(r.server_type) + '</td>';
             html += '<td>' + playBadge(r.play_type) + '</td>';
-            html += '<td style="font-size:.85rem;color:var(--svt-text-dim);">' + ipHtml + '</td>';
+            html += '<td>' + ipHtml + '</td>';
             html += '<td style="font-weight:500;">' + esc(r.duration) + '</td>';
             html += '</tr>';
         }
@@ -896,7 +991,11 @@ function loadHistoryTab() {
 }
 
 function renderHistFooter(page, pages, total, perPage) {
-    var el = document.getElementById('svt-hist-footer');
+    renderPagerFooter('svt-hist-footer', 'histpage', page, pages, total, perPage);
+}
+
+function renderPagerFooter(elId, attr, page, pages, total, perPage) {
+    var el = document.getElementById(elId);
     if (!el) return;
 
     if (total === 0) { el.innerHTML = ''; return; }
@@ -907,16 +1006,16 @@ function renderHistFooter(page, pages, total, perPage) {
     var html = '<span class="svt-hist-footer__info">Showing ' + start + '-' + end + ' of ' + total + ' entries</span>';
     html += '<div class="svt-hist-footer__pages">';
 
-    html += '<button class="svt-page-btn" data-histpage="' + (page - 1) + '"' + (page <= 1 ? ' disabled' : '') + '>&laquo;</button>';
+    html += '<button class="svt-page-btn" data-' + attr + '="' + (page - 1) + '"' + (page <= 1 ? ' disabled' : '') + '>&laquo;</button>';
 
     var s = Math.max(1, page - 3);
     var e = Math.min(pages, s + 6);
     if (e - s < 6) s = Math.max(1, e - 6);
     for (var p = s; p <= e; p++) {
-        html += '<button class="svt-page-btn' + (p === page ? ' svt-page-btn--active' : '') + '" data-histpage="' + p + '">' + p + '</button>';
+        html += '<button class="svt-page-btn' + (p === page ? ' svt-page-btn--active' : '') + '" data-' + attr + '="' + p + '">' + p + '</button>';
     }
 
-    html += '<button class="svt-page-btn" data-histpage="' + (page + 1) + '"' + (page >= pages ? ' disabled' : '') + '>&raquo;</button>';
+    html += '<button class="svt-page-btn" data-' + attr + '="' + (page + 1) + '"' + (page >= pages ? ' disabled' : '') + '>&raquo;</button>';
     html += '</div>';
 
     el.innerHTML = html;
@@ -1651,6 +1750,35 @@ function init() {
             if (icon) icon.className = 'fa fa-fw fa-hourglass-half control';
             _histTabPage = 1;
             loadHistoryTab().always(function() {
+                if (icon) icon.className = 'fa fa-fw fa-refresh control';
+            });
+        });
+    }
+
+    var dlFilterIds = ['svt-dl-period', 'svt-dl-server', 'svt-dl-user'];
+    for (var df = 0; df < dlFilterIds.length; df++) {
+        var dlEl = document.getElementById(dlFilterIds[df]);
+        if (dlEl) dlEl.addEventListener('change', function() { _dlPage = 1; loadDownloads(); });
+    }
+
+    var dlFooter = document.getElementById('svt-dl-footer');
+    if (dlFooter) {
+        dlFooter.addEventListener('click', function(e) {
+            var btn = e.target.closest('[data-dlpage]');
+            if (!btn || btn.disabled) return;
+            var p = parseInt(btn.getAttribute('data-dlpage'), 10);
+            if (p && p > 0) { _dlPage = p; loadDownloads(); }
+        });
+    }
+
+    var dlRefreshBtn = document.getElementById('svt-dl-refresh-btn');
+    if (dlRefreshBtn) {
+        dlRefreshBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            var icon = dlRefreshBtn.querySelector('.fa');
+            if (icon) icon.className = 'fa fa-fw fa-hourglass-half control';
+            _dlPage = 1;
+            loadDownloads().always(function() {
                 if (icon) icon.className = 'fa fa-fw fa-refresh control';
             });
         });

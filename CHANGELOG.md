@@ -1,6 +1,17 @@
 
 # Stream Viewer
 
+## v2026.10.15
+
+### New
+- Downloads tab in the Stream Viewer tool: who downloaded what from Jellyfin and Emby, with totals, most downloaded titles, top downloaders and a paged list with server and user filters. Read from the server activity log once a minute, kept for as long as your watch history. Plex has no download log and is not included. Needs "Enable watch history".
+
+### Bug Fixes
+- Settings page: collapsed sections and server lists stayed open after leaving and coming back. The browser now remembers your choice.
+- Settings page: added space between "Sign in with Plex" and its info box.
+- Statistics: the IP column was smaller than the rest of the table. Now the same size.
+- Uninstall rewrote the root crontab even when it had nothing of ours in it. It is only touched if an entry from an old version is actually there. Other cron jobs were never affected.
+
 ## v2026.09.10
 
 ### Bug Fixes
@@ -12,6 +23,7 @@
 - Server names with an apostrophe or quote were shown as `&#039;` and similar. A name containing a backslash before a quote could also make the whole settings file unreadable, resetting everything on the next page load.
 - Searching the watch history for a title containing `%` or `_` always came back empty.
 - The Database path field was drawn as a bare underline instead of a box, and the hint under it now sits beside it like every other setting.
+- The background job that records history could be killed off in passing when the plugin was updated, and nothing brought it back until the array was restarted. Meanwhile live streams kept working normally, so there was no sign anything was wrong while history, Last stream and the graphs quietly stayed empty. It now runs detached from whatever started it.
 - Several setting descriptions were wrong. "Verify SSL certificates" said to turn it on for self-signed certificates when it is the opposite, "Show transcode info" and "Show technical details" did not match what they actually display, and "Anonymize IPs" only mentioned IPv4 although IPv6 is handled too.
 
 ### Security

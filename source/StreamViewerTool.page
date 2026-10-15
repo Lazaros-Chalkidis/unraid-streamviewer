@@ -92,6 +92,9 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_
     <div class="svt-tab" id="svtTabHistory" role="button" tabindex="0">
       <span class="svt-tabicon"><i class="fa fa-history" aria-hidden="true"></i></span> History
     </div>
+    <div class="svt-tab" id="svtTabDownloads" role="button" tabindex="0">
+      <span class="svt-tabicon"><i class="fa fa-download" aria-hidden="true"></i></span> Downloads
+    </div>
     <div class="svt-tab" id="svtTabGraphs" role="button" tabindex="0">
       <span class="svt-tabicon"><i class="fa fa-line-chart" aria-hidden="true"></i></span> Graphs
     </div>
@@ -573,6 +576,109 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_
           </div>
         <div class="svt-hist-footer" id="svt-hist-footer"></div>
       </div>
+
+    </div>
+    <div class="svt-tab-panel" id="svtPanelDownloads" style="display:none;">
+
+      <div class="svt-header">
+        <div class="svt-header__left">
+          <img src="/plugins/streamviewer/img/streamviewer.png" class="svt-header__icon" alt="">
+          <div>
+            <h2 class="svt-header__title">Downloads</h2>
+            <span class="svt-header__sub">Files downloaded from Jellyfin and Emby for offline use</span>
+          </div>
+        </div>
+        <div class="svt-header__right">
+          <div class="svt-header__icons">
+            <a href="#" id="svt-dl-refresh-btn" title="Refresh" aria-label="Refresh">
+              <i class="fa fa-fw fa-refresh control" aria-hidden="true"></i>
+            </a>
+            <a href="/Settings/StreamViewerSettings" title="Settings" aria-label="Settings">
+              <i class="fa fa-fw fa-cog control" aria-hidden="true"></i>
+            </a>
+          </div>
+          <select id="svt-dl-period" class="svt-select svt-select--sm" aria-label="Time period">
+            <option value="7d">Last 7 days</option>
+            <option value="30d" selected>Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+            <option value="180d">Last 180 days</option>
+            <option value="365d">Last 365 days</option>
+            <option value="all">All time</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="svt-cards">
+        <div class="svt-card">
+          <div class="svt-card__label">Downloads</div>
+          <div class="svt-card__value" id="svt-dl-total">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Unique users</div>
+          <div class="svt-card__value" id="svt-dl-users">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Episodes</div>
+          <div class="svt-card__value" id="svt-dl-episodes">&mdash;</div>
+        </div>
+        <div class="svt-card">
+          <div class="svt-card__label">Movies</div>
+          <div class="svt-card__value" id="svt-dl-movies">&mdash;</div>
+        </div>
+      </div>
+
+      <div class="svt-leaderboards">
+        <div class="svt-section svt-section--half">
+          <h3 class="svt-section__title">Most downloaded</h3>
+          <div class="svt-list" id="svt-dl-top-media">
+            <div class="svt-list__empty">No data</div>
+          </div>
+        </div>
+        <div class="svt-section svt-section--half">
+          <h3 class="svt-section__title">Top downloaders</h3>
+          <div class="svt-list" id="svt-dl-top-users">
+            <div class="svt-list__empty">No data</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="svt-section">
+        <div class="svt-section__header">
+          <h3 class="svt-section__title">Recent downloads</h3>
+          <div class="svt-filters">
+            <select id="svt-dl-server" class="svt-select svt-select--sm" aria-label="Filter by server">
+              <option value="">All servers</option>
+              <?php foreach ($svt_active_types as $t): if ($t === 'plex') continue; ?>
+              <option value="<?= htmlspecialchars($t) ?>"><?= htmlspecialchars($svt_type_labels[$t]) ?></option>
+              <?php endforeach; ?>
+            </select>
+            <select id="svt-dl-user" class="svt-select svt-select--sm" aria-label="Filter by user">
+              <option value="">All users</option>
+            </select>
+          </div>
+        </div>
+        <div class="svt-table-wrap">
+          <table class="svt-table" id="svt-dl-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>User</th>
+                <th>Title</th>
+                <th>Server</th>
+                <th>Device</th>
+              </tr>
+            </thead>
+            <tbody id="svt-dl-body">
+              <tr><td colspan="5" class="svt-table__empty">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="svt-hist-footer" id="svt-dl-footer"></div>
+      </div>
+
+      <?php if (in_array('plex', $svt_active_types, true)): ?>
+      <div class="svt-section svt-section--note">Plex does not keep a download log, so Plex servers are not included here.</div>
+      <?php endif; ?>
 
     </div>
     <div class="svt-tab-panel" id="svtPanelGraphs" style="display:none;">

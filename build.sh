@@ -217,7 +217,8 @@ if grep -qs mdState.*STARTED "$VARINI" 2>/dev/null; then
   if mountpoint -q /mnt/user 2>/dev/null; then
     CFG=/boot/config/plugins/&name;/&name;.cfg
     if grep -q STATS_ENABLED.*1 "$CFG" 2>/dev/null; then
-        nohup /usr/local/emhttp/plugins/&name;/include/streamviewer_poll.sh >/dev/null 2>/dev/null &amp;
+        # setsid, not nohup: nohup masks SIGHUP only, the daemon stays in the process group of whoever started it
+        setsid /usr/local/emhttp/plugins/&name;/include/streamviewer_poll.sh >/dev/null 2>/dev/null &lt;/dev/null &amp;
     fi
   fi
 fi
@@ -243,7 +244,9 @@ if [[ -f "$PIDFILE" ]]; then
 fi
 
 # Remove old cron entry (from previous versions)
-sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root 2>/dev/null
+if grep -q "streamviewer_cron" /var/spool/cron/crontabs/root 2>/dev/null; then
+    sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root
+fi
 
 # read the user choice before anything is deleted
 CFG=/boot/config/plugins/&name;/&name;.cfg

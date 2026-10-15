@@ -47,7 +47,7 @@ function sv_manage_poll(bool $statsEnabled): void
 
     if ($statsEnabled && $pid === 0) {
         @chmod($script, 0755);
-        exec('nohup ' . escapeshellarg($script) . ' >/dev/null 2>&1 &');
+        exec('setsid ' . escapeshellarg($script) . ' >/dev/null 2>&1 </dev/null &');
     } elseif (!$statsEnabled && $pid > 0) {
         @exec('kill ' . (int)$pid);
         @unlink($pidFile);
@@ -621,7 +621,7 @@ $lightClass   = $sv_light ? ' sv-light' : '';
             <div class="sv-r-label">Enable watch history</div>
             <div class="sv-r-field">
               <?= $toggle('STATS_ENABLED', $cfg['STATS_ENABLED'] ?? '0', '0') ?>
-              <span class="sv-r-desc">Record to local SQLite</span>
+              <span class="sv-r-desc">Record plays and downloads to local SQLite</span>
             </div>
           </div>
           <div class="sv-r">
@@ -1490,9 +1490,18 @@ function testJellyfinServer() {
 
 var SV_ACCORDIONS = { plex: 'svPlexServersAccordion', jellyfin: 'svJfServersAccordion', emby: 'svEmbyServersAccordion' };
 
+// open/closed state survives page changes, the server default only applies the first time
+function svFoldPref(id, closed) {
+    try {
+        if (closed === undefined) { var v = localStorage.getItem('sv-fold-' + id); return v === null ? null : v === '1'; }
+        localStorage.setItem('sv-fold-' + id, closed ? '1' : '0');
+    } catch (e) {}
+    return null;
+}
+
 function openAccordion(type) {
     var acc = document.getElementById(SV_ACCORDIONS[type] || '');
-    if (acc) acc.classList.remove('sv-accordion--collapsed');
+    if (acc) { acc.classList.remove('sv-accordion--collapsed'); svFoldPref(acc.id, false); }
 }
 
 function normUrl(u) {
@@ -1942,15 +1951,25 @@ function resetDefaults() {
     ['svPlexServersAccordionHd','svJfServersAccordionHd','svEmbyServersAccordionHd'].forEach(function(hdId) {
         var hd = document.getElementById(hdId);
         if (!hd) return;
+        var acc0 = hd.closest('.sv-accordion');
+        var saved = acc0 ? svFoldPref(acc0.id) : null;
+        if (saved !== null) acc0.classList.toggle('sv-accordion--collapsed', saved);
         hd.addEventListener('click', function() {
             var acc = this.closest('.sv-accordion');
-            if (acc) acc.classList.toggle('sv-accordion--collapsed');
+            if (!acc) return;
+            acc.classList.toggle('sv-accordion--collapsed');
+            svFoldPref(acc.id, acc.classList.contains('sv-accordion--collapsed'));
         });
     });
 
     document.querySelectorAll('.sv-sec-hd').forEach(function(hd) {
+        var sec0 = hd.closest('.sv-sec');
+        var saved = sec0 && sec0.id ? svFoldPref(sec0.id) : null;
+        if (saved !== null) sec0.classList.toggle('closed', saved);
         hd.addEventListener('click', function() {
-            this.closest('.sv-sec').classList.toggle('closed');
+            var sec = this.closest('.sv-sec');
+            sec.classList.toggle('closed');
+            if (sec.id) svFoldPref(sec.id, sec.classList.contains('closed'));
         });
     });
 

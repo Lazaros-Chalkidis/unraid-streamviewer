@@ -31,6 +31,7 @@ kill_stale_poll() {
     CFG=/boot/config/plugins/streamviewer/streamviewer.cfg
     if grep -q 'STATS_ENABLED="1"' "$CFG" 2>/dev/null; then
         kill_stale_poll
-        nohup /usr/local/emhttp/plugins/streamviewer/include/streamviewer_poll.sh >/dev/null 2>/dev/null &
+        # setsid gives the daemon its own process group, a group signal to the caller no longer takes it down
+        setsid /usr/local/emhttp/plugins/streamviewer/include/streamviewer_poll.sh >/dev/null 2>/dev/null </dev/null &
     fi
 ) &

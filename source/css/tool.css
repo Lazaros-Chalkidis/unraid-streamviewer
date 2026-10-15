@@ -272,6 +272,7 @@
   margin-bottom: 1rem;
 }
 .svt-section--half { margin-bottom: 0; }
+.svt-section--note { padding: 10px 14px; font-size: .9rem; color: var(--svt-text-dim); }
 
 .svt-list {
   display: flex;
