@@ -28,6 +28,7 @@ function _hasServerType(t) {
     }
     return false;
 }
+var _hasDownloads = _hasServerType('jellyfin') || _hasServerType('emby');  // plex never logs downloads
 
 var _chartColors = _light ? {
     tooltipBg:    '#ffffff',
@@ -785,14 +786,23 @@ function loadUserStats() {
                 var r = parseInt(avatarColor.slice(1,3),16), g = parseInt(avatarColor.slice(3,5),16), b = parseInt(avatarColor.slice(5,7),16);
                 tint = 'background:rgba(' + r + ',' + g + ',' + b + ',.06);';
             }
-            html += '<div class="svt-user-stats">';
+            html += '<div class="svt-user-stats' + (_hasDownloads ? ' svt-user-stats--dl' : '') + '">';
             html += '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val">' + formatNumber(u.plays) + '</div><div class="svt-user-stat__label">Plays</div></div>';
             html += '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val">' + formatNumber(u.hours) + '<span class="svt-unit">h</span></div><div class="svt-user-stat__label">Watch time</div></div>';
             html += '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val" style="color:#c0392b;">' + formatNumber(media.movie || 0) + '</div><div class="svt-user-stat__label">Movies</div></div>';
             html += '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val" style="color:#2980b9;">' + formatNumber(media.episode || 0) + '</div><div class="svt-user-stat__label">Episodes</div></div>';
+            if (_hasDownloads) {
+                // a plex-only user gets a dash, plex never logs downloads
+                var plexOnly = serverParts.length === 1 && serverParts[0].trim() === 'plex';
+                html += plexOnly
+                    ? '<div class="svt-user-stat" style="' + tint + '" title="Plex does not log downloads"><div class="svt-user-stat__val" style="color:var(--svt-text-dim);">\u2014</div><div class="svt-user-stat__label">Downloads</div></div>'
+                    : '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val" style="color:#27ae60;">' + formatNumber(u.downloads || 0) + '</div><div class="svt-user-stat__label">Downloads</div></div>';
+            }
             html += '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val svt-user-stat__val--device">' + esc(u.last_device || '\u2014') + '</div><div class="svt-user-stat__label">Device</div></div>';
             html += '</div>';
 
+            // a download-only user has no plays, the bar would show 100% transcode out of nothing
+            if (dp + ds + tc > 0) {
             html += '<div class="svt-user-pt">';
             html += '<span class="svt-user-pt__label">Play types:</span>';
             html += '<div class="svt-user-pt__bar">';
@@ -802,6 +812,7 @@ function loadUserStats() {
             html += '</div>';
             html += '<span class="svt-user-pt__summary">' + ptSummary + '</span>';
             html += '</div>';
+            }
 
             html += '</div>';
         }

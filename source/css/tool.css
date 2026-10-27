@@ -558,6 +558,7 @@
   gap: .6rem;
   margin-bottom: .75rem;
 }
+.svt-user-stats--dl { grid-template-columns: repeat(6, 1fr); }
 .svt-user-stat {
   background: var(--svt-surface2);
   border-radius: var(--svt-radius);
@@ -589,7 +590,8 @@
 .svt-user-pt__summary { font-size: .9rem; color: var(--svt-text-dim); flex-shrink: 0; }
 
 @media (max-width: 700px) {
-  .svt-user-stats { grid-template-columns: repeat(3, 1fr); }
+  .svt-user-stats,
+  .svt-user-stats--dl { grid-template-columns: repeat(3, 1fr); }
 }
 
 /* history tab */

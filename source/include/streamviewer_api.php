@@ -232,6 +232,9 @@ final class StreamViewerEndpoint
                         UNION
                         SELECT DISTINCT server_type FROM active_sessions
                         WHERE server_type IS NOT NULL AND server_type != ''
+                        UNION
+                        SELECT DISTINCT server_type FROM download_history
+                        WHERE server_type IS NOT NULL AND server_type != ''
                     ");
                     if ($res !== false) {
                         while ($r = $res->fetchArray(SQLITE3_NUM)) {
@@ -2858,9 +2861,58 @@ final class StreamViewerEndpoint
                 'is_active'      => $isActive,
                 'media'          => $mediaBreakdown,
                 'play_types'     => $playBreakdown,
+                'downloads'      => 0,
             ];
         }
         $stmt->close();
+
+        // downloads join by user name, a download-only user gets a card with zero plays
+        $dl = $db->prepare("
+            SELECT user, COUNT(*) AS cnt, MAX(downloaded_at) AS last_at,
+                   GROUP_CONCAT(DISTINCT server_type) AS servers
+            FROM download_history WHERE downloaded_at >= :cutoff
+            GROUP BY user
+        ");
+        $dl->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $dlRes = $dl->execute();
+        $byName = [];
+        foreach ($users as $i => $u) $byName[$u['user']] = $i;
+        while ($row = $dlRes->fetchArray(SQLITE3_ASSOC)) {
+            $name   = (string)$row['user'];
+            $lastAt = (int)$row['last_at'];
+            $devStmt = $db->prepare("SELECT device FROM download_history WHERE user = :user ORDER BY downloaded_at DESC LIMIT 1");
+            $devStmt->bindValue(':user', $name, SQLITE3_TEXT);
+            $device = (string)($devStmt->execute()->fetchArray(SQLITE3_NUM)[0] ?? '');
+            $devStmt->close();
+
+            if (isset($byName[$name])) {
+                $u = &$users[$byName[$name]];
+                $u['downloads'] = (int)$row['cnt'];
+                if ($lastAt > $u['last_seen']) {
+                    $u['last_seen'] = $lastAt;
+                    if ($device !== '') $u['last_device'] = $device;
+                }
+                $srv = array_unique(array_filter(array_merge(explode(',', $u['servers']), explode(',', (string)$row['servers']))));
+                $u['servers'] = implode(',', $srv);
+                unset($u);
+                continue;
+            }
+            $users[] = [
+                'user'        => $name,
+                'plays'       => 0,
+                'hours'       => 0,
+                'servers'     => (string)$row['servers'],
+                'last_seen'   => $lastAt,
+                'last_ip'     => '',
+                'last_device' => $device,
+                'is_local'    => true,
+                'is_active'   => false,
+                'media'       => ['movie' => 0, 'episode' => 0, 'track' => 0],
+                'play_types'  => ['direct_play' => 0, 'direct_stream' => 0, 'transcode' => 0],
+                'downloads'   => (int)$row['cnt'],
+            ];
+        }
+        $dl->close();
 
         $totalUsers = count($users);
         $totalPlays = 0;

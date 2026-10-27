@@ -1,6 +1,11 @@
 
 # Stream Viewer
 
+## v2026.10.27
+
+### Improvements
+- Users tab now includes downloads. Each user card has a Downloads count, and users who only download, without ever streaming, now get a card too. Last seen and Device also take downloads into account. Plex has no download log, so Plex-only users show a dash and Plex-only setups do not get the extra tile at all. (GitHub #6)
+
 ## v2026.10.15
 
 ### New
