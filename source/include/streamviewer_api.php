@@ -23,6 +23,7 @@ final class StreamViewerEndpoint
     private const CACHE_DIR            = '/tmp/streamviewer_cache';
     private const NONCE_FILE           = '/tmp/streamviewer_cache/nonce';
     private const NONCE_TTL            = 14400;
+    private const NONCE_RENEW          = 300;
     private const RATE_LIMIT_FILE      = '/tmp/streamviewer_cache/rl';
     private const RATE_LIMIT_MAX       = 120;
     private const MICRO_CACHE_MS       = 2000;
@@ -32,13 +33,18 @@ final class StreamViewerEndpoint
     private const THUMB_MAX_BYTES      = 5 * 1024 * 1024;
 
     private const REDISCOVER_AFTER     = 3;
+    private const SLOW_AFTER_SEC       = 2;
+    private const SLOW_SKIP_SEC        = 30;
     private const DOCKER_SOCKET        = '/var/run/docker.sock';
 
     private const STATS_DB_NAME        = 'streamviewer.db';
+    private const STATS_STATE          = '/tmp/streamviewer_cache/stats_state.json';
     private const STATS_DEFAULT_PATH   = '/mnt/user/appdata/Stream-Viewer';
     private const STATS_RETENTION_DAYS = 90;
     private const STATS_PRUNE_CHANCE   = 50;
-    private const STATS_SCHEMA_VER     = 8;
+    private const STATS_SCHEMA_VER     = 9;
+    private const STATS_SHORT_PLAY     = 120;
+    private const STATS_DOWN_GRACE     = 600;
     private const STATS_BUSY_TIMEOUT   = 3000;
     private const STATS_MERGE_WINDOW_DEFAULT_MIN = 60;
     private const STATS_MERGE_WINDOW_MAX_MIN     = 1440;
@@ -60,7 +66,6 @@ final class StreamViewerEndpoint
         $this->verifySsl = (($this->loadCfg()['VERIFY_SSL'] ?? '0') === '1');
     }
 
-    // called by the poll daemon, records active sessions into the stats db
     public function cronPoll(): int
     {
         $cfg = $this->loadCfg();
@@ -70,11 +75,36 @@ final class StreamViewerEndpoint
         $servers = $this->getEnabledServers($cfg);
         if (empty($servers)) return 0;
 
-        $results  = $this->fetchAllSessionsParallel($servers);
+        [$sessions, $down] = $this->collectSessions($servers, $this->fetchAllSessionsParallel($servers));
+
+        try { $this->recordSessions($sessions, $down); } catch (\Throwable $e) {  }
+
+        if (($cfg['STATS_GEO_LOOKUP'] ?? '0') === '1' && !empty($this->statsState()['geo']) && ($db = $this->openDb()) !== null) {
+            try { $this->resolveGeoIps($db); } catch (\Throwable $e) {  }
+            $this->saveStatsState($db, false);
+        }
+        try { $this->recordDownloads($servers); } catch (\Throwable $e) {  }
+
+        return count($sessions);
+    }
+
+    public function headerCount(): int
+    {
+        $servers    = $this->getEnabledServers($this->loadCfg());
+        [$sessions] = $this->collectSessions($servers, $this->fetchAllSessionsParallel($servers, false));
+        $this->cachePut(self::CACHE_DIR . '/header_count', (string)count($sessions));
+        return count($sessions);
+    }
+
+    private function collectSessions(array $servers, array $results): array
+    {
         $sessions = [];
+        $down     = [];
         $seen     = [];
         foreach ($results as $i => $result) {
-            $srv    = $servers[$i] ?? [];
+            $srv = $servers[$i] ?? [];
+            if (!($result['ok'] ?? false)) $down[($srv['name'] ?? '') . "\0" . ($srv['type'] ?? '')] = true;
+
             $srvUrl = rtrim((string)($srv['url'] ?? ''), '/');
             foreach ($result['sessions'] ?? [] as $s) {
                 $type = (string)($s['server_type'] ?? '');
@@ -86,16 +116,7 @@ final class StreamViewerEndpoint
                 $sessions[] = $s;
             }
         }
-
-        $this->recordSessions($sessions);
-
-        $db = $this->openDb();
-        if ($db !== null) {
-            try { $this->resolveGeoIps($db); } catch (\Throwable $e) {  }
-            try { $this->recordDownloads($db, $servers); } catch (\Throwable $e) {  }
-        }
-
-        return count($sessions);
+        return [$sessions, $down];
     }
 
     private function loadCfg(): array
@@ -108,20 +129,23 @@ final class StreamViewerEndpoint
 
     public static function serverName($v, string $fallback = ''): string
     {
-        $v = html_entity_decode(trim((string)$v), ENT_QUOTES, 'UTF-8');  // older versions stored the name html escaped
-        $v = preg_replace('/[\x00-\x1F\x7F]/', '', $v);
-        $v = str_replace('${', '{', $v);  // parse_ini_file expands ${VAR} out of the environment
+        $v = (string)$v;
+        do {
+            $prev = $v;
+            $v = html_entity_decode($v, ENT_QUOTES, 'UTF-8');
+            $v = (string)preg_replace('/[\x00-\x1F\x7F<>]/', '', $v);
+            $v = str_replace('${', '{', $v);
+        } while ($v !== $prev);
+        $v = trim($v);
         $v = preg_replace('/^(.{0,64}).*/su', '$1', $v) ?? substr($v, 0, 64);
         return $v !== '' ? $v : $fallback;
     }
 
-    // parse_ini_file only treats \" as an escape, so a value ending in a backslash would swallow the closing quote
     public static function iniValue($v): string
     {
         return str_replace(['\\', '"'], ['\\\\', '\\"'], (string)$v);
     }
 
-    // the cfg lives on the usb flash, which wears out
     public static function writeCfgFile(string $ini): bool
     {
         if (@file_get_contents(self::CFG_FILE) === $ini) return true;
@@ -131,7 +155,6 @@ final class StreamViewerEndpoint
 
         $tmp = self::CFG_FILE . '.' . getmypid() . '.tmp';
         if (@file_put_contents($tmp, $ini, LOCK_EX) === false) return false;
-        // keep whatever mode the file already had, this one holds api tokens
         $mode = @fileperms(self::CFG_FILE);
         @chmod($tmp, $mode !== false ? ($mode & 0777) : 0600);
 
@@ -142,7 +165,6 @@ final class StreamViewerEndpoint
         return true;
     }
 
-    // four pages need this for cache busting, the fallbacks cover a half installed plugin
     public static function pluginVersion(): string
     {
         static $ver = null;
@@ -167,14 +189,17 @@ final class StreamViewerEndpoint
         return $ver;
     }
 
-    // appended to css and js urls, a plain filename keeps serving the previous release from cache
+    public static function lightTheme(): bool
+    {
+        $theme = parse_plugin_cfg('dynamix', true)['display']['theme'] ?? '';
+        return is_string($theme) && in_array(strtok($theme, '-'), ['white', 'azure'], true);
+    }
+
     public static function assetVer(): string
     {
         return '?v=' . rawurlencode(self::pluginVersion());
     }
 
-    // jellyfin 12 turns off the legacy methods, X-Emby-Token and api_key= both 401 there.
-    // emby is a separate product and still wants the old header, so the two are split.
     private function mediaAuthHeaders(string $type, string $token): array
     {
         if ($type === 'emby') {
@@ -189,17 +214,16 @@ final class StreamViewerEndpoint
         ];
     }
 
-    // the db path comes from the cfg, three call sites were checking it differently or not at all
     public static function statsDirOrNull($dir): ?string
     {
         $dir = rtrim(trim((string)$dir), '/');
         if ($dir === '') $dir = rtrim(self::STATS_DEFAULT_PATH, '/');
         if (strncmp($dir, '/mnt/', 5) !== 0) return null;
         if (strpos($dir, '..') !== false) return null;
+        if (preg_match('/[<>\x00-\x1F\x7F]/', $dir)) return null;
         return $dir;
     }
 
-    // only the server types the user actually configured, used to filter charts
     public static function activeServerTypes(): array
     {
         static $cached = null;
@@ -262,22 +286,86 @@ final class StreamViewerEndpoint
         if (($cfg['STATS_ENABLED'] ?? '0') !== '1') return null;
 
         $dir = self::statsDirOrNull($cfg['STATS_DB_PATH'] ?? '');
-        if ($dir === null) return null;
+        if ($dir === null || !self::onMountedDisk($dir)) return null;
 
         if (!is_dir($dir)) {
-
-            if (php_sapi_name() === 'cli') {
-                @mkdir($dir, 0700, true);
-                if (!is_dir($dir)) return null;
-            } else {
-                return null;
-            }
+            if (php_sapi_name() !== 'cli') return null;
+            @mkdir($dir, 0700, true);
+            if (!is_dir($dir)) return null;
         }
 
         return $dir;
     }
 
-    // web requests must not create the db: shares may not be mounted yet, only the cron/daemon does
+    public static function onMountedDisk(string $dir): bool
+    {
+        $best = '';
+        $type = '';
+        foreach ((array)@file('/proc/mounts', FILE_IGNORE_NEW_LINES) as $line) {
+            $f = explode(' ', (string)$line);
+            if (count($f) < 3) continue;
+            $mp = stripcslashes($f[1]);
+            if (strlen($mp) < strlen($best)) continue;
+            if ($dir === $mp || strncmp($dir, $mp . '/', strlen($mp) + 1) === 0) {
+                $best = $mp;
+                $type = $f[2];
+            }
+        }
+        return strncmp($best, '/mnt/', 5) === 0 && !in_array($type, ['tmpfs', 'ramfs', 'rootfs'], true);
+    }
+
+    private function statsDbFile(): ?string
+    {
+        $cfg = $this->loadCfg();
+        if (($cfg['STATS_ENABLED'] ?? '0') !== '1') return null;
+        $dir = self::statsDirOrNull($cfg['STATS_DB_PATH'] ?? '');
+        return $dir === null ? null : $dir . '/' . self::STATS_DB_NAME;
+    }
+
+    private function statsState(): ?array
+    {
+        $file = $this->statsDbFile();
+        if ($file === null) return null;
+        $st = @json_decode((string)@file_get_contents(self::STATS_STATE), true);
+        return (is_array($st) && ($st['db'] ?? '') === $file) ? $st : null;
+    }
+
+    private function saveStatsState(\SQLite3 $db, ?bool $geo = null): void
+    {
+        $prev = $this->statsState();
+        $last = @$db->querySingle("SELECT user, title, ended_at FROM watch_history ORDER BY ended_at DESC LIMIT 1", true);
+        if (!$last || (int)($last['ended_at'] ?? 0) <= 0) {
+            $last = @$db->querySingle("SELECT user, title, last_seen AS ended_at FROM active_sessions ORDER BY last_seen DESC LIMIT 1", true);
+        }
+        $json = (string)json_encode([
+            'db'     => (string)$this->statsDbFile(),
+            'active' => (int)@$db->querySingle("SELECT COUNT(*) FROM active_sessions"),
+            'last'   => $last ?: null,
+            'geo'    => $geo ?? (bool)($prev['geo'] ?? true),
+        ]);
+        if ($json !== (string)@file_get_contents(self::STATS_STATE)) $this->cachePut(self::STATS_STATE, $json);
+    }
+
+    private function lastActivity(): ?array
+    {
+        $la = $this->statsState()['last'] ?? null;
+        if (!is_array($la) || (int)($la['ended_at'] ?? 0) <= 0) return null;
+
+        $ago = max(0, time() - (int)$la['ended_at']);
+        if ($ago >= 86400 * 30) return null;
+
+        if ($ago < 60)        $agoStr = $ago . 's ago';
+        elseif ($ago < 3600)  $agoStr = floor($ago / 60) . 'm ago';
+        elseif ($ago < 86400) $agoStr = floor($ago / 3600) . 'h ago';
+        else                  $agoStr = floor($ago / 86400) . 'd ago';
+
+        return [
+            'user'  => (string)($la['user'] ?? ''),
+            'title' => (string)($la['title'] ?? ''),
+            'ago'   => $agoStr,
+        ];
+    }
+
     private function openDb(): ?\SQLite3
     {
         if ($this->db !== null) return $this->db;
@@ -286,7 +374,6 @@ final class StreamViewerEndpoint
         if ($dir === null) return null;
 
         $dbFile = $dir . '/' . self::STATS_DB_NAME;
-        $isNew  = !is_file($dbFile);
 
         try {
             $db = new \SQLite3($dbFile);
@@ -295,19 +382,33 @@ final class StreamViewerEndpoint
         }
 
         $db->busyTimeout(self::STATS_BUSY_TIMEOUT);
+        if (@$db->querySingle('SELECT COUNT(*) FROM sqlite_master') === false) {
+            @$db->close();
+            return null;
+        }
         $db->exec('PRAGMA journal_mode = WAL');
         $db->exec('PRAGMA synchronous  = NORMAL');
         $db->exec('PRAGMA foreign_keys = OFF');
 
-        @chmod($dbFile, 0600);
+        if ((@fileperms($dbFile) & 0777) !== 0600) @chmod($dbFile, 0600);
 
-        if ($isNew) {
+        if (!@$db->querySingle("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'watch_history'")) {
             $this->statsCreateBaseTables($db);
         }
 
         $this->runMigrations($db);
 
         $this->db = $db;
+        return $db;
+    }
+
+    private function statsDb(): \SQLite3
+    {
+        $db = $this->openDb();
+        if ($db === null) {
+            $on = ($this->loadCfg()['STATS_ENABLED'] ?? '0') === '1';
+            $this->json(['error' => $on ? 'The statistics database is not available' : 'Stats not enabled'], 400);
+        }
         return $db;
     }
 
@@ -320,7 +421,8 @@ final class StreamViewerEndpoint
 
     private function setSchemaVersion(\SQLite3 $db, int $ver): void
     {
-        $stmt = $db->prepare("INSERT OR REPLACE INTO sv_meta(key,val) VALUES('schema_version', :ver)");
+        $stmt = @$db->prepare("INSERT OR REPLACE INTO sv_meta(key,val) VALUES('schema_version', :ver)");
+        if ($stmt === false) return;
         $stmt->bindValue(':ver', (string)$ver, SQLITE3_TEXT);
         $stmt->execute();
     }
@@ -435,7 +537,6 @@ final class StreamViewerEndpoint
         $db->exec("CREATE INDEX IF NOT EXISTS idx_dl_user ON download_history(user, downloaded_at)");
     }
 
-    // bump the schema one version at a time so existing dbs upgrade cleanly
     private function runMigrations(\SQLite3 $db): void
     {
 
@@ -560,7 +661,6 @@ final class StreamViewerEndpoint
             },
 
             7 => function(\SQLite3 $db) {
-                // older builds stored jellyfin/emby music as "audio", stats key on "track"
                 @$db->exec("UPDATE watch_history  SET media_type = 'track' WHERE media_type = 'audio'");
                 @$db->exec("UPDATE active_sessions SET media_type = 'track' WHERE media_type = 'audio'");
             },
@@ -568,12 +668,28 @@ final class StreamViewerEndpoint
             8 => function(\SQLite3 $db) {
                 $this->createDownloadTable($db);
             },
+
+            9 => function(\SQLite3 $db) {
+                foreach ([
+                    "ALTER TABLE active_sessions ADD COLUMN paused_sec INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE watch_history ADD COLUMN short_plays INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE watch_history ADD COLUMN short_sec INTEGER NOT NULL DEFAULT 0",
+                ] as $sql) {
+                    if (!@$db->exec($sql) && stripos($db->lastErrorMsg(), 'duplicate column') === false) {
+                        throw new \RuntimeException('schema 9');
+                    }
+                }
+                @$db->exec("UPDATE watch_history SET short_plays = 1, short_sec = duration_sec
+                            WHERE short_plays = 0 AND duration_sec > 0 AND duration_sec < " . self::STATS_SHORT_PLAY);
+            },
         ];
 
         foreach ($migrations as $ver => $fn) {
             if ($currentVer < $ver) {
                 try {
                     $fn($db);
+                } catch (\RuntimeException $e) {
+                    return;
                 } catch (\Throwable $e) {
 
                 }
@@ -582,9 +698,11 @@ final class StreamViewerEndpoint
         }
     }
 
-    // a session that ended gets merged into a recent matching row if one exists, otherwise inserted
-    private function recordSessions(array $sessions): void
+    private function recordSessions(array $sessions, array $down = []): void
     {
+        $state = $this->statsState();
+        if (empty($sessions) && $state !== null && (int)($state['active'] ?? 1) === 0) return;
+
         $db = $this->openDb();
         if ($db === null) return;
 
@@ -592,9 +710,8 @@ final class StreamViewerEndpoint
         $cfg = $this->loadCfg();
         $anonymize = (($cfg['STATS_ANONYMIZE_IP'] ?? '0') === '1');
 
-        $minDurationSec = 30;  // ignore anything shorter, it's usually an accidental tap
+        $minDurationSec = 30;
 
-        // pause/resume on the server makes a new session_id, so collapse them back within this window
         $mergeWindowMin = (int)($cfg['STATS_MERGE_WINDOW_MIN'] ?? self::STATS_MERGE_WINDOW_DEFAULT_MIN);
         if ($mergeWindowMin < 0) $mergeWindowMin = 0;
         if ($mergeWindowMin > self::STATS_MERGE_WINDOW_MAX_MIN) $mergeWindowMin = self::STATS_MERGE_WINDOW_MAX_MIN;
@@ -618,6 +735,7 @@ final class StreamViewerEndpoint
                 VALUES (:sk, :sid, :user, :title, :mt, :sn, :st, :pt, :ip, :dev,
                         :qual, :bw, :dur, :prog, :now, :now, :sres, :mdur)
                 ON CONFLICT(session_key) DO UPDATE SET
+                    paused_sec  = paused_sec + CASE WHEN :paused = 1 THEN MAX(0, :now - last_seen) ELSE 0 END,
                     progress_ms = :prog,
                     duration_ms = :dur,
                     last_seen   = :now,
@@ -644,6 +762,7 @@ final class StreamViewerEndpoint
             $stmt->bindValue(':now',   $now,                                    SQLITE3_INTEGER);
             $stmt->bindValue(':sres',  (string)($s['stream_resolution'] ?? ''), SQLITE3_TEXT);
             $stmt->bindValue(':mdur',  (int)($s['duration_ms'] ?? 0),           SQLITE3_INTEGER);
+            $stmt->bindValue(':paused', ($s['state'] ?? '') === 'paused' ? 1 : 0, SQLITE3_INTEGER);
             $stmt->execute();
             $stmt->close();
         }
@@ -653,9 +772,10 @@ final class StreamViewerEndpoint
             INSERT INTO watch_history
                 (session_key, user, title, media_type, server_name, server_type,
                  play_type, ip_address, device, quality, bandwidth_kbps,
-                 duration_sec, started_at, ended_at, stream_resolution, media_duration_ms)
+                 duration_sec, started_at, ended_at, stream_resolution, media_duration_ms,
+                 short_plays, short_sec)
             VALUES (:sk, :user, :title, :mt, :sn, :st, :pt, :ip, :dev,
-                    :qual, :bw, :dur, :start, :end, :sres, :mdur)
+                    :qual, :bw, :dur, :start, :end, :sres, :mdur, :sp, :ss)
         ");
         $mergeFindStmt = ($mergeWindowSec > 0) ? $db->prepare("
             SELECT id, ended_at, duration_sec
@@ -670,6 +790,8 @@ final class StreamViewerEndpoint
         $mergeUpdStmt = ($mergeWindowSec > 0) ? $db->prepare("
             UPDATE watch_history
             SET duration_sec      = duration_sec + :extra,
+                short_plays       = short_plays + :sp,
+                short_sec         = short_sec + :ss,
                 ended_at          = :end,
                 play_type         = :pt,
                 quality           = :qual,
@@ -680,10 +802,13 @@ final class StreamViewerEndpoint
         ") : null;
         $delStmt = $db->prepare("DELETE FROM active_sessions WHERE session_key = :sk");
 
+        $closed = 0;
         while ($row = $ended->fetchArray(SQLITE3_ASSOC)) {
             if (isset($currentKeys[$row['session_key']])) continue;
+            if (isset($down[$row['server_name'] . "\0" . $row['server_type']])
+                && $now - (int)$row['last_seen'] < self::STATS_DOWN_GRACE) continue;
 
-            $durationSec = max(0, (int)$row['last_seen'] - (int)$row['first_seen']);
+            $durationSec = max(0, (int)$row['last_seen'] - (int)$row['first_seen'] - (int)($row['paused_sec'] ?? 0));
             if ($durationSec < $minDurationSec) {
 
                 $delStmt->bindValue(':sk', $row['session_key'], SQLITE3_TEXT);
@@ -692,6 +817,8 @@ final class StreamViewerEndpoint
                 continue;
             }
 
+            $closed++;
+            $short  = $durationSec < self::STATS_SHORT_PLAY ? 1 : 0;
             $merged = false;
             if ($mergeFindStmt !== null) {
                 $startedAt = (int)$row['first_seen'];
@@ -708,6 +835,8 @@ final class StreamViewerEndpoint
 
                 if ($cand) {
                     $mergeUpdStmt->bindValue(':extra', $durationSec,                            SQLITE3_INTEGER);
+                    $mergeUpdStmt->bindValue(':sp',    $short,                                  SQLITE3_INTEGER);
+                    $mergeUpdStmt->bindValue(':ss',    $short ? $durationSec : 0,               SQLITE3_INTEGER);
                     $mergeUpdStmt->bindValue(':end',   max((int)$cand['ended_at'], $endedAt),   SQLITE3_INTEGER);
                     $mergeUpdStmt->bindValue(':pt',    (string)$row['play_type'],               SQLITE3_TEXT);
                     $mergeUpdStmt->bindValue(':qual',  (string)$row['quality'],                 SQLITE3_TEXT);
@@ -738,6 +867,8 @@ final class StreamViewerEndpoint
                 $moveStmt->bindValue(':end',   (int)$row['last_seen'],  SQLITE3_INTEGER);
                 $moveStmt->bindValue(':sres',  (string)($row['stream_resolution'] ?? ''), SQLITE3_TEXT);
                 $moveStmt->bindValue(':mdur',  (int)($row['media_duration_ms'] ?? 0),     SQLITE3_INTEGER);
+                $moveStmt->bindValue(':sp',    $short,                    SQLITE3_INTEGER);
+                $moveStmt->bindValue(':ss',    $short ? $durationSec : 0, SQLITE3_INTEGER);
                 $moveStmt->execute();
                 $moveStmt->reset();
             }
@@ -756,9 +887,10 @@ final class StreamViewerEndpoint
         if (mt_rand(1, self::STATS_PRUNE_CHANCE) === 1) {
             $this->statsPrune($db);
         }
+
+        $this->saveStatsState($db, $closed > 0 ? true : null);
     }
 
-    // stable id for a session across polls: type + name + ids + title, hashed
     private function statsSessionKey(array $s): string
     {
         $parts = [
@@ -771,7 +903,6 @@ final class StreamViewerEndpoint
         return hash('sha256', implode('|', $parts));
     }
 
-    // drop the last octet (v4) or last 80 bits (v6) when ip anonymizing is on
     private function anonymizeIp(string $ip): string
     {
         if ($ip === '' || $ip === 'Unknown') return $ip;
@@ -795,6 +926,13 @@ final class StreamViewerEndpoint
         return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
     }
 
+    private function isGlobalIp(string $ip): bool
+    {
+        if ($this->isPrivateIp($ip)) return false;
+        return !defined('FILTER_FLAG_GLOBAL_RANGE')
+            || filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE) !== false;
+    }
+
     private function statsPrune(\SQLite3 $db): void
     {
         $cfg  = $this->loadCfg();
@@ -816,17 +954,28 @@ final class StreamViewerEndpoint
         $stmt->close();
     }
 
-    // jellyfin and emby write one activity entry per download, plex has no download log
-    private function recordDownloads(\SQLite3 $db, array $servers): void
+    private function recordDownloads(array $servers): void
     {
+        $dbFile = (string)$this->statsDbFile();
+
         foreach ($servers as $srv) {
             if ($srv['type'] === 'plex') continue;
 
-            $metaKey = 'dl_since_' . (int)$srv['index'];
-            $q = $db->prepare("SELECT val FROM sv_meta WHERE key = :k");
-            $q->bindValue(':k', $metaKey, SQLITE3_TEXT);
-            $since = (string)($q->execute()->fetchArray(SQLITE3_NUM)[0] ?? '');
-            $q->close();
+            $metaKey   = 'dl_since_' . (int)$srv['id'];
+            $statePath = self::CACHE_DIR . '/dl_' . (int)$srv['id'] . '.json';
+            $state     = @json_decode((string)@file_get_contents($statePath), true);
+
+            if (is_array($state) && ($state['db'] ?? '') === $dbFile && is_array($state['ids'] ?? null)) {
+                $since = (string)($state['since'] ?? '');
+            } else {
+                $state = null;
+                $db    = $this->openDb();
+                if ($db === null) return;
+                $q = $db->prepare("SELECT val FROM sv_meta WHERE key = :k");
+                $q->bindValue(':k', $metaKey, SQLITE3_TEXT);
+                $since = (string)($q->execute()->fetchArray(SQLITE3_NUM)[0] ?? '');
+                $q->close();
+            }
             if ($since === '' || @strtotime($since) === false) {
                 $since = gmdate('Y-m-d\TH:i:s\Z', time() - 7 * 86400);
             }
@@ -857,11 +1006,16 @@ final class StreamViewerEndpoint
                 ];
             }
 
-            // minDate is inclusive, so the newest entry comes back on every poll
+            $ids = array_column($rows, 'activity_id');
+            if ($state !== null && !array_diff($ids, $state['ids'])) continue;
+
+            $db = $this->openDb();
+            if ($db === null) return;
+
             $known = $db->prepare("SELECT 1 FROM download_history WHERE server_index = :srv AND activity_id = :aid");
             $rows  = array_values(array_filter($rows, function($r) use ($known, $srv) {
                 $known->reset();
-                $known->bindValue(':srv', (int)$srv['index'], SQLITE3_INTEGER);
+                $known->bindValue(':srv', (int)$srv['id'], SQLITE3_INTEGER);
                 $known->bindValue(':aid', $r['activity_id'], SQLITE3_INTEGER);
                 return !$known->execute()->fetchArray(SQLITE3_NUM);
             }));
@@ -881,6 +1035,8 @@ final class StreamViewerEndpoint
                 $stmt->execute();
                 $stmt->close();
             }
+
+            $this->cachePut($statePath, (string)json_encode(['db' => $dbFile, 'since' => $newest, 'ids' => $ids]));
         }
     }
 
@@ -910,7 +1066,6 @@ final class StreamViewerEndpoint
         return $out;
     }
 
-    // jellyfin: "App: Jellyfin Android, Device: Pixel 8", emby: "From 1.2.3.4 with Emby Web on Firefox Windows"
     private function activityDevice(string $type, string $overview): string
     {
         if ($type === 'emby') {
@@ -940,14 +1095,12 @@ final class StreamViewerEndpoint
         return $rows;
     }
 
-    // emby gives no ItemId and a localized Name like "root is downloading The Rainmaker",
-    // so the user comes from the known user list and the title from a library search
     private function resolveEmbyRows(\SQLite3 $db, array $srv, array $rows): array
     {
         $users  = array_values($this->fetchJfUserNames($srv));
         usort($users, fn($a, $b) => strlen($b) <=> strlen($a));
 
-        $tplKey = 'dl_tpl_' . (int)$srv['index'];
+        $tplKey = 'dl_tpl_' . (int)$srv['id'];
         $q = $db->prepare("SELECT val FROM sv_meta WHERE key = :k");
         $q->bindValue(':k', $tplKey, SQLITE3_TEXT);
         $learned = (string)($q->execute()->fetchArray(SQLITE3_NUM)[0] ?? '');
@@ -978,7 +1131,6 @@ final class StreamViewerEndpoint
                 $searches++;
                 $item = $this->embySearchExact($srv, $text);
             } elseif ($user !== '' && $searches < 20) {
-                // template unknown: try the word runs around the user name, longest first
                 $rest  = trim(preg_replace('/(?<!\w)' . preg_quote($user, '/') . '(?!\w)/u', ' ', $name));
                 $words = preg_split('/\s+/u', $rest) ?: [];
                 $n     = count($words);
@@ -1034,7 +1186,6 @@ final class StreamViewerEndpoint
         $data = @json_decode($body, true);
         foreach ($data['Items'] ?? [] as $item) {
             if (!is_array($item)) continue;
-            // no mbstring on stock unraid, pcre handles the case fold
             if (!preg_match('/^' . preg_quote($term, '/') . '$/iu', (string)($item['Name'] ?? ''))) continue;
             $type = strtolower((string)($item['Type'] ?? 'video'));
             return [
@@ -1091,7 +1242,7 @@ final class StreamViewerEndpoint
     {
         $dup = $db->prepare("
             SELECT 1 FROM download_history
-            WHERE server_index = :srv AND user = :user
+            WHERE server_type = :stype AND user = :user
               AND ((:iid != '' AND item_id = :iid) OR (:iid = '' AND title = :title))
               AND downloaded_at BETWEEN :from AND :to LIMIT 1
         ");
@@ -1105,10 +1256,9 @@ final class StreamViewerEndpoint
 
         $db->exec('BEGIN');
         foreach ($rows as $r) {
-            // clients log the same file several times per download (range requests, android retries)
             if ($r['item_id'] !== '' || $r['title'] !== '') {
                 $dup->reset();
-                $dup->bindValue(':srv',   (int)$srv['index'], SQLITE3_INTEGER);
+                $dup->bindValue(':stype', $srv['type'],  SQLITE3_TEXT);
                 $dup->bindValue(':user',  $r['user'],    SQLITE3_TEXT);
                 $dup->bindValue(':iid',   $r['item_id'], SQLITE3_TEXT);
                 $dup->bindValue(':title', $r['title'],   SQLITE3_TEXT);
@@ -1118,7 +1268,7 @@ final class StreamViewerEndpoint
             }
 
             $ins->reset();
-            $ins->bindValue(':srv',    (int)$srv['index'], SQLITE3_INTEGER);
+            $ins->bindValue(':srv',    (int)$srv['id'], SQLITE3_INTEGER);
             $ins->bindValue(':sname',  $srv['name'],  SQLITE3_TEXT);
             $ins->bindValue(':stype',  $srv['type'],  SQLITE3_TEXT);
             $ins->bindValue(':aid',    $r['activity_id'], SQLITE3_INTEGER);
@@ -1145,15 +1295,15 @@ final class StreamViewerEndpoint
             FROM watch_history h
             LEFT JOIN ip_geo_cache g ON g.ip = h.ip_address
             WHERE h.ip_address != '' AND g.ip IS NULL
-            LIMIT 100
         ");
         if ($res === false) return;
 
         $ips = [];
-        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        while (count($ips) < 100 && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
             $ip = (string)$row['ip_address'];
-            if (!$this->isPrivateIp($ip)) $ips[] = $ip;
+            if ($this->isGlobalIp($ip)) $ips[] = $ip;
         }
+        $res->finalize();
         if (empty($ips)) return;
 
         $payload = [];
@@ -1178,8 +1328,11 @@ final class StreamViewerEndpoint
         ");
 
         foreach ($results as $r) {
-            if (!is_array($r) || ($r['status'] ?? '') !== 'success') continue;
-            $stmt->bindValue(':ip', (string)($r['query'] ?? ''),       SQLITE3_TEXT);
+            if (!is_array($r)) continue;
+            $r = array_filter($r, 'is_scalar');
+            if (!in_array((string)($r['query'] ?? ''), $ips, true)) continue;
+            if (($r['status'] ?? '') !== 'success') $r = ['query' => $r['query']];
+            $stmt->bindValue(':ip', (string)$r['query'],               SQLITE3_TEXT);
             $stmt->bindValue(':cc', (string)($r['countryCode'] ?? ''), SQLITE3_TEXT);
             $stmt->bindValue(':co', (string)($r['country'] ?? ''),     SQLITE3_TEXT);
             $stmt->bindValue(':rg', (string)($r['regionName'] ?? ''),  SQLITE3_TEXT);
@@ -1193,7 +1346,6 @@ final class StreamViewerEndpoint
         $stmt->close();
     }
 
-    // true for loopback, private/reserved ranges, .local, and LAN plex.direct
     private function isLocalUrl(string $url): bool
     {
         $host = strtolower((string)(parse_url($url, PHP_URL_HOST) ?: ''));
@@ -1205,7 +1357,6 @@ final class StreamViewerEndpoint
             );
         }
 
-        // plex.direct hostnames encode the real ip in the dashed prefix, pull it out and re-check
         if (preg_match('/^(\d{1,3})-(\d{1,3})-(\d{1,3})-(\d{1,3})\.[a-f0-9]+\.plex\.direct$/', $host, $m)) {
             $extracted = "{$m[1]}.{$m[2]}.{$m[3]}.{$m[4]}";
             if (filter_var($extracted, FILTER_VALIDATE_IP)) {
@@ -1259,12 +1410,20 @@ final class StreamViewerEndpoint
         }
 
         $token = bin2hex(random_bytes(24));
-        @file_put_contents($file, json_encode(['token' => $token, 'ts' => $now]), LOCK_EX);
-        @chmod($file, 0600);
+        self::writeNonce($token);
         return $token;
     }
 
-    // token gate with a sliding 4h ttl: each valid call renews it, so an active widget never expires
+    private static function writeNonce(string $token): void
+    {
+        $tmp = self::NONCE_FILE . '.' . getmypid() . '.tmp';
+        if (@file_put_contents($tmp, json_encode(['token' => $token, 'ts' => time()])) === false
+            || !@chmod($tmp, 0600)
+            || !@rename($tmp, self::NONCE_FILE)) {
+            @unlink($tmp);
+        }
+    }
+
     private function verifyNonce(): void
     {
         $provided = (string)(
@@ -1282,11 +1441,9 @@ final class StreamViewerEndpoint
         if ((time() - (int)$data['ts']) > self::NONCE_TTL) $this->json(['error' => 'Token expired'], 403);
         if (!hash_equals((string)$data['token'], $provided)) $this->json(['error' => 'Invalid token'], 403);
 
-        $data['ts'] = time();
-        @file_put_contents(self::NONCE_FILE, json_encode($data), LOCK_EX);
+        if ((time() - (int)$data['ts']) >= self::NONCE_RENEW) self::writeNonce((string)$data['token']);
     }
 
-    // same check without renewing, used on the hot docker-stats path to avoid write races
     private function verifyNonceReadOnly(): void
     {
         $provided = (string)(
@@ -1305,14 +1462,12 @@ final class StreamViewerEndpoint
         if (!hash_equals((string)$data['token'], $provided)) $this->json(['error' => 'Invalid token'], 403);
     }
 
-    // per-ip, 120/min, file-backed with a rolling 60s window
     private function enforceRateLimit(): void
     {
         $ip   = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
         $file = self::RATE_LIMIT_FILE . '_' . hash('sha256', $ip);
         $now  = time();
 
-        // read and write under one lock, separate calls let concurrent requests overwrite each other's count
         $fp = @fopen($file, 'c+');
         if ($fp === false) return;
         if (!flock($fp, LOCK_EX)) { fclose($fp); return; }
@@ -1339,7 +1494,6 @@ final class StreamViewerEndpoint
         }
     }
 
-    // one file per client ip piles up until reboot, sweep the dead ones now and then
     private function pruneRateLimitFiles(): void
     {
         if (random_int(1, 200) !== 1) return;
@@ -1394,10 +1548,11 @@ final class StreamViewerEndpoint
 
     public function run(): void
     {
+        $_GET   = array_filter($_GET, 'is_scalar');
+        $_POST  = array_filter($_POST, 'is_scalar');
         $action = (string)($_GET['action'] ?? '');
 
         if ($action === 'get_thumb') {
-            // no ajax check, the browser loads this as an <img> and sends no X-Requested-With
             $this->enforceLocalOrigin();
             $this->verifyNonceReadOnly();
             $this->enforceRateLimit();
@@ -1454,6 +1609,17 @@ final class StreamViewerEndpoint
         $routes[$action]();
     }
 
+    public static function hasServers(array $cfg): bool
+    {
+        for ($i = 1; $i <= self::MAX_SERVERS; $i++) {
+            if (($cfg["SERVER{$i}_ENABLED"] ?? '0') === '1'
+                && in_array((string)($cfg["SERVER{$i}_TYPE"] ?? ''), self::VALID_TYPES, true)
+                && trim((string)($cfg["SERVER{$i}_URL"] ?? '')) !== ''
+                && trim((string)($cfg["SERVER{$i}_TOKEN"] ?? '')) !== '') return true;
+        }
+        return false;
+    }
+
     private function getEnabledServers(array $cfg): array
     {
         $servers = [];
@@ -1469,7 +1635,8 @@ final class StreamViewerEndpoint
             if ($url === '' || $token === '') continue;
 
             $index = $i;
-            $servers[] = compact('index', 'type', 'name', 'url', 'token');
+            $id    = (int)($cfg["SERVER{$i}_ID"] ?? 0) ?: $i;
+            $servers[] = compact('index', 'id', 'type', 'name', 'url', 'token');
         }
         return $servers;
     }
@@ -1485,9 +1652,9 @@ final class StreamViewerEndpoint
 
         $results = $this->fetchAllSessionsParallel($servers);
 
-        $sessions    = [];
+        [$sessions, $down] = $this->collectSessions($servers, $results);
+
         $serverStats = [];
-        $sessionSeen = [];
         foreach ($results as $i => $result) {
             $srv = $servers[$i];
             $serverStats[] = [
@@ -1497,17 +1664,6 @@ final class StreamViewerEndpoint
                 'error'           => $result['error'] ?? null,
                 'active_sessions' => count($result['sessions'] ?? []),
             ];
-
-            $srvUrl = rtrim((string)($srv['url'] ?? ''), '/');
-            foreach ($result['sessions'] ?? [] as $s) {
-                $type = (string)($s['server_type'] ?? '');
-                $key  = (string)($s['session_key'] ?? $s['session_id'] ?? '');
-                if ($key === '') { $sessions[] = $s; continue; }
-                $fp = $type . '|' . $srvUrl . '|' . $key;
-                if (isset($sessionSeen[$fp])) continue;
-                $sessionSeen[$fp] = true;
-                $sessions[] = $s;
-            }
         }
 
         $dockerStats = [];
@@ -1523,35 +1679,7 @@ final class StreamViewerEndpoint
             } catch (\Throwable $e) {}
         }
 
-        $lastActivity = null;
-        $db = $this->openDb();
-        if ($db !== null) {
-            $la = @$db->querySingle(
-                "SELECT user, title, ended_at FROM watch_history ORDER BY ended_at DESC LIMIT 1",
-                true
-            );
-            if (!$la || (int)($la['ended_at'] ?? 0) <= 0) {
-                $la = @$db->querySingle(
-                    "SELECT user, title, last_seen AS ended_at FROM active_sessions ORDER BY last_seen DESC LIMIT 1",
-                    true
-                );
-            }
-            if ($la && (int)($la['ended_at'] ?? 0) > 0) {
-                $ago = time() - (int)$la['ended_at'];
-                if ($ago < 0) $ago = 0;
-                if ($ago < 86400 * 30) {
-                    if ($ago < 60)        $agoStr = $ago . 's ago';
-                    elseif ($ago < 3600)  $agoStr = floor($ago / 60) . 'm ago';
-                    elseif ($ago < 86400) $agoStr = floor($ago / 3600) . 'h ago';
-                    else                  $agoStr = floor($ago / 86400) . 'd ago';
-                    $lastActivity = [
-                        'user'  => (string)($la['user'] ?? ''),
-                        'title' => (string)($la['title'] ?? ''),
-                        'ago'   => $agoStr,
-                    ];
-                }
-            }
-        }
+        try { $this->recordSessions($sessions, $down); } catch (\Throwable $e) {  }
 
         $json = (string)json_encode([
             'sessions'       => $sessions,
@@ -1560,20 +1688,17 @@ final class StreamViewerEndpoint
             'total_sessions' => count($sessions),
             'timestamp'      => time(),
             'no_servers'     => empty($servers),
-            'last_activity'  => $lastActivity,
+            'last_activity'  => $this->lastActivity(),
         ]);
         $this->cachePut($cachePath, $json);
 
-        try { $this->recordSessions($sessions); } catch (\Throwable $e) {  }
-
-        @file_put_contents(self::CACHE_DIR . '/header_count', (string)count($sessions));
+        $this->cachePut(self::CACHE_DIR . '/header_count', (string)count($sessions));
 
         $this->rawJson($json);
     }
 
-    private function fetchAllSessionsParallel(array $servers): array
+    private function fetchAllSessionsParallel(array $servers, bool $rediscover = true): array
     {
-        // no curl_multi, fall back to fetching servers one by one
         if (empty($servers) || !function_exists('curl_multi_init')) {
 
             $results = [];
@@ -1583,9 +1708,17 @@ final class StreamViewerEndpoint
 
         $mh      = curl_multi_init();
         $handles = [];
+        $results = [];
         $verify  = $this->verifySsl;
+        $now     = time();
 
         foreach ($servers as $i => $srv) {
+            $slow = @json_decode((string)@file_get_contents($this->slowFile($srv)), true);
+            if (is_array($slow) && ($slow['url'] ?? '') === $srv['url']
+                && $now - (int)($slow['at'] ?? 0) < self::SLOW_SKIP_SEC) {
+                $results[$i] = ['ok' => false, 'sessions' => [], 'error' => (string)($slow['error'] ?? 'Request failed')];
+                continue;
+            }
             [$url, $hdrs] = $this->sessionEndpoint($srv);
             $ch = curl_init($url);
             curl_setopt_array($ch, [
@@ -1607,11 +1740,17 @@ final class StreamViewerEndpoint
             if ($active) curl_multi_select($mh, 1);
         } while ($active && $status === CURLM_OK);
 
-        $results = [];
+        $errno = [];
+        while ($info = curl_multi_info_read($mh)) {
+            $errno[spl_object_id($info['handle'])] = (int)$info['result'];
+        }
+
         foreach ($handles as $i => $ch) {
             $body = curl_multi_getcontent($ch);
             $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $err  = curl_error($ch) ?: null;
+            $took = (float)curl_getinfo($ch, CURLINFO_TOTAL_TIME);
+            $e    = $errno[spl_object_id($ch)] ?? -1;
+            $err  = $e === CURLE_OK ? null : (($e > 0 ? curl_strerror($e) : null) ?: 'Request failed');
             curl_multi_remove_handle($mh, $ch);
             curl_close($ch);
 
@@ -1624,36 +1763,38 @@ final class StreamViewerEndpoint
                 continue;
             }
 
-            if ($code === 401) {
+            if ($err === null && $code === 401) {
                 $results[$i] = ['ok' => false, 'sessions' => [], 'error' => 'Invalid API key'];
                 continue;
             }
 
-            $failures = ($index > 0) ? $this->incrementFailure($index) : 999;
-
-            if ($failures < self::REDISCOVER_AFTER) {
-                $errMsg = $err ?? "HTTP {$code}";
-                $results[$i] = ['ok' => false, 'sessions' => [], 'error' => $errMsg];
-                continue;
+            $results[$i] = ['ok' => false, 'sessions' => [], 'error' => $err ?? "HTTP {$code}"];
+            if ($err !== null && $took >= self::SLOW_AFTER_SEC) {
+                $this->cachePut($this->slowFile($srv), (string)json_encode(['at' => time(), 'url' => $srv['url'], 'error' => $err]));
             }
+            if ($index <= 0 || !$rediscover) continue;
+
+            if ($this->incrementFailure($index) % self::REDISCOVER_AFTER !== 0) continue;
 
             $newUrl = $this->tryRediscover($srv);
-            if ($newUrl !== '' && $newUrl !== rtrim($srv['url'], '/') && $index > 0) {
-                $this->updateServerUrl($index, $newUrl);
-                $srv['url'] = $newUrl;
+            if ($newUrl === '' || $newUrl === rtrim($srv['url'], '/')) continue;
 
-                $results[$i] = $this->fetchSessions($srv);
-                if (($results[$i]['ok'] ?? false) && $index > 0) {
-                    $this->resetFailure($index);
-                }
-            } else {
-                $errMsg = $err ?? "HTTP {$code}";
-                $results[$i] = ['ok' => false, 'sessions' => [], 'error' => $errMsg];
+            $retry = $this->fetchSessions(['url' => $newUrl] + $srv);
+            if ($retry['ok'] ?? false) {
+                $this->updateServerUrl($index, $newUrl);
+                $this->resetFailure($index);
+                $results[$i] = $retry;
             }
         }
 
         curl_multi_close($mh);
+        ksort($results);
         return $results;
+    }
+
+    private function slowFile(array $srv): string
+    {
+        return self::CACHE_DIR . '/slow_' . (int)($srv['id'] ?? 0) . '.json';
     }
 
     private function sessionEndpoint(array $srv): array
@@ -1672,21 +1813,24 @@ final class StreamViewerEndpoint
 
     private function parseSessions(array $srv, string $body): array
     {
-        return match($srv['type']) {
-            'plex'     => $this->parsePlexBody($srv, $body),
-            'jellyfin' => $this->parseJellyfinBody($srv, $body),
-            'emby'     => $this->parseEmbyBody($srv, $body),
-            default    => ['ok' => false, 'sessions' => [], 'error' => 'Unknown type'],
-        };
+        try {
+            return match($srv['type']) {
+                'plex'     => $this->parsePlexBody($srv, $body),
+                'jellyfin' => $this->parseJellyfinBody($srv, $body),
+                'emby'     => $this->parseEmbyBody($srv, $body),
+                default    => ['ok' => false, 'sessions' => [], 'error' => 'Unknown type'],
+            };
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'sessions' => [], 'error' => 'Unexpected response'];
+        }
     }
 
     private function fetchSessions(array $srv): array
     {
         return match($srv['type']) {
-            'plex'     => $this->fetchPlexSessions($srv),
-            'jellyfin' => $this->fetchJellyfinSessions($srv),
-            'emby'     => $this->fetchEmbySession($srv),
-            default    => ['ok' => false, 'sessions' => [], 'error' => 'Unknown server type'],
+            'plex'             => $this->fetchPlexSessions($srv),
+            'jellyfin', 'emby' => $this->fetchJellyfinSessions($srv),
+            default            => ['ok' => false, 'sessions' => [], 'error' => 'Unknown server type'],
         };
     }
 
@@ -1702,7 +1846,7 @@ final class StreamViewerEndpoint
         if ($httpCode === 401) return ['ok' => false, 'sessions' => [], 'error' => 'Invalid Plex token'];
         if ($httpCode !== 200) return ['ok' => false, 'sessions' => [], 'error' => "HTTP {$httpCode}"];
 
-        return $this->parsePlexBody($srv, $body);
+        return $this->parseSessions($srv, (string)$body);
     }
 
     private function parsePlexBody(array $srv, string $body): array
@@ -1711,7 +1855,8 @@ final class StreamViewerEndpoint
         if (!is_array($data)) return ['ok' => false, 'sessions' => [], 'error' => 'Invalid JSON response'];
 
         $sessions = [];
-        foreach ($data['MediaContainer']['Metadata'] ?? [] as $item) {
+        foreach ((array)($data['MediaContainer']['Metadata'] ?? []) as $item) {
+            if (!is_array($item)) continue;
             $player   = $item['Player']   ?? [];
             $user     = $item['User']     ?? [];
             $media    = $item['Media'][0] ?? [];
@@ -1720,21 +1865,22 @@ final class StreamViewerEndpoint
             $audioS   = null;
             $subS     = null;
 
-            foreach ($stream['Stream'] ?? [] as $s) {
-                if (($s['streamType'] ?? 0) == 1 && $videoS === null) $videoS = $s;
-                if (($s['streamType'] ?? 0) == 2 && $audioS === null) $audioS = $s;
-                if (($s['streamType'] ?? 0) == 3 && $subS   === null) $subS   = $s;
+            foreach ((array)($stream['Stream'] ?? []) as $s) {
+                $streamType = $this->int($s['streamType'] ?? 0);
+                if ($streamType === 1 && $videoS === null) $videoS = $s;
+                if ($streamType === 2 && $audioS === null) $audioS = $s;
+                if ($streamType === 3 && $subS   === null) $subS   = $s;
             }
 
             $playType  = $this->normalizePlexPlayType($item);
             $resConversion = '';
             if ($playType === 'transcode') {
-                $srcW = (int)($videoS['width']  ?? 0);
-                $srcH = (int)($videoS['height'] ?? 0);
-                if ($srcW <= 0) $srcW = (int)($media['width']  ?? 0);
-                if ($srcH <= 0) $srcH = (int)($media['height'] ?? 0);
-                $stmW = (int)($item['TranscodeSession']['width']  ?? 0);
-                $stmH = (int)($item['TranscodeSession']['height'] ?? 0);
+                $srcW = $this->int($videoS['width']  ?? 0);
+                $srcH = $this->int($videoS['height'] ?? 0);
+                if ($srcW <= 0) $srcW = $this->int($media['width']  ?? 0);
+                if ($srcH <= 0) $srcH = $this->int($media['height'] ?? 0);
+                $stmW = $this->int($item['TranscodeSession']['width']  ?? 0);
+                $stmH = $this->int($item['TranscodeSession']['height'] ?? 0);
                 $srcLabel = $this->resLabelWH($srcW, $srcH);
                 $stmLabel = $this->resLabelWH($stmW, $stmH);
                 if ($srcLabel !== '' && $stmLabel !== '' && $srcLabel !== $stmLabel) {
@@ -1745,58 +1891,61 @@ final class StreamViewerEndpoint
                     $resConversion = $srcLabel;
                 }
             }
-            $thumbPath = $item['grandparentThumb'] ?? $item['parentThumb'] ?? $item['thumb'] ?? null;
-            $thumbUrl  = ($thumbPath !== null && $thumbPath !== '' && $srv['url'] !== '')
-                ? rtrim($srv['url'], '/') . '/photo/:/transcode?width=600&height=900&minSize=1&url='
-                  . urlencode($thumbPath) . '&X-Plex-Token=' . urlencode($srv['token'])
+            $thumbPath = $this->str($item['grandparentThumb'] ?? $item['parentThumb'] ?? $item['thumb'] ?? '');
+            $thumbUrl  = ($thumbPath !== '' && $srv['url'] !== '')
+                ? rtrim($srv['url'], '/') . '/photo/:/transcode?width=600&height=900&minSize=1&url=' . urlencode($thumbPath)
                 : '';
 
-            $playerState = strtolower((string)($player['state'] ?? 'playing'));
-            $sessionBandwidth = (int)($item['Session']['bandwidth'] ?? $media['bitrate'] ?? 0);
+            $playerState = strtolower($this->str($player['state'] ?? null, 'playing'));
+            $sessionBandwidth = $this->int($item['Session']['bandwidth'] ?? $media['bitrate'] ?? 0);
 
             if ($playerState === 'paused') $sessionBandwidth = 0;
 
+            $audioCodec = $this->str($audioS['codec'] ?? '');
+            if (strtolower($audioCodec) === 'dca') $audioCodec = 'dts';
+
             $sessions[] = $this->normalizeSession([
                 'server_name'           => $srv['name'],
+                'server_id'             => (int)($srv['id'] ?? 0),
                 'server_type'           => 'plex',
-                'session_id'            => (string)($item['sessionKey']                   ?? $player['machineIdentifier'] ?? ''),
-                'session_key'           => (string)($item['sessionKey']                   ?? ''),
-                'plex_session_uuid'     => (string)($item['Session']['id']                ?? ''),
+                'session_id'            => $this->str($item['sessionKey']                 ?? $player['machineIdentifier'] ?? ''),
+                'session_key'           => $this->str($item['sessionKey']                 ?? ''),
+                'plex_session_uuid'     => $this->str($item['Session']['id']              ?? ''),
                 'title'                 => $this->buildTitle($item),
-                'user'                  => (string)($user['title']                        ?? 'Unknown'),
-                'device'                => (string)($player['title']                      ?? 'Unknown'),
-                'client'                => (string)($player['product']                    ?? ''),
-                'platform'              => (string)($player['platform']                   ?? ''),
-                'ip_address'            => (string)($player['address']                    ?? ''),
+                'user'                  => $this->str($user['title']                      ?? null, 'Unknown'),
+                'device'                => $this->str($player['title']                    ?? null, 'Unknown'),
+                'client'                => $this->str($player['product']                  ?? ''),
+                'platform'              => $this->str($player['platform']                 ?? ''),
+                'ip_address'            => $this->str($player['address']                  ?? ''),
                 'state'                 => $playerState,
                 'play_type'             => $playType,
-                'progress_ms'           => (int)($item['viewOffset']                      ?? 0),
-                'duration_ms'           => (int)($item['duration']                        ?? 0),
+                'progress_ms'           => $this->int($item['viewOffset']                 ?? 0),
+                'duration_ms'           => $this->int($item['duration']                   ?? 0),
 
                 'bandwidth_kbps'        => $sessionBandwidth,
-                'quality'               => $this->formatPlexQuality((string)($media['videoResolution'] ?? '')),
+                'quality'               => $this->formatPlexQuality($this->str($media['videoResolution'] ?? '')),
                 'stream_resolution'     => ($playType === 'transcode' && isset($item['TranscodeSession']))
-                                            ? $this->heightToLabel((int)($item['TranscodeSession']['height'] ?? 0))
-                                            : $this->formatPlexQuality((string)($media['videoResolution'] ?? '')),
+                                            ? $this->heightToLabel($this->int($item['TranscodeSession']['height'] ?? 0))
+                                            : $this->formatPlexQuality($this->str($media['videoResolution'] ?? '')),
                 'resolution_label'      => $resConversion,
-                'bitrate'               => (int)($media['bitrate']                        ?? 0),
-                'container'             => (string)($media['container']                   ?? ''),
-                'video_codec'           => (string)($videoS['codec']                      ?? ''),
-                'bit_depth'             => (int)($videoS['bitDepth']                      ?? 0),
+                'bitrate'               => $this->int($media['bitrate']                   ?? 0),
+                'container'             => $this->str($media['container']                 ?? ''),
+                'video_codec'           => $this->str($videoS['codec']                    ?? ''),
+                'bit_depth'             => $this->int($videoS['bitDepth']                 ?? 0),
                 'video_range'           => $this->detectPlexVideoRange($videoS),
-                'audio_codec'           => (string)($audioS['codec']                      ?? ''),
-                'audio_channels'        => (int)($audioS['channels']                      ?? 0),
+                'audio_codec'           => $audioCodec,
+                'audio_channels'        => $this->int($audioS['channels']                 ?? 0),
                 'audio_spatial'         => '',
-                'subtitle_language'     => (string)($subS['language']                     ?? ''),
-                'subtitle_codec'        => (string)($subS['codec']                        ?? ''),
-                'transcode_video_codec' => ($playType === 'transcode') ? (string)($item['TranscodeSession']['videoCodec'] ?? '') : '',
-                'transcode_speed'       => ($playType === 'transcode') ? (float)($item['TranscodeSession']['speed']       ?? 0) : 0,
-                'hw_accel'              => '',
+                'subtitle_language'     => $this->str($subS['language']                   ?? ''),
+                'subtitle_codec'        => $this->str($subS['codec']                      ?? ''),
+                'transcode_video_codec' => ($playType === 'transcode') ? $this->str($item['TranscodeSession']['videoCodec'] ?? '') : '',
+                'transcode_speed'       => ($playType === 'transcode') ? $this->float($item['TranscodeSession']['speed']    ?? 0) : 0,
+                'hw_accel'              => ($playType === 'transcode') ? $this->plexHwAccel($item) : '',
                 'transcode_reasons'     => '',
                 'transcode_buffer_pct'  => 0,
                 'thumb_url'             => $thumbUrl,
-                'media_type'            => strtolower((string)($item['type']              ?? 'video')),
-                'summary'               => (string)($item['summary']                      ?? ''),
+                'media_type'            => strtolower($this->str($item['type']            ?? null, 'video')),
+                'summary'               => $this->str($item['summary']                    ?? ''),
             ]);
         }
 
@@ -1807,8 +1956,24 @@ final class StreamViewerEndpoint
     {
         $ts = $item['TranscodeSession'] ?? null;
         if ($ts === null) return 'direct_play';
-        return strtolower((string)($ts['videoDecision'] ?? 'copy')) === 'transcode'
+        return strtolower($this->str($ts['videoDecision'] ?? null, 'copy')) === 'transcode'
             ? 'transcode' : 'direct_stream';
+    }
+
+    private function hwName($v): string
+    {
+        if (!is_string($v) || !preg_match('/^[A-Za-z0-9_-]{1,20}$/', $v)) return '';
+        $v = strtolower($v);
+        return ($v === 'none' || $v === 'unknown') ? '' : $v;
+    }
+
+    private function plexHwAccel(array $item): string
+    {
+        foreach (['transcodeHwEncoding', 'transcodeHwDecoding'] as $key) {
+            $name = $this->hwName($item['TranscodeSession'][$key] ?? '');
+            if ($name !== '') return $name;
+        }
+        return '';
     }
 
     private function formatPlexQuality(string $res): string
@@ -1852,13 +2017,34 @@ final class StreamViewerEndpoint
         if ($videoStream === null) return '';
 
         if (!empty($videoStream['DOVIPresent'])) return 'Dolby Vision';
-        $colorTrc = strtolower((string)($videoStream['colorTrc'] ?? ''));
+        $colorTrc = strtolower($this->str($videoStream['colorTrc'] ?? ''));
         if ($colorTrc === 'smpte2084')    return 'HDR10';
         if ($colorTrc === 'arib-std-b67') return 'HLG';
 
-        $colorSpace = strtolower((string)($videoStream['colorSpace'] ?? ''));
+        $colorSpace = strtolower($this->str($videoStream['colorSpace'] ?? ''));
         if (strpos($colorSpace, 'bt2020') !== false) return 'HDR';
         return 'SDR';
+    }
+
+    private function jfVideoRange(array $stream): string
+    {
+        foreach (['VideoRangeType', 'ExtendedVideoType', 'VideoRange'] as $key) {
+            $v = $stream[$key] ?? '';
+            if (!is_string($v)) continue;
+            $k = strtolower(str_replace(' ', '', $v));
+            if (in_array($k, ['', 'none', 'unknown', 'doviinvalid'], true)) continue;
+            if (strpos($k, 'dovi') === 0) return 'Dolby Vision';
+            return match($k) {
+                'dolbyvision'          => 'Dolby Vision',
+                'sdr'                  => 'SDR',
+                'hdr'                  => 'HDR',
+                'hdr10'                => 'HDR10',
+                'hdr10plus', 'hdr10+'  => 'HDR10+',
+                'hlg', 'hyperloggamma' => 'HLG',
+                default                => $v,
+            };
+        }
+        return '';
     }
 
     private function fetchJellyfinSessions(array $srv): array
@@ -1870,7 +2056,7 @@ final class StreamViewerEndpoint
         if ($httpCode === 401) return ['ok' => false, 'sessions' => [], 'error' => 'Invalid API key'];
         if ($httpCode !== 200) return ['ok' => false, 'sessions' => [], 'error' => "HTTP {$httpCode}"];
 
-        return $this->parseJellyfinBody($srv, $body);
+        return $this->parseSessions($srv, (string)$body);
     }
 
     private function parseJellyfinBody(array $srv, string $body): array
@@ -1881,94 +2067,93 @@ final class StreamViewerEndpoint
         $sessions = [];
         foreach ($data as $item) {
             $nowPlaying = $item['NowPlayingItem'] ?? null;
-            if ($nowPlaying === null) continue;
+            if (!is_array($nowPlaying)) continue;
 
-            $playState = $item['PlayState']       ?? [];
-            $transInfo = $item['TranscodingInfo'] ?? null;
-            $playType  = $this->normalizeJfPlayType($transInfo);
+            $playState = is_array($item['PlayState'] ?? null)       ? $item['PlayState']       : [];
+            $transInfo = is_array($item['TranscodingInfo'] ?? null) ? $item['TranscodingInfo'] : null;
+            $playType  = $this->normalizeJfPlayType($transInfo, $this->str($playState['PlayMethod'] ?? ''));
 
-            $durationMs = (int)(((int)($nowPlaying['RunTimeTicks'] ?? 0)) / 10000);
-            $progressMs = (int)(((int)($playState['PositionTicks'] ?? 0)) / 10000);
+            $durationMs = (int)($this->int($nowPlaying['RunTimeTicks'] ?? 0) / 10000);
+            $progressMs = (int)($this->int($playState['PositionTicks'] ?? 0) / 10000);
             $state      = ($playState['IsPaused'] ?? false) ? 'paused' : 'playing';
 
-            // jellyfin/emby call music "audio", the stats layer keys everything on "track"
-            $mediaType = strtolower((string)($nowPlaying['Type'] ?? 'video'));
+            $mediaType = strtolower($this->str($nowPlaying['Type'] ?? null, 'video'));
             if ($mediaType === 'audio') $mediaType = 'track';
 
             $videoCodec = $audioCodec = $container = $quality = '';
             $audioSpatial = $subLang = $subCodec = '';
             $bitrate = $audioChannels = $bitDepth = 0;
+            $videoBits = $audioBits = 0;
             $videoRange = '';
             $srcW = 0;
 
-            $mediaSources = $nowPlaying['MediaSources'] ?? [];
-            $streams = [];
-            if (!empty($mediaSources)) {
-                $src       = $mediaSources[0];
-                $container = (string)($src['Container'] ?? '');
-                $bitrate   = (int)(($src['Bitrate'] ?? 0) / 1000);
+            $src = $nowPlaying['MediaSources'][0] ?? null;
+            if (is_array($src)) {
+                $container = $this->jfContainer($src['Container'] ?? '', $src['Path'] ?? $nowPlaying['Path'] ?? '');
+                $bitrate   = (int)($this->int($src['Bitrate'] ?? 0) / 1000);
                 $streams   = $src['MediaStreams'] ?? [];
             } else {
-                $container = (string)($nowPlaying['Container'] ?? '');
+                $container = $this->jfContainer($nowPlaying['Container'] ?? '', $nowPlaying['Path'] ?? '');
                 $streams   = $nowPlaying['MediaStreams'] ?? [];
             }
 
-            foreach ($streams as $s) {
+            foreach ((array)$streams as $s) {
                 $sType = $s['Type'] ?? '';
                 if ($sType === 'Video' && $videoCodec === '') {
-                    $videoCodec = (string)($s['Codec'] ?? '');
-                    $h = (int)($s['Height'] ?? 0);
-                    $srcW = (int)($s['Width'] ?? 0);
+                    $videoCodec = $this->str($s['Codec'] ?? '');
+                    $h = $this->int($s['Height'] ?? 0);
+                    $srcW = $this->int($s['Width'] ?? 0);
                     if ($h > 0) $quality = (string)$h;
-                    $bitDepth   = (int)($s['BitDepth'] ?? 0);
-                    $vr = (string)($s['VideoRange'] ?? '');
-                    $vrt = (string)($s['VideoRangeType'] ?? '');
-                    if ($vrt !== '') {
-                        $videoRange = $vrt;
-                    } elseif ($vr !== '') {
-                        $videoRange = $vr;
-                    }
+                    $bitDepth   = $this->int($s['BitDepth'] ?? 0);
+                    $videoBits  = $this->int($s['BitRate'] ?? 0);
+                    $videoRange = $this->jfVideoRange($s);
                 }
                 if ($sType === 'Audio' && $audioCodec === '') {
-                    $audioCodec    = (string)($s['Codec']    ?? '');
-                    $audioChannels = (int)($s['Channels']    ?? 0);
-                    $spatial       = (string)($s['AudioSpatialFormat'] ?? '');
-                    if ($spatial !== '' && $spatial !== 'None') $audioSpatial = $spatial;
+                    $audioCodec    = $this->str($s['Codec']    ?? '');
+                    $audioChannels = $this->int($s['Channels'] ?? 0);
+                    $audioBits     = $this->int($s['BitRate']  ?? 0);
+                    $spatial       = $this->str($s['AudioSpatialFormat'] ?? '');
+                    if ($spatial !== '' && $spatial !== 'None') $audioSpatial = match($spatial) { 'DolbyAtmos' => 'Dolby Atmos', 'DTSX' => 'DTS:X', default => $spatial };
                 }
                 if ($sType === 'Subtitle' && $subLang === '') {
-                    $subLang  = (string)($s['Language']    ?? $s['DisplayTitle'] ?? '');
-                    $subCodec = (string)($s['Codec']       ?? '');
+                    $subLang  = $this->str($s['Language']  ?? $s['DisplayTitle'] ?? '');
+                    $subCodec = $this->str($s['Codec']     ?? '');
+                    $subCodec = match(strtolower($subCodec)) { 'subrip' => 'srt', 'pgssub' => 'pgs', 'dvdsub' => 'vobsub', default => $subCodec };
                 }
             }
 
             if ($quality === '') {
-                $h = (int)($nowPlaying['Height'] ?? 0);
+                $h = $this->int($nowPlaying['Height'] ?? 0);
                 if ($h > 0) $quality = (string)$h;
             }
+
+            $fileBits = $this->int($nowPlaying['Bitrate'] ?? 0) ?: ($videoCodec !== '' ? $videoBits : $audioBits);
 
             $hwAccel = '';
             $transcodeReasons = '';
             $transcodeBufPct = 0.0;
             if ($transInfo !== null) {
-                if ($videoCodec === '') $videoCodec = (string)($transInfo['VideoCodec'] ?? '');
-                if ($audioCodec === '') $audioCodec = (string)($transInfo['AudioCodec'] ?? '');
-                if ($bitrate    === 0)  $bitrate    = (int)(($transInfo['Bitrate']      ?? 0) / 1000);
+                if ($videoCodec === '') $videoCodec = $this->str($transInfo['VideoCodec']    ?? '');
+                if ($audioCodec === '') $audioCodec = $this->str($transInfo['AudioCodec']    ?? '');
+                if ($bitrate    === 0)  $bitrate    = (int)($this->int($transInfo['Bitrate'] ?? 0) / 1000);
                 if ($quality    === '') {
-                    $h = (int)($transInfo['Height'] ?? 0);
+                    $h = $this->int($transInfo['Height'] ?? 0);
                     if ($h > 0) $quality = (string)$h;
                 }
-                $hwAccel         = (string)($transInfo['HardwareAccelerationType'] ?? '');
-                $transcodeBufPct = (float)($transInfo['CompletionPercentage']      ?? 0);
+                if ($playType === 'transcode' && !empty($transInfo['VideoCodec'])) $hwAccel = $this->jfHwAccel($transInfo);
+                $transcodeBufPct = $this->float($transInfo['CompletionPercentage'] ?? 0);
                 $reasons         = $transInfo['TranscodeReasons'] ?? [];
                 if (is_array($reasons) && !empty($reasons)) {
 
-                    $transcodeReasons = implode(', ', array_map(function($r) {
-                        return preg_replace('/([a-z])([A-Z])/', '$1 $2', (string)$r);
-                    }, $reasons));
+                    $transcodeReasons = implode(', ', array_filter(array_map(function($r) {
+                        return preg_replace('/([a-z])([A-Z])/', '$1 $2', $this->str($r));
+                    }, $reasons)));
                 }
             }
 
-            $imageId  = $nowPlaying['SeriesId'] ?? $nowPlaying['SeasonId'] ?? $nowPlaying['Id'] ?? null;
+            if ($bitrate === 0 && $playType !== 'transcode') $bitrate = (int)($fileBits / 1000);
+
+            $imageId  = $this->str($nowPlaying['SeriesId'] ?? $nowPlaying['SeasonId'] ?? $nowPlaying['Id'] ?? '');
             $thumbUrl = ($imageId && $srv['url'] !== '')
                 ? rtrim($srv['url'], '/') . '/Items/' . urlencode($imageId) . '/Images/Primary?maxHeight=600&maxWidth=400&quality=96'
                 : '';
@@ -1976,8 +2161,8 @@ final class StreamViewerEndpoint
             $jfResConversion = '';
             if ($playType === 'transcode' && $transInfo !== null) {
                 $srcLabel = $this->resLabelWH($srcW, (int)$quality);
-                $stmW2 = (int)($transInfo['Width'] ?? 0);
-                $stmH2 = (int)($transInfo['Height'] ?? 0);
+                $stmW2 = $this->int($transInfo['Width'] ?? 0);
+                $stmH2 = $this->int($transInfo['Height'] ?? 0);
                 $stmLabel = $this->resLabelWH($stmW2, $stmH2);
                 if ($srcLabel !== '' && $stmLabel !== '' && $srcLabel !== $stmLabel) {
                     $jfResConversion = $srcLabel . chr(0xe2).chr(0x86).chr(0x92) . $stmLabel;
@@ -1988,15 +2173,16 @@ final class StreamViewerEndpoint
 
             $sessions[] = $this->normalizeSession([
                 'server_name'           => $srv['name'],
+                'server_id'             => (int)($srv['id'] ?? 0),
                 'server_type'           => 'jellyfin',
-                'session_id'            => (string)($item['Id']             ?? ''),
-                'session_key'           => (string)($item['Id']             ?? ''),
+                'session_id'            => $this->str($item['Id']             ?? ''),
+                'session_key'           => $this->str($item['Id']             ?? ''),
                 'title'                 => $this->buildJfTitle($nowPlaying),
-                'user'                  => (string)($item['UserName']       ?? 'Unknown'),
-                'device'                => (string)($item['DeviceName']     ?? 'Unknown'),
-                'client'                => (string)($item['Client']         ?? ''),
-                'platform'              => (string)($item['Client']         ?? ''),
-                'ip_address'            => (string)($item['RemoteEndPoint'] ?? ''),
+                'user'                  => $this->str($item['UserName']       ?? null, 'Unknown'),
+                'device'                => $this->str($item['DeviceName']     ?? null, 'Unknown'),
+                'client'                => $this->str($item['Client']         ?? ''),
+                'platform'              => $this->str($item['Client']         ?? ''),
+                'ip_address'            => $this->str($item['RemoteEndPoint'] ?? ''),
                 'state'                 => $state,
                 'play_type'             => $playType,
                 'progress_ms'           => $progressMs,
@@ -2005,7 +2191,7 @@ final class StreamViewerEndpoint
                 'bandwidth_kbps'        => ($state === 'paused') ? 0 : $bitrate,
                 'quality'               => $quality,
                 'stream_resolution'     => ($playType === 'transcode' && $transInfo !== null)
-                                            ? $this->heightToLabel((int)($transInfo['Height'] ?? 0) ?: (int)$quality)
+                                            ? $this->heightToLabel($this->int($transInfo['Height'] ?? 0) ?: (int)$quality)
                                             : $this->heightToLabel((int)$quality),
                 'resolution_label'      => $jfResConversion,
                 'bitrate'               => $bitrate,
@@ -2018,36 +2204,50 @@ final class StreamViewerEndpoint
                 'audio_spatial'         => $audioSpatial,
                 'subtitle_language'     => $subLang,
                 'subtitle_codec'        => $subCodec,
-                'transcode_video_codec' => ($playType === 'transcode') ? (string)($transInfo['VideoCodec'] ?? '') : '',
+                'transcode_video_codec' => ($playType === 'transcode') ? $this->str($transInfo['VideoCodec'] ?? '') : '',
                 'transcode_speed'       => 0,
                 'hw_accel'              => $hwAccel,
                 'transcode_reasons'     => $transcodeReasons,
                 'transcode_buffer_pct'  => $transcodeBufPct,
                 'thumb_url'             => $thumbUrl,
                 'media_type'            => $mediaType,
-                'summary'               => (string)($nowPlaying['Overview']      ?? ''),
+                'summary'               => $this->str($nowPlaying['Overview']    ?? ''),
             ]);
         }
 
         return ['ok' => true, 'sessions' => $sessions];
     }
 
-    private function normalizeJfPlayType(?array $transInfo): string
+    private function normalizeJfPlayType(?array $transInfo, string $playMethod): string
     {
-        if ($transInfo === null) return 'direct_play';
-        $videoDirect = $transInfo['IsVideoDirect'] ?? true;
-        $audioDirect = $transInfo['IsAudioDirect'] ?? true;
-        if (!$videoDirect) return 'transcode';
-        if (!$audioDirect) return 'direct_stream';
-        return 'direct_play';
+        if ($transInfo !== null) {
+            $videoDirect = !empty($transInfo['IsVideoDirect']);
+            $audioDirect = !empty($transInfo['IsAudioDirect']);
+            if ($videoDirect || (empty($transInfo['VideoCodec']) && $audioDirect)) return 'direct_stream';
+        }
+        if ($playMethod !== '') return strcasecmp($playMethod, 'Transcode') === 0 ? 'transcode' : 'direct_play';
+        return $transInfo !== null ? 'transcode' : 'direct_play';
     }
 
-    private function fetchEmbySession(array $srv): array
+    private function jfContainer($container, $path): string
     {
-        $result = $this->fetchJellyfinSessions($srv);
-        foreach ($result['sessions'] as &$s) $s['server_type'] = 'emby';
-        unset($s);
-        return $result;
+        $names = array_values(array_filter(array_map('trim', explode(',', $this->str($container)))));
+        if (count($names) < 2) return $names[0] ?? '';
+        $ext = strtolower(pathinfo($this->str($path), PATHINFO_EXTENSION));
+        foreach ($names as $n) if (strtolower($n) === $ext) return $n;
+        return $names[0];
+    }
+
+    private function jfHwAccel(array $transInfo): string
+    {
+        $hw = '';
+        foreach (['VideoEncoder', 'VideoDecoder'] as $side) {
+            if (($transInfo[$side . 'IsHardware'] ?? false) !== true) continue;
+            $name = $this->hwName($transInfo[$side . 'HwAccel'] ?? '');
+            if ($name !== '') return $name;
+            $hw = 'yes';
+        }
+        return $hw !== '' ? $hw : $this->hwName($transInfo['HardwareAccelerationType'] ?? '');
     }
 
     private function parseEmbyBody(array $srv, string $body): array
@@ -2060,19 +2260,19 @@ final class StreamViewerEndpoint
 
     private function buildTitle(array $item): string
     {
-        $type  = strtolower((string)($item['type']  ?? 'video'));
-        $title = (string)($item['title'] ?? '');
+        $type  = strtolower($this->str($item['type']  ?? null, 'video'));
+        $title = $this->str($item['title'] ?? '');
 
         if ($type === 'episode') {
-            $show = (string)($item['grandparentTitle'] ?? '');
+            $show = $this->str($item['grandparentTitle'] ?? '');
             if ($show !== '') {
-                $s = str_pad((string)((int)($item['parentIndex'] ?? 0)), 2, '0', STR_PAD_LEFT);
-                $e = str_pad((string)((int)($item['index']       ?? 0)), 2, '0', STR_PAD_LEFT);
+                $s = str_pad((string)$this->int($item['parentIndex'] ?? 0), 2, '0', STR_PAD_LEFT);
+                $e = str_pad((string)$this->int($item['index']       ?? 0), 2, '0', STR_PAD_LEFT);
                 return trim("{$show} - S{$s}E{$e}" . ($title !== '' ? " - {$title}" : ''));
             }
         }
         if ($type === 'track') {
-            $artist = (string)($item['grandparentTitle'] ?? '');
+            $artist = $this->str($item['grandparentTitle'] ?? '');
             return $artist !== '' ? "{$artist} - {$title}" : $title;
         }
         return $title;
@@ -2080,19 +2280,19 @@ final class StreamViewerEndpoint
 
     private function buildJfTitle(array $item): string
     {
-        $type  = strtolower((string)($item['Type'] ?? 'video'));
-        $title = (string)($item['Name']            ?? '');
+        $type  = strtolower($this->str($item['Type'] ?? null, 'video'));
+        $title = $this->str($item['Name']          ?? '');
 
         if ($type === 'episode') {
-            $show = (string)($item['SeriesName'] ?? '');
+            $show = $this->str($item['SeriesName'] ?? '');
             if ($show !== '') {
-                $s = str_pad((string)((int)($item['ParentIndexNumber'] ?? 0)), 2, '0', STR_PAD_LEFT);
-                $e = str_pad((string)((int)($item['IndexNumber']       ?? 0)), 2, '0', STR_PAD_LEFT);
+                $s = str_pad((string)$this->int($item['ParentIndexNumber'] ?? 0), 2, '0', STR_PAD_LEFT);
+                $e = str_pad((string)$this->int($item['IndexNumber']       ?? 0), 2, '0', STR_PAD_LEFT);
                 return trim("{$show} - S{$s}E{$e}" . ($title !== '' ? " - {$title}" : ''));
             }
         }
         if ($type === 'audio') {
-            $artist = (string)($item['AlbumArtist'] ?? '');
+            $artist = $this->str($item['AlbumArtist'] ?? '');
             return $artist !== '' ? "{$artist} - {$title}" : $title;
         }
         return $title;
@@ -2110,6 +2310,7 @@ final class StreamViewerEndpoint
 
         return [
             'server_name'           => $this->sanitizeStr($raw['server_name']           ?? ''),
+            'server_id'             => (int)($raw['server_id']                          ?? 0),
             'server_type'           => $this->sanitizeStr($raw['server_type']           ?? ''),
             'session_id'            => $this->sanitizeStr($raw['session_id']            ?? ''),
             'session_key'           => $this->sanitizeStr($raw['session_key']           ?? ''),
@@ -2156,39 +2357,34 @@ final class StreamViewerEndpoint
         if ($url === '') { http_response_code(400); exit('No URL'); }
 
         $scheme = parse_url($url, PHP_URL_SCHEME);
-        if (!in_array($scheme, ['http', 'https'], true)) {
+        if (!in_array($scheme, ['http', 'https'], true) || preg_match('/[\x00-\x20\x7F]/', $url)) {
             http_response_code(400); exit('Invalid URL scheme');
         }
 
-        $reqHost = strtolower((string)(parse_url($url, PHP_URL_HOST) ?: ''));
-        $reqPort = parse_url($url, PHP_URL_PORT);
-
         $allowed  = false;
         $authHead = [];
-        $cfg = $this->loadCfg();
-        for ($i = 1; $i <= self::MAX_SERVERS; $i++) {
-            $srvUrl = rtrim(trim((string)($cfg["SERVER{$i}_URL"] ?? '')), '/');
-            if ($srvUrl === '') continue;
-            $srvHost = strtolower((string)(parse_url($srvUrl, PHP_URL_HOST) ?: ''));
-            $srvPort = parse_url($srvUrl, PHP_URL_PORT);
-            if ($srvHost !== '' && $srvHost === $reqHost && $srvPort === $reqPort) {
-                $allowed = true;
-                $srvType = (string)($cfg["SERVER{$i}_TYPE"] ?? '');
-                // the token used to ride along in the image url, which put it in the browser and the access log
-                if ($srvType === 'jellyfin' || $srvType === 'emby') {
-                    foreach ($this->mediaAuthHeaders($srvType, (string)($cfg["SERVER{$i}_TOKEN"] ?? '')) as $k => $v) {
-                        if ($k !== 'Accept') $authHead[] = $k . ': ' . $v;
-                    }
+        foreach ($this->getEnabledServers($this->loadCfg()) as $srv) {
+            $base = $srv['url'] . '/';
+            if (strncmp($url, $base, strlen($base)) !== 0) continue;
+            $rest = substr($url, strlen($base));
+            if ($srv['type'] === 'plex') {
+                if (strncmp($rest, 'photo/:/transcode?', 18) !== 0) continue;
+                $authHead[] = 'X-Plex-Token: ' . $srv['token'];
+            } else {
+                if (!preg_match('#^Items/[A-Za-z0-9-]+/Images/Primary(\?|$)#', $rest)) continue;
+                foreach ($this->mediaAuthHeaders($srv['type'], $srv['token']) as $k => $v) {
+                    if ($k !== 'Accept') $authHead[] = $k . ': ' . $v;
                 }
-                break;
             }
+            $allowed = true;
+            break;
         }
 
-        // the real form is 10-0-0-5.hash.plex.direct, the old one-label pattern never matched anything
+        $reqHost = strtolower((string)(parse_url($url, PHP_URL_HOST) ?: ''));
         if (!$allowed
+            && parse_url($url, PHP_URL_PATH) === '/photo/:/transcode'
             && preg_match('/^(\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3})\.[a-f0-9]+\.plex\.direct$/i', $reqHost, $pm)) {
             $embedded = str_replace('-', '.', $pm[1]);
-            // private ranges only, link-local would let this reach cloud metadata addresses
             $allowed = filter_var($embedded, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE) === false
                     && filter_var($embedded, FILTER_VALIDATE_IP) !== false;
         }
@@ -2205,29 +2401,33 @@ final class StreamViewerEndpoint
             CURLOPT_SSL_VERIFYPEER => $verify,
             CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
             CURLOPT_USERAGENT      => 'StreamViewer/1.0 Unraid',
-            // MAXFILESIZE only fires on a Content-Length header, a chunked response would run until memory ran out
             CURLOPT_NOPROGRESS     => false,
             CURLOPT_PROGRESSFUNCTION => static fn($c, $dlTotal, $dlNow) => $dlNow > self::THUMB_MAX_BYTES ? 1 : 0,
         ]);
         if ($authHead) curl_setopt($ch, CURLOPT_HTTPHEADER, $authHead);
         $body   = curl_exec($ch);
         $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $mime   = (string)(curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?: 'image/jpeg');
         curl_close($ch);
 
-        if ($body === false || $status < 200 || $status >= 300) {
+        $mime = (is_string($body) && $status >= 200 && $status < 300) ? self::imageMime($body) : null;
+        if ($mime === null) {
             http_response_code(502); exit('Proxy error');
         }
 
-        $mime = strtok($mime, ';');
-        if (!in_array($mime, ['image/jpeg','image/png','image/webp','image/gif'], true)) {
-            $mime = 'image/jpeg';
-        }
         header('Content-Type: ' . $mime);
         header('Cache-Control: private, max-age=300');
         header('X-Content-Type-Options: nosniff');
         echo $body;
         exit;
+    }
+
+    private static function imageMime(string $body): ?string
+    {
+        if (strncmp($body, "\xFF\xD8\xFF", 3) === 0) return 'image/jpeg';
+        if (strncmp($body, "\x89PNG\r\n\x1A\n", 8) === 0) return 'image/png';
+        if (strncmp($body, 'GIF87a', 6) === 0 || strncmp($body, 'GIF89a', 6) === 0) return 'image/gif';
+        if (strncmp($body, 'RIFF', 4) === 0 && substr($body, 8, 4) === 'WEBP') return 'image/webp';
+        return null;
     }
 
     private function replyGetServers(): void
@@ -2269,7 +2469,6 @@ final class StreamViewerEndpoint
             $name  = self::serverName($cfg["SERVER{$index}_NAME"] ?? '', "Server {$index}");
         } else {
 
-            // POST only, this form carries the api token and a query string lands in the webserver log
             if ((string)($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
                 $this->json(['ok' => false, 'error' => 'Method not allowed'], 405);
             }
@@ -2307,24 +2506,66 @@ final class StreamViewerEndpoint
         $this->json(['ok' => false, 'server' => $name, 'error' => "HTTP {$httpCode}"]);
     }
 
-    private function statsPeriodCutoff(): int
+    private function concurrentEvents(\SQLite3 $db, int $cutoff): array
     {
-        $period = (string)($_GET['period'] ?? '30d');
-        if ($period === 'all') return 0;
-        $days = match($period) {
+        $stmt = $db->prepare("
+            SELECT started_at, ended_at FROM watch_history
+            WHERE ended_at >= :cutoff AND started_at > 0 AND ended_at > started_at
+            UNION ALL
+            SELECT first_seen, MAX(last_seen, first_seen + 1) FROM active_sessions WHERE first_seen > 0
+        ");
+        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
+        $res = $stmt->execute();
+        $events = [];
+        while ($row = $res->fetchArray(SQLITE3_NUM)) {
+            $events[] = [(int)$row[0], 1];
+            $events[] = [(int)$row[1], -1];
+        }
+        $stmt->close();
+        usort($events, function($a, $b) { return $a[0] - $b[0] ?: $a[1] - $b[1]; });
+        return $events;
+    }
+
+    private function statsPeriodDays(): int
+    {
+        return match((string)($_GET['period'] ?? '30d')) {
+            'all'  => 0,
             '7d'   => 7,
             '90d'  => 90,
             '180d' => 180,
             '365d' => 365,
             default => 30,
         };
-        return time() - ($days * 86400);
+    }
+
+    private function statsPeriodCutoff(): int
+    {
+        $days = $this->statsPeriodDays();
+        return $days > 0 ? time() - ($days * 86400) : 0;
+    }
+
+    private function statsFillStart(\SQLite3 $db): \DateTime
+    {
+        $days  = $this->statsPeriodDays();
+        $start = new \DateTime('today');
+        if ($days > 0) return $start->modify('-' . ($days - 1) . ' days');
+        $first = (int)@$db->querySingle("SELECT MIN(started_at) FROM watch_history WHERE started_at > 0");
+        return ($first > 0 && $first < time()) ? $start->setTimestamp($first)->setTime(0, 0) : $start;
+    }
+
+    private function fillDays(\DateTime $start, array $rawDays, array $template): array
+    {
+        $days = [];
+        foreach (new \DatePeriod($start, new \DateInterval('P1D'), new \DateTime('tomorrow')) as $dt) {
+            $d = $dt->format('Y-m-d');
+            $days[] = $rawDays[$d] ?? array_merge(['date' => $d], $template);
+        }
+        return $days;
     }
 
     private function replyGetStats(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $cutoff = $this->statsPeriodCutoff();
 
@@ -2346,20 +2587,12 @@ final class StreamViewerEndpoint
         $uniqueUsers = (int)($stmt->execute()->fetchArray(SQLITE3_ASSOC)['cnt'] ?? 0);
         $stmt->close();
 
-        $stmt = $db->prepare("
-            SELECT MAX(cnt) AS peak FROM (
-                SELECT COUNT(*) AS cnt
-                FROM watch_history
-                WHERE ended_at >= :cutoff
-                GROUP BY CAST(started_at / 3600 AS INTEGER)
-            )
-        ");
-        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
-        $peak = (int)($stmt->execute()->fetchArray(SQLITE3_ASSOC)['peak'] ?? 0);
-        $stmt->close();
-
-        $activeCnt = (int)$db->querySingle("SELECT COUNT(*) FROM active_sessions");
-        if ($activeCnt > $peak) $peak = $activeCnt;
+        $peak    = 0;
+        $running = 0;
+        foreach ($this->concurrentEvents($db, $cutoff) as $ev) {
+            $running += $ev[1];
+            if ($running > $peak) $peak = $running;
+        }
 
         $stmt = $db->prepare("
             SELECT play_type, COUNT(*) AS cnt
@@ -2401,8 +2634,7 @@ final class StreamViewerEndpoint
 
     private function replyGetDailyChart(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $cutoff = $this->statsPeriodCutoff();
 
@@ -2427,23 +2659,12 @@ final class StreamViewerEndpoint
         }
         $stmt->close();
 
-        $days = [];
-        $start = new \DateTime("@{$cutoff}");
-        $start->setTimezone(new \DateTimeZone(date_default_timezone_get()));
-        $end = new \DateTime('now', new \DateTimeZone(date_default_timezone_get()));
-        $period = new \DatePeriod($start, new \DateInterval('P1D'), $end->modify('+1 day'));
-        foreach ($period as $dt) {
-            $d = $dt->format('Y-m-d');
-            $days[] = $rawDays[$d] ?? ['date' => $d, 'plex' => 0, 'jellyfin' => 0, 'emby' => 0];
-        }
-
-        $this->json(['daily' => $days]);
+        $this->json(['daily' => $this->fillDays($this->statsFillStart($db), $rawDays, ['plex' => 0, 'jellyfin' => 0, 'emby' => 0])]);
     }
 
     private function replyGetTopMedia(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $cutoff = $this->statsPeriodCutoff();
         $limit  = min(50, max(1, (int)($_GET['limit'] ?? 10)));
@@ -2480,8 +2701,7 @@ final class StreamViewerEndpoint
 
     private function replyGetTopUsers(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $cutoff = $this->statsPeriodCutoff();
         $limit  = min(50, max(1, (int)($_GET['limit'] ?? 10)));
@@ -2517,8 +2737,7 @@ final class StreamViewerEndpoint
 
     private function replyGetHistory(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $cutoff   = $this->statsPeriodCutoff();
         $page     = max(1, (int)($_GET['page'] ?? 1));
@@ -2551,7 +2770,6 @@ final class StreamViewerEndpoint
             $binds[':mt'] = [$filterMedia, SQLITE3_TEXT];
         }
         if ($filterSearch !== '') {
-            // backslash first, otherwise it escapes the backslashes this very call adds
             $safeSearch = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $filterSearch);
             $where .= " AND title LIKE :search ESCAPE '\\'";
             $binds[':search'] = ['%' . $safeSearch . '%', SQLITE3_TEXT];
@@ -2569,7 +2787,6 @@ final class StreamViewerEndpoint
         $totalSec = (int)($sumRow['total_sec'] ?? 0);
         $avgSec   = $total > 0 ? (int)round($totalSec / $total) : 0;
 
-        // group in sqlite, pulling one row per stream into php was a full scan on a long history
         $remStmt = $db->prepare("
             SELECT ip_address, COUNT(*) AS n FROM watch_history
             WHERE {$where} AND ip_address != ''
@@ -2643,11 +2860,9 @@ final class StreamViewerEndpoint
         ]);
     }
 
-    // one call feeds the whole downloads tab: cards, both leaderboards and the table
     private function replyGetDownloads(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $cutoff = $this->statsPeriodCutoff();
         $server = (string)($_GET['server'] ?? '');
@@ -2668,7 +2883,7 @@ final class StreamViewerEndpoint
 
         $st = $db->prepare("
             SELECT COUNT(*) AS total,
-                   COUNT(DISTINCT user_id) AS users,
+                   COUNT(DISTINCT user) AS users,
                    SUM(media_type = 'episode') AS episodes,
                    SUM(media_type = 'movie')   AS movies
             FROM download_history WHERE $where
@@ -2679,7 +2894,7 @@ final class StreamViewerEndpoint
 
         $st = $db->prepare("
             SELECT CASE WHEN series != '' THEN series ELSE title END AS name,
-                   media_type, COUNT(*) AS downloads, COUNT(DISTINCT user_id) AS users
+                   media_type, COUNT(*) AS downloads, COUNT(DISTINCT user) AS users
             FROM download_history WHERE $where AND title != ''
             GROUP BY name ORDER BY downloads DESC LIMIT 5
         ");
@@ -2771,8 +2986,7 @@ final class StreamViewerEndpoint
 
     private function replyGetUserStats(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $cutoff = $this->statsPeriodCutoff();
 
@@ -2866,7 +3080,6 @@ final class StreamViewerEndpoint
         }
         $stmt->close();
 
-        // downloads join by user name, a download-only user gets a card with zero plays
         $dl = $db->prepare("
             SELECT user, COUNT(*) AS cnt, MAX(downloaded_at) AS last_at,
                    GROUP_CONCAT(DISTINCT server_type) AS servers
@@ -2936,8 +3149,7 @@ final class StreamViewerEndpoint
 
     private function replyGetGraphData(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $cutoff = $this->statsPeriodCutoff();
 
@@ -3071,18 +3283,7 @@ final class StreamViewerEndpoint
         }
         $stmt->close();
 
-        $fillDates = function(int $cutoff, array $rawDays, array $template): array {
-            $days = [];
-            $start = new \DateTime("@{$cutoff}");
-            $start->setTimezone(new \DateTimeZone(date_default_timezone_get()));
-            $end = new \DateTime('now', new \DateTimeZone(date_default_timezone_get()));
-            $period = new \DatePeriod($start, new \DateInterval('P1D'), $end->modify('+1 day'));
-            foreach ($period as $dt) {
-                $d = $dt->format('Y-m-d');
-                $days[] = $rawDays[$d] ?? array_merge(['date' => $d], $template);
-            }
-            return $days;
-        };
+        $fillStart = $this->statsFillStart($db);
 
         $bwKeyed = [];
         foreach ($bwDays as $b) $bwKeyed[$b['date']] = $b;
@@ -3164,28 +3365,10 @@ final class StreamViewerEndpoint
         }
         $stmt->close();
 
-        $stmt = $db->prepare("
-            SELECT started_at, ended_at
-            FROM watch_history
-            WHERE ended_at >= :cutoff AND started_at > 0 AND ended_at > started_at
-            ORDER BY started_at ASC
-        ");
-        $stmt->bindValue(':cutoff', $cutoff, SQLITE3_INTEGER);
-        $res = $stmt->execute();
-        $events = [];
-        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
-            $sa = (int)$row['started_at'];
-            $ea = (int)$row['ended_at'];
-            $events[] = [$sa, 1];
-            $events[] = [$ea, -1];
-        }
-        $stmt->close();
-        usort($events, function($a, $b) { return $a[0] - $b[0] ?: $a[1] - $b[1]; });
-
         $tz = new \DateTimeZone(date_default_timezone_get());
         $concurrentDays = [];
         $running = 0;
-        foreach ($events as $ev) {
+        foreach ($this->concurrentEvents($db, $cutoff) as $ev) {
             $running += $ev[1];
             $day = (new \DateTime("@{$ev[0]}"))->setTimezone($tz)->format('Y-m-d');
             if (!isset($concurrentDays[$day]) || $running > $concurrentDays[$day]['peak']) {
@@ -3245,7 +3428,7 @@ final class StreamViewerEndpoint
             SELECT g.country, g.country_code, COUNT(*) AS cnt
             FROM watch_history h
             INNER JOIN ip_geo_cache g ON g.ip = h.ip_address
-            WHERE h.ended_at >= :cutoff AND h.ip_address != ''
+            WHERE h.ended_at >= :cutoff AND h.ip_address != '' AND g.country_code != ''
             GROUP BY g.country_code
             ORDER BY cnt DESC LIMIT 15
         ");
@@ -3285,18 +3468,18 @@ final class StreamViewerEndpoint
         $stmt->close();
 
         $this->json([
-            'watch_time_daily'   => $fillDates($cutoff, $watchDays, ['plex' => 0, 'jellyfin' => 0, 'emby' => 0]),
+            'watch_time_daily'   => $this->fillDays($fillStart, $watchDays, ['plex' => 0, 'jellyfin' => 0, 'emby' => 0]),
             'peak_hours'         => $peakHours,
             'play_type_dist'     => $playDist,
             'media_type_dist'    => $mediaDist,
             'user_activity'      => $userActivity,
-            'local_remote_daily' => $fillDates($cutoff, $lrDays, ['local' => 0, 'remote' => 0]),
-            'bandwidth_daily'    => $fillDates($cutoff, $bwKeyed, ['avg_mbps' => 0]),
+            'local_remote_daily' => $this->fillDays($fillStart, $lrDays, ['local' => 0, 'remote' => 0]),
+            'bandwidth_daily'    => $this->fillDays($fillStart, $bwKeyed, ['avg_mbps' => 0]),
             'plays_by_dow'       => $dowCounts,
             'plays_per_month'    => $monthlyPlays,
             'top_devices'        => $topDevices,
             'library_activity'   => $libraryActivity,
-            'concurrent_daily'   => $fillDates($cutoff, $concurrentDays, ['peak' => 0]),
+            'concurrent_daily'   => $this->fillDays($fillStart, $concurrentDays, ['peak' => 0]),
             'source_res_dist'    => $sourceResDist,
             'stream_res_dist'    => $streamResDist,
             'completion_buckets' => $completionBuckets,
@@ -3342,12 +3525,8 @@ final class StreamViewerEndpoint
             return;
         }
 
-        $cache = self::CACHE_DIR;
-        if (is_dir($cache)) {
-            foreach (@scandir($cache) ?: [] as $f) {
-                if ($f === '.' || $f === '..') continue;
-                @unlink($cache . '/' . $f);
-            }
+        foreach (@scandir(self::CACHE_DIR) ?: [] as $f) {
+            if (preg_match('/^(stats_state|dl_\d+|lib_\d+|sess_.+)\.json$/', $f)) @unlink(self::CACHE_DIR . '/' . $f);
         }
 
         $this->json(['ok' => true, 'removed' => $removed]);
@@ -3355,23 +3534,15 @@ final class StreamViewerEndpoint
 
     private function replyGetAlerts(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
-        $period = (string)($_GET['period'] ?? '30d');
-        if ($period === 'all') {
-            $cutoff = 0;
-        } else {
-            $periodMap = ['7d' => 7, '30d' => 30, '90d' => 90, '180d' => 180, '365d' => 365];
-            $days = $periodMap[$period] ?? 30;
-            $cutoff = time() - ($days * 86400);
-        }
+        $cutoff = $this->statsPeriodCutoff();
 
         $bufferStmt = $db->prepare("
-            SELECT title, user, server_type, COUNT(*) AS cnt,
-                   ROUND(AVG(duration_sec)) AS avg_dur
+            SELECT title, user, server_type, SUM(short_plays) AS cnt,
+                   ROUND(SUM(short_sec) * 1.0 / SUM(short_plays)) AS avg_dur
             FROM watch_history
-            WHERE ended_at >= :cutoff AND duration_sec > 0 AND duration_sec < 120
+            WHERE ended_at >= :cutoff AND short_plays > 0
             GROUP BY title, user
             HAVING cnt >= 2
             ORDER BY cnt DESC
@@ -3451,17 +3622,16 @@ final class StreamViewerEndpoint
 
     private function replyGetLibraries(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $cfg     = $this->loadCfg();
         $servers = $this->getEnabledServers($cfg);
 
-        $now     = time();
-        $lastSync = (int)$db->querySingle("SELECT MAX(synced_at) FROM library_cache");
-        if (($now - $lastSync) > self::LIBRARY_CACHE_TTL) {
-            $this->syncLibraryData($db, $servers);
-        }
+        $now   = time();
+        $stale = array_values(array_filter($servers, function($srv) use ($now) {
+            return ($now - (int)($this->libState((int)$srv['id'])['at'] ?? 0)) > self::LIBRARY_CACHE_TTL;
+        }));
+        if (!empty($stale)) $this->syncLibraryData($db, $stale, $servers);
 
         $result = [];
         foreach ($servers as $srv) {
@@ -3469,7 +3639,7 @@ final class StreamViewerEndpoint
                 'index'     => $srv['index'],
                 'name'      => $srv['name'],
                 'type'      => $srv['type'],
-                'online'    => true,
+                'online'    => (bool)($this->libState((int)$srv['id'])['ok'] ?? false),
                 'synced_at' => 0,
                 'libraries' => [],
             ];
@@ -3480,7 +3650,7 @@ final class StreamViewerEndpoint
                 WHERE server_index = :idx
                 ORDER BY library_type ASC, library_name ASC
             ");
-            $stmt->bindValue(':idx', $srv['index'], SQLITE3_INTEGER);
+            $stmt->bindValue(':idx', $srv['id'], SQLITE3_INTEGER);
             $res = $stmt->execute();
             while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
                 $srvData['libraries'][] = [
@@ -3493,15 +3663,15 @@ final class StreamViewerEndpoint
             }
             $stmt->close();
 
-            $watchedByType = [];
             $typeToLibs = [];
             $typeTotals = [];
             foreach ($srvData['libraries'] as $idx => &$lib) {
                 $lib['watched'] = 0;
                 $t = $lib['type'];
+                $lib['watched_total'] = $t === 'movie' ? $lib['total_items'] : ($t === 'show' ? $lib['episode_count'] : 0);
                 if (!isset($typeToLibs[$t])) { $typeToLibs[$t] = []; $typeTotals[$t] = 0; }
                 $typeToLibs[$t][] = $idx;
-                $typeTotals[$t] += ($lib['total_items'] ?? 0);
+                $typeTotals[$t] += $lib['watched_total'] ?: $lib['total_items'];
             }
             unset($lib);
 
@@ -3522,11 +3692,9 @@ final class StreamViewerEndpoint
                 $totalForType = $typeTotals[$libType];
                 if ($totalForType > 0 && $totalWatched > 0) {
                     foreach ($indices as $idx) {
-                        $libItems = $srvData['libraries'][$idx]['total_items'] ?? 0;
-                        if ($libItems > 0) {
-                            $share = round($totalWatched * ($libItems / $totalForType));
-                            $srvData['libraries'][$idx]['watched'] = min((int)$share, $libItems);
-                        }
+                        $base  = $srvData['libraries'][$idx]['watched_total'];
+                        $share = (int)round($totalWatched * (($base ?: $srvData['libraries'][$idx]['total_items']) / $totalForType));
+                        $srvData['libraries'][$idx]['watched'] = $base > 0 ? min($share, $base) : $share;
                     }
                 }
             }
@@ -3553,15 +3721,16 @@ final class StreamViewerEndpoint
 
     private function replyGetRecentlyAdded(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $limit = min(50, max(1, (int)($_GET['limit'] ?? 10)));
+        $ids   = $this->serverIdList($this->getEnabledServers($this->loadCfg()));
 
         $stmt = $db->prepare("
             SELECT title, media_type, server_name, server_type, library_name, added_at,
                    COALESCE(type_label, '-') AS type_label
             FROM recently_added
+            WHERE server_index IN ({$ids})
             ORDER BY added_at DESC
             LIMIT :limit
         ");
@@ -3598,40 +3767,62 @@ final class StreamViewerEndpoint
 
     private function replySyncLibraries(): void
     {
-        $db = $this->openDb();
-        if ($db === null) $this->json(['error' => 'Stats not enabled'], 400);
+        $db = $this->statsDb();
 
         $cfg     = $this->loadCfg();
         $servers = $this->getEnabledServers($cfg);
-        $synced  = $this->syncLibraryData($db, $servers);
+        $synced  = $this->syncLibraryData($db, $servers, $servers);
 
         $this->json(['ok' => true, 'synced_servers' => $synced]);
     }
 
-    private function syncLibraryData(\SQLite3 $db, array $servers): int
+    private function libState(int $id): ?array
+    {
+        $st = @json_decode((string)@file_get_contents(self::CACHE_DIR . '/lib_' . $id . '.json'), true);
+        return is_array($st) ? $st : null;
+    }
+
+    private function serverIdList(array $servers): string
+    {
+        return implode(',', array_map(fn($srv) => (int)$srv['id'], $servers)) ?: '0';
+    }
+
+    private function syncLibraryData(\SQLite3 $db, array $servers, array $all): int
     {
         $now = time();
         $synced = 0;
 
+        $ids = $this->serverIdList($all);
+        if ((int)$db->querySingle("SELECT (SELECT COUNT(*) FROM library_cache WHERE server_index NOT IN ({$ids}))
+                                        + (SELECT COUNT(*) FROM recently_added WHERE server_index NOT IN ({$ids}))") > 0) {
+            $db->exec("DELETE FROM library_cache WHERE server_index NOT IN ({$ids})");
+            $db->exec("DELETE FROM recently_added WHERE server_index NOT IN ({$ids})");
+        }
+
         foreach ($servers as $srv) {
+            $libraries   = null;
+            $recentItems = null;
             try {
                 $libraries    = $this->fetchServerLibraries($srv);
                 $recentItems  = $this->fetchServerRecentlyAdded($srv);
             } catch (\Throwable $e) {
-                continue;
+
             }
+
+            $this->cachePut(self::CACHE_DIR . '/lib_' . (int)$srv['id'] . '.json',
+                (string)json_encode(['at' => $now, 'ok' => $libraries !== null]));
 
             if ($libraries === null) continue;
 
             $db->exec('BEGIN');
 
             $delLib = $db->prepare("DELETE FROM library_cache WHERE server_index = :idx");
-            $delLib->bindValue(':idx', $srv['index'], SQLITE3_INTEGER);
+            $delLib->bindValue(':idx', $srv['id'], SQLITE3_INTEGER);
             $delLib->execute();
             $delLib->close();
 
             $delRecent = $db->prepare("DELETE FROM recently_added WHERE server_index = :idx");
-            $delRecent->bindValue(':idx', $srv['index'], SQLITE3_INTEGER);
+            $delRecent->bindValue(':idx', $srv['id'], SQLITE3_INTEGER);
             $delRecent->execute();
             $delRecent->close();
 
@@ -3642,7 +3833,7 @@ final class StreamViewerEndpoint
                 VALUES (:idx, :sn, :st, :lid, :ln, :lt, :ti, :ec, :now)
             ");
             foreach ($libraries as $lib) {
-                $insLib->bindValue(':idx',  $srv['index'],                          SQLITE3_INTEGER);
+                $insLib->bindValue(':idx',  $srv['id'],                             SQLITE3_INTEGER);
                 $insLib->bindValue(':sn',   $this->sanitizeStr($srv['name']),        SQLITE3_TEXT);
                 $insLib->bindValue(':st',   $this->sanitizeStr($srv['type']),        SQLITE3_TEXT);
                 $insLib->bindValue(':lid',  $this->sanitizeStr($lib['id'] ?? ''),    SQLITE3_TEXT);
@@ -3664,7 +3855,7 @@ final class StreamViewerEndpoint
                     VALUES (:idx, :sn, :st, :title, :mt, :ln, :tl, :at, :now)
                 ");
                 foreach ($recentItems as $item) {
-                    $insRecent->bindValue(':idx',   $srv['index'],                              SQLITE3_INTEGER);
+                    $insRecent->bindValue(':idx',   $srv['id'],                                 SQLITE3_INTEGER);
                     $insRecent->bindValue(':sn',    $this->sanitizeStr($srv['name']),            SQLITE3_TEXT);
                     $insRecent->bindValue(':st',    $this->sanitizeStr($srv['type']),            SQLITE3_TEXT);
                     $insRecent->bindValue(':title', $this->sanitizeStr($item['title'] ?? ''),    SQLITE3_TEXT);
@@ -3972,27 +4163,29 @@ final class StreamViewerEndpoint
         }
 
         $cfg = $this->loadCfg();
-        // the widget and the tools page have their own toggle, the request does not say which one it came from
         if (($cfg['TOOL_ALLOW_KILL'] ?? '0') !== '1' && ($cfg['LIVE_ALLOW_KILL'] ?? '0') !== '1') {
             $this->json(['error' => 'Killing sessions is disabled'], 403);
         }
 
+        $serverId    = (int)($_POST['server_id']         ?? 0);
         $serverIndex = (int)($_POST['server_index']      ?? 0);
         $sessionId   = trim((string)($_POST['session_id']     ?? ''));
         $sessionKey  = trim((string)($_POST['session_key']    ?? ''));
         $plexUuid    = trim((string)($_POST['plex_session_uuid'] ?? ''));
         $reason      = substr(strip_tags(trim((string)($_POST['reason'] ?? 'Stream terminated by administrator'))), 0, 200);
 
-        if ($serverIndex < 1 || $serverIndex > self::MAX_SERVERS) $this->json(['error' => 'Invalid server'], 400);
         if ($sessionId === '' && $sessionKey === '') $this->json(['error' => 'Missing session identifier'], 400);
 
-        $type  = (string)($cfg["SERVER{$serverIndex}_TYPE"]  ?? '');
-        $url   = rtrim(trim((string)($cfg["SERVER{$serverIndex}_URL"]   ?? '')), '/');
-        $token = trim((string)($cfg["SERVER{$serverIndex}_TOKEN"] ?? ''));
-
-        if (!in_array($type, self::VALID_TYPES, true) || $url === '' || $token === '') {
-            $this->json(['error' => 'Server not properly configured'], 400);
+        $srv = null;
+        foreach ($this->getEnabledServers($cfg) as $cand) {
+            if ($serverId > 0 ? $cand['id'] === $serverId : $cand['index'] === $serverIndex) {
+                $srv = $cand;
+                break;
+            }
         }
+        if ($srv === null) $this->json(['error' => 'Invalid server'], 400);
+
+        ['type' => $type, 'url' => $url, 'token' => $token] = $srv;
 
         $result = match($type) {
             'plex'             => $this->killPlexSession($url, $token, $sessionKey, $plexUuid, $reason),
@@ -4033,7 +4226,6 @@ final class StreamViewerEndpoint
     {
         if ($sessionId === '') return ['ok' => false, 'error' => 'No session ID provided'];
 
-        // token goes in the header only, jellyfin ignores one of the two if both are sent
         $headers = $this->mediaAuthHeaders($type, $token);
 
         $stopUrl = $url . '/Sessions/' . rawurlencode($sessionId) . '/Playing/Stop';
@@ -4091,7 +4283,6 @@ final class StreamViewerEndpoint
             $this->json(['ok' => false, 'error' => "Bad PIN response from plex.tv (HTTP {$code})"], 502);
         }
 
-        // plex bounces the browser here after login, so it must not be able to point anywhere else
         $forwardUrl = trim((string)($_GET['forward_url'] ?? ''));
         $fwdHost    = (string)(parse_url($forwardUrl, PHP_URL_HOST) ?: '');
         $reqHost    = (string)(parse_url('http://' . ($_SERVER['HTTP_HOST'] ?? ''), PHP_URL_HOST) ?: '');
@@ -4272,54 +4463,44 @@ final class StreamViewerEndpoint
         if (!is_array($containers)) return [];
 
         $matched = [];
-        $typeKeywords = [
-            'plex'     => ['plex'],
-            'jellyfin' => ['jellyfin'],
-            'emby'     => ['emby'],
-        ];
 
         foreach ($servers as $srv) {
             $srvType = strtolower($srv['type'] ?? '');
-            $port = (int)(parse_url($srv['url'] ?? '', PHP_URL_PORT) ?: 0);
-            $portMatched = false;
+            $port    = (int)(parse_url($srv['url'] ?? '', PHP_URL_PORT) ?: 0);
+            $best    = null;
+            $top     = 0;
 
-            if ($port > 0) {
-                foreach ($containers as $c) {
-                    foreach ($c['Ports'] ?? [] as $p) {
-                        if ((int)($p['PrivatePort'] ?? 0) === $port || (int)($p['PublicPort'] ?? 0) === $port) {
-                            $cId   = substr($c['Id'] ?? '', 0, 12);
-                            $cName = ltrim(($c['Names'][0] ?? ''), '/');
-                            if ($cId !== '' && !isset($matched[$cId])) {
-                                $matched[$cId] = [
-                                    'name'        => $cName,
-                                    'server_name' => $srv['name'],
-                                    'server_type' => $srvType,
-                                ];
-                            }
-                            $portMatched = true;
-                            break 2;
-                        }
+            foreach ($containers as $c) {
+                $cId = substr((string)($c['Id'] ?? ''), 0, 12);
+                if ($cId === '' || isset($matched[$cId])) continue;
+
+                $label  = strtolower((string)($c['Image'] ?? '') . ' ' . implode(' ', (array)($c['Names'] ?? [])));
+                $isType = $srvType !== '' && strpos($label, $srvType) !== false;
+                $other  = false;
+                foreach (self::VALID_TYPES as $t) {
+                    if ($t !== $srvType && strpos($label, $t) !== false) $other = true;
+                }
+                $onPort = false;
+                foreach ($c['Ports'] ?? [] as $p) {
+                    if ($port > 0 && ((int)($p['PrivatePort'] ?? 0) === $port || (int)($p['PublicPort'] ?? 0) === $port)) {
+                        $onPort = true;
+                        break;
                     }
+                }
+
+                $score = $isType ? ($onPort ? 3 : 2) : (($onPort && !$other) ? 1 : 0);
+                if ($score > $top) {
+                    $top  = $score;
+                    $best = [$cId, ltrim((string)($c['Names'][0] ?? ''), '/')];
                 }
             }
 
-            if (!$portMatched && isset($typeKeywords[$srvType])) {
-                foreach ($containers as $c) {
-                    $cId = substr($c['Id'] ?? '', 0, 12);
-                    if ($cId === '' || isset($matched[$cId])) continue;
-                    $cName  = strtolower(ltrim(($c['Names'][0] ?? ''), '/'));
-                    $cImage = strtolower($c['Image'] ?? '');
-                    foreach ($typeKeywords[$srvType] as $kw) {
-                        if (strpos($cName, $kw) !== false || strpos($cImage, $kw) !== false) {
-                            $matched[$cId] = [
-                                'name'        => ltrim(($c['Names'][0] ?? ''), '/'),
-                                'server_name' => $srv['name'],
-                                'server_type' => $srvType,
-                            ];
-                            break 2;
-                        }
-                    }
-                }
+            if ($best !== null) {
+                $matched[$best[0]] = [
+                    'name'        => $best[1],
+                    'server_name' => $srv['name'],
+                    'server_type' => $srvType,
+                ];
             }
         }
 
@@ -4329,6 +4510,7 @@ final class StreamViewerEndpoint
         $handles = [];
 
         foreach ($matched as $cId => $info) {
+            $cId = (string)$cId;
             if (!preg_match('/^[a-f0-9]+$/i', $cId)) continue;
             $ch = curl_init('http://localhost/containers/' . $cId . '/stats?stream=false');
             curl_setopt_array($ch, [
@@ -4363,8 +4545,6 @@ final class StreamViewerEndpoint
                       - ((int)($st['precpu_stats']['cpu_usage']['total_usage'] ?? 0));
             $sysDelta = ((int)($st['cpu_stats']['system_cpu_usage'] ?? 0))
                       - ((int)($st['precpu_stats']['system_cpu_usage'] ?? 0));
-            $numCpus  = count($st['cpu_stats']['cpu_usage']['percpu_usage'] ?? []);
-            if ($numCpus === 0) $numCpus = (int)($st['cpu_stats']['online_cpus'] ?? 1);
             $cpuPct   = ($sysDelta > 0)
                 ? round(($cpuDelta / $sysDelta) * 100, 1)
                 : 0.0;
@@ -4397,7 +4577,8 @@ final class StreamViewerEndpoint
 
         $port = (int)(parse_url($currentUrl, PHP_URL_PORT) ?: 0);
         $scheme = parse_url($currentUrl, PHP_URL_SCHEME) ?: 'http';
-        if ($port <= 0) return '';
+        $type = (string)($srv['type'] ?? '');
+        if ($port <= 0 || $type === '') return '';
 
         $ch = curl_init('http://localhost/containers/json');
         curl_setopt_array($ch, [
@@ -4415,24 +4596,27 @@ final class StreamViewerEndpoint
         if (!is_array($containers)) return '';
 
         foreach ($containers as $c) {
+            $label = (string)($c['Image'] ?? '') . ' ' . implode(' ', (array)($c['Names'] ?? []));
+            if (stripos($label, $type) === false) continue;
+
             $networks = $c['NetworkSettings']['Networks'] ?? [];
             $ports    = $c['Ports'] ?? [];
 
-            $matchPort = false;
+            $target = 0;
             foreach ($ports as $p) {
                 $privPort = (int)($p['PrivatePort'] ?? 0);
                 $pubPort  = (int)($p['PublicPort']  ?? 0);
                 if ($privPort === $port || $pubPort === $port) {
-                    $matchPort = true;
+                    $target = $privPort;
                     break;
                 }
             }
-            if (!$matchPort) continue;
+            if ($target <= 0) continue;
 
             foreach ($networks as $net) {
                 $ip = (string)($net['IPAddress'] ?? '');
                 if ($ip !== '' && $ip !== '0.0.0.0') {
-                    return $scheme . '://' . $ip . ':' . $port;
+                    return $scheme . '://' . $ip . ':' . $target;
                 }
             }
         }
@@ -4763,6 +4947,21 @@ final class StreamViewerEndpoint
             $st = @stat($f);
             if (is_array($st) && isset($st['mtime']) && ($now - (int)$st['mtime']) > 30) @unlink($f);
         }
+    }
+
+    private function str($v, string $default = ''): string
+    {
+        return (is_string($v) || is_int($v) || is_float($v)) ? (string)$v : $default;
+    }
+
+    private function int($v): int
+    {
+        return (is_numeric($v) && abs((float)$v) < PHP_INT_MAX) ? (int)$v : 0;
+    }
+
+    private function float($v): float
+    {
+        return (is_numeric($v) && is_finite((float)$v)) ? (float)$v : 0.0;
     }
 
     private function sanitizeStr(string $s): string

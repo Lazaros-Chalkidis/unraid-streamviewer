@@ -18,15 +18,13 @@ require_once '/usr/local/emhttp/plugins/streamviewer/include/streamviewer_api.ph
 $cfg = @parse_plugin_cfg('streamviewer', true) ?: [];
 $asset_ver = StreamViewerEndpoint::assetVer();
 
-$statsEnabled = (($cfg['STATS_ENABLED'] ?? '0') === '1');  // the whole stats UI only renders when recording is on
+$statsEnabled = (($cfg['STATS_ENABLED'] ?? '0') === '1');
+$svt_geo_off  = (($cfg['STATS_GEO_LOOKUP'] ?? '0') === '1') ? '' : 'Lookup is off. Turn on Viewer locations in Settings.';
 
-$svt_active_types = StreamViewerEndpoint::activeServerTypes();  // only show server-type filters for the types actually configured
+$svt_active_types = StreamViewerEndpoint::activeServerTypes();
 $svt_type_labels  = ['plex' => 'Plex', 'jellyfin' => 'Jellyfin', 'emby' => 'Emby'];
 
-$dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
-$unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
-
-$svt_light    = in_array($unraid_theme, ['white', 'gray'], true);
+$svt_light    = StreamViewerEndpoint::lightTheme();
 $lightClass   = $svt_light ? ' svt-light' : '';
 
 $tile_config = [
@@ -36,19 +34,8 @@ $tile_config = [
     'libSectionsOpen' => (($cfg['LIB_SECTIONS_OPEN'] ?? '0') === '1'),
     'activeServerTypes' => StreamViewerEndpoint::activeServerTypes(),
 ];
-// a server name holding </script> would close the block early
 $tile_config_json = json_encode($tile_config, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG);
 
-$live_servers = [];
-for ($i = 1; $i <= 8; $i++) {
-    $enabled = ($cfg["SERVER{$i}_ENABLED"] ?? '0') === '1';
-    if (!$enabled) continue;
-    $live_servers[] = [
-        'index' => $i,
-        'name'  => StreamViewerEndpoint::serverName($cfg["SERVER{$i}_NAME"] ?? '', "Server {$i}"),
-        'type'  => (string)($cfg["SERVER{$i}_TYPE"] ?? ''),
-    ];
-}
 $live_interval_sec = max(5, (int)($cfg['LIVE_REFRESH_INTERVAL'] ?? 5));
 $live_config = [
     'svToken'             => $tile_config['svToken'],
@@ -64,9 +51,7 @@ $live_config = [
     'showSummary'         => (($cfg['LIVE_SHOW_SUMMARY']   ?? '1') === '1'),
     'showChart'           => (($cfg['LIVE_SHOW_CHART']     ?? '1') === '1'),
     'allowKill'           => (($cfg['LIVE_ALLOW_KILL']     ?? '0') === '1'),
-    'servers'             => $live_servers,
-    'noServersConfigured' => empty($live_servers),
-    'isResponsive'        => true,
+    'noServersConfigured' => !StreamViewerEndpoint::hasServers($cfg),
     'badgeTheme'          => (string)($cfg['LIVE_BADGE_THEME'] ?? 'default'),
     'largeView'           => true,
 ];
@@ -262,19 +247,19 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_
     <div class="svt-cards" id="svt-cards">
       <div class="svt-card">
         <div class="svt-card__label">Total plays</div>
-        <div class="svt-card__value" id="svt-total-plays">&mdash;</div>
+        <div class="svt-card__value" id="svt-total-plays">-</div>
       </div>
       <div class="svt-card">
         <div class="svt-card__label">Hours watched</div>
-        <div class="svt-card__value" id="svt-hours">&mdash;</div>
+        <div class="svt-card__value" id="svt-hours">-</div>
       </div>
       <div class="svt-card">
         <div class="svt-card__label">Unique users</div>
-        <div class="svt-card__value" id="svt-users">&mdash;</div>
+        <div class="svt-card__value" id="svt-users">-</div>
       </div>
       <div class="svt-card">
         <div class="svt-card__label">Peak concurrent</div>
-        <div class="svt-card__value" id="svt-peak">&mdash;</div>
+        <div class="svt-card__value" id="svt-peak">-</div>
       </div>
     </div>
 
@@ -388,15 +373,15 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_
       <div class="svt-cards" id="svt-lib-summary">
         <div class="svt-card">
           <div class="svt-card__label">Total items</div>
-          <div class="svt-card__value" id="svt-lib-total">&mdash;</div>
+          <div class="svt-card__value" id="svt-lib-total">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Libraries</div>
-          <div class="svt-card__value" id="svt-lib-count">&mdash;</div>
+          <div class="svt-card__value" id="svt-lib-count">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Servers</div>
-          <div class="svt-card__value" id="svt-lib-servers">&mdash;</div>
+          <div class="svt-card__value" id="svt-lib-servers">-</div>
         </div>
       </div>
 
@@ -458,19 +443,19 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_
       <div class="svt-cards">
         <div class="svt-card">
           <div class="svt-card__label">Total users</div>
-          <div class="svt-card__value" id="svt-u-total">&mdash;</div>
+          <div class="svt-card__value" id="svt-u-total">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Most active</div>
-          <div class="svt-card__value svt-card__value--sm" id="svt-u-most-active">&mdash;</div>
+          <div class="svt-card__value svt-card__value--sm" id="svt-u-most-active">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Avg plays / user</div>
-          <div class="svt-card__value" id="svt-u-avg-plays">&mdash;</div>
+          <div class="svt-card__value" id="svt-u-avg-plays">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Avg hours / user</div>
-          <div class="svt-card__value" id="svt-u-avg-hours">&mdash;</div>
+          <div class="svt-card__value" id="svt-u-avg-hours">-</div>
         </div>
       </div>
 
@@ -539,19 +524,19 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_
       <div class="svt-cards">
         <div class="svt-card">
           <div class="svt-card__label">Total entries</div>
-          <div class="svt-card__value" id="svt-h-total">&mdash;</div>
+          <div class="svt-card__value" id="svt-h-total">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Total watch time</div>
-          <div class="svt-card__value" id="svt-h-time">&mdash;</div>
+          <div class="svt-card__value" id="svt-h-time">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Avg duration</div>
-          <div class="svt-card__value" id="svt-h-avg">&mdash;</div>
+          <div class="svt-card__value" id="svt-h-avg">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Remote %</div>
-          <div class="svt-card__value" id="svt-h-remote">&mdash;</div>
+          <div class="svt-card__value" id="svt-h-remote">-</div>
         </div>
       </div>
 
@@ -611,19 +596,19 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_
       <div class="svt-cards">
         <div class="svt-card">
           <div class="svt-card__label">Downloads</div>
-          <div class="svt-card__value" id="svt-dl-total">&mdash;</div>
+          <div class="svt-card__value" id="svt-dl-total">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Unique users</div>
-          <div class="svt-card__value" id="svt-dl-users">&mdash;</div>
+          <div class="svt-card__value" id="svt-dl-users">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Episodes</div>
-          <div class="svt-card__value" id="svt-dl-episodes">&mdash;</div>
+          <div class="svt-card__value" id="svt-dl-episodes">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Movies</div>
-          <div class="svt-card__value" id="svt-dl-movies">&mdash;</div>
+          <div class="svt-card__value" id="svt-dl-movies">-</div>
         </div>
       </div>
 
@@ -847,14 +832,14 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_
         <div class="svt-graph-card">
           <div class="svt-graph-card__hd">
             <span class="svt-graph-card__title">Plays by country</span>
-            <span class="svt-graph-card__sub">Where your remote viewers are located</span>
+            <span class="svt-graph-card__sub"><?= $svt_geo_off ?: 'Where your remote viewers are located' ?></span>
           </div>
           <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--tall"><canvas id="svt-gr-country"></canvas></div>
         </div>
         <div class="svt-graph-card">
           <div class="svt-graph-card__hd">
             <span class="svt-graph-card__title">Top locations</span>
-            <span class="svt-graph-card__sub">Most active cities</span>
+            <span class="svt-graph-card__sub"><?= $svt_geo_off ?: 'Most active cities' ?></span>
           </div>
           <div class="svt-graph-canvas-wrap svt-graph-canvas-wrap--tall"><canvas id="svt-gr-locations"></canvas></div>
         </div>
@@ -895,19 +880,19 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_
       <div class="svt-cards" id="svt-alerts-cards">
         <div class="svt-card">
           <div class="svt-card__label">Active alerts</div>
-          <div class="svt-card__value" id="svt-al-total">&mdash;</div>
+          <div class="svt-card__value" id="svt-al-total">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Buffering warnings</div>
-          <div class="svt-card__value" id="svt-al-buffering">&mdash;</div>
+          <div class="svt-card__value" id="svt-al-buffering">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Inactive users</div>
-          <div class="svt-card__value" id="svt-al-inactive">&mdash;</div>
+          <div class="svt-card__value" id="svt-al-inactive">-</div>
         </div>
         <div class="svt-card">
           <div class="svt-card__label">Transcode ratio</div>
-          <div class="svt-card__value" id="svt-al-transcode">&mdash;</div>
+          <div class="svt-card__value" id="svt-al-transcode">-</div>
         </div>
       </div>
 
@@ -932,7 +917,6 @@ $live_config_json = json_encode($live_config, JSON_UNESCAPED_SLASHES | JSON_HEX_
 
 (function() {
     'use strict';
-    // unlock any narrow max-width ancestor so the tool can use the full page width
     function unlockAncestors() {
         var wrap = document.querySelector('.svt-wrapper');
         if (!wrap) return;

@@ -7,14 +7,12 @@
 (function () {
 'use strict';
 
-// guard against double bootstrap
 if (window.__svLiveBootstrapped) return;
 window.__svLiveBootstrapped = true;
 
 var _instance = null;
 var _started  = false;
 
-// the live tab reuses the same core as the widget, just a different container
 function ensureInstance() {
     if (_instance) return _instance;
     if (!window.SVCore || typeof window.SVCore.create !== 'function') return null;
@@ -26,7 +24,6 @@ function ensureInstance() {
     return _instance;
 }
 
-// poll until core and $ exist, then run
 function whenReady(cb) {
 
     if (window.SVCore && typeof window.SVCore.create === 'function' && typeof $ !== 'undefined') {

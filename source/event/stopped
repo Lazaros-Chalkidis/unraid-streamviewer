@@ -7,7 +7,6 @@
 
 PIDFILE=/var/run/streamviewer_poll.pid
 
-# a stale pidfile plus pid reuse would have us killing an unrelated root process
 kill_stale_poll() {
     [[ -f "$PIDFILE" ]] || return 0
     local pid
@@ -18,5 +17,4 @@ kill_stale_poll() {
     rm -f "$PIDFILE"
 }
 
-# stop the poll daemon on array stop
 kill_stale_poll

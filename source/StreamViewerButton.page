@@ -3,6 +3,10 @@ Title="Active Streams"
 Icon="cast.svg"
 ---
 <?php
-require_once '/usr/local/emhttp/plugins/streamviewer/include/streamviewer_api.php';
+$sv_badge = ((@parse_plugin_cfg('streamviewer', true) ?: [])['HEADER_SHOW_BADGE'] ?? '1') !== '0';
+$sv_ver   = rawurlencode(trim((string)@file_get_contents('/usr/local/emhttp/plugins/streamviewer/VERSION')) ?: 'dev');
 ?>
-<script src="/plugins/streamviewer/js/streamviewer-header.js<?= StreamViewerEndpoint::assetVer() ?>"></script>
+<style>.nav-item.StreamViewerButton:not(.sv-on){display:none}</style>
+<?php if ($sv_badge): ?>
+<script src="/plugins/streamviewer/js/streamviewer-header.js?v=<?= $sv_ver ?>"></script>
+<?php endif; ?>

@@ -19,15 +19,15 @@ var _backoffUntil = 0;
 var _errorCount   = 0;
 var _initialized  = false;
 var _reloadScheduled = false;
+var _denied          = false;
+var _failures        = 0;
 var _lastActiveStreams = 0;
 var _dockerPollTimer  = null;
 var _emptyStateEl     = null;
 
-// rolling bandwidth samples per session, feeds the live tab sparklines
 var _bandwidthHistory = {};
 var HISTORY_MAX = 30;
 
-// look these up fresh each time so the widget survives a re-mount
 var DOM = {
     container:  function() { return document.getElementById('sv-streams-container'); },
     emptyState: function() { return document.getElementById('sv-empty-state');       },
@@ -124,7 +124,6 @@ function fmtBitrate(kbps) {
 var _colorCache = {};
 var _colorCanvas = null;
 
-// average the poster's mid-tone pixels (skip near-black/white) to tint the synopsis
 function getDominantColor(img) {
     if (!_colorCanvas) {
         _colorCanvas = document.createElement('canvas');
@@ -141,7 +140,7 @@ function getDominantColor(img) {
     for (var i = 0; i < data.length; i += 4) {
         var r = data[i], g = data[i+1], b = data[i+2];
         var brightness = r * 0.299 + g * 0.587 + b * 0.114;
-        if (brightness < 20 || brightness > 235) continue;  // ignore very dark and very bright pixels, they wash out the average
+        if (brightness < 20 || brightness > 235) continue;
         rSum += r; gSum += g; bSum += b; count++;
     }
     if (count === 0) return null;
@@ -210,14 +209,12 @@ function sortSessions(sessions) {
     });
 }
 
-// session_id when present, otherwise a composite (some jellyfin sessions lack one)
 function bandwidthKey(s) {
     if (!s) return '';
     return s.session_id
         || (s.server_name + '|' + (s.session_key || '') + '|' + (s.user || '') + '|' + (s.title || ''));
 }
 
-// y-axis tracks a slow-moving peak so a steady stream stays flat and transcode jitter doesn't spike it
 function buildSparkline(history) {
     if (!Array.isArray(history) || history.length < 2) return '';
 
@@ -307,7 +304,7 @@ function renderRow(s) {
         killHtml = '<button class="sv-kill-btn"'
             + ' data-session-id="'       + esc(s.session_id         || '') + '"'
             + ' data-session-key="'      + esc(s.session_key        || '') + '"'
-            + ' data-server-name="'      + esc(s.server_name        || '') + '"'
+            + ' data-server-id="'        + (parseInt(s.server_id, 10) || 0) + '"'
             + ' data-plex-session-uuid="'+ esc(s.plex_session_uuid  || '') + '"'
             + ' title="Stop stream">'
             + '<i class="fa fa-stop" aria-hidden="true"></i>'
@@ -522,7 +519,6 @@ function buildSkeletons() {
         + '</div>';
 }
 
-// returns true if the row changed enough to need a full re-render, otherwise we patch in place
 function patchRow(el, s) {
 
     var titleEl = el.querySelector('.sv-stream__title');
@@ -679,7 +675,7 @@ function renderStreams(sessions, lastActivity) {
             if (laEl) {
                 if (lastActivity && lastActivity.user && lastActivity.title) {
                     laEl.textContent = 'Last stream ' + lastActivity.ago + ' by ' + lastActivity.user + ' \u2013 ' + lastActivity.title;
-                    laEl.title = laEl.textContent;   // shown truncated, full text on hover
+                    laEl.title = laEl.textContent;
                     laEl.style.display = '';
                 } else {
                     laEl.removeAttribute('title');
@@ -706,7 +702,6 @@ function renderStreams(sessions, lastActivity) {
     var newIds = {};
     var fragment = document.createDocumentFragment();
     var needRebindKill = false;
-    var needRebindRow3 = false;
 
     visible.forEach(function(s) {
         var sid = s.session_id || '';
@@ -723,7 +718,6 @@ function renderStreams(sessions, lastActivity) {
             if (newEl) {
                 fragment.appendChild(newEl);
                 needRebindKill = true;
-                needRebindRow3 = true;
             }
         }
     });
@@ -742,14 +736,6 @@ function renderStreams(sessions, lastActivity) {
     if (needRebindKill) bindKillButtons(container);
     bindRow3Toggles(container);
     applyDominantColors(container);
-}
-
-function resolveServerIndex(serverName) {
-    var servers = _cfg.servers || [];
-    for (var i = 0; i < servers.length; i++) {
-        if (servers[i].name === serverName) return servers[i].index;
-    }
-    return null;
 }
 
 function svWidgetConfirm(opts) {
@@ -804,7 +790,7 @@ function onKillClick(e) {
     var row             = btn.closest('.sv-stream');
     var sessionId       = btn.dataset.sessionId       || '';
     var sessionKey      = btn.dataset.sessionKey      || '';
-    var serverName      = btn.dataset.serverName      || '';
+    var serverId        = parseInt(btn.dataset.serverId, 10) || 0;
     var plexSessionUuid = btn.dataset.plexSessionUuid || '';
     var titleEl         = row && row.querySelector('.sv-stream__title');
     var title           = titleEl ? titleEl.textContent : (sessionId || 'this stream');
@@ -816,16 +802,11 @@ function onKillClick(e) {
         cancelLabel: 'Cancel',
     }).then(function(ok) {
         if (!ok) return;
-        var serverIndex = resolveServerIndex(serverName);
-        if (!serverIndex) {
-            alert('Could not identify the server for this stream.\nTry saving Settings and refreshing.');
-            return;
-        }
-        doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSessionUuid);
+        doKillSession(btn, row, serverId, sessionId, sessionKey, plexSessionUuid);
     });
 }
 
-function doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSessionUuid) {
+function doKillSession(btn, row, serverId, sessionId, sessionKey, plexSessionUuid) {
     btn.disabled = true;
     btn.innerHTML = '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i>';
 
@@ -836,7 +817,7 @@ function doKillSession(btn, row, serverIndex, sessionId, sessionKey, plexSession
         headers:  { 'X-Requested-With': 'XMLHttpRequest' },
         data: {
             action:            'kill_session',
-            server_index:      serverIndex,
+            server_id:         serverId,
             session_id:        sessionId,
             session_key:       sessionKey,
             plex_session_uuid: plexSessionUuid || '',
@@ -908,12 +889,18 @@ function flashPulse() {
 function updateErrorIndicator(stats) {
     var errCount    = 0;
     var totalCount  = (stats || []).length;
+    var reasons     = [];
     for (var i = 0; i < totalCount; i++) {
-        if ((stats[i].status || '') !== 'online') errCount++;
+        if ((stats[i].status || '') === 'online') continue;
+        errCount++;
+        if (stats[i].name) reasons.push(stats[i].name + ': ' + (stats[i].error || 'unreachable'));
     }
     var eb = DOM.errBadge();
     var ec = DOM.errCount();
-    if (eb) eb.style.display = errCount > 0 ? '' : 'none';
+    if (eb) {
+        eb.style.display = errCount > 0 ? '' : 'none';
+        eb.title = reasons.length ? reasons.join('\n') : 'One or more servers unreachable';
+    }
     if (ec) ec.textContent   = String(errCount);
 
     var dot = DOM.badgeDot();
@@ -1000,7 +987,6 @@ function applyDockerHtml() {
     if (el && _lastDockerHtml) el.innerHTML = _lastDockerHtml;
 }
 
-// unraid repaints the tile footer on its own schedule and wipes our html, put it back
 setInterval(function() {
     if (document.hidden || !_lastDockerHtml) return;
     var el = DOM.dockerStats();
@@ -1112,23 +1098,39 @@ function stopDockerPoll() {
     if (_dockerPollTimer) { clearInterval(_dockerPollTimer); _dockerPollTimer = null; }
 }
 
-function fetchSessions(onDone) {
-    // still backing off after an error, show the countdown and skip
-    if (Date.now() < _backoffUntil) {
+function reloadOnce() {
+    try {
+        if (sessionStorage.getItem('sv_reloaded')) return false;
+        sessionStorage.setItem('sv_reloaded', '1');
+    } catch(e) {}
+    return true;
+}
 
-        var ts = DOM.timestamp();
-        if (ts) {
-            var remaining = Math.ceil((_backoffUntil - Date.now()) / 1000);
-            ts.textContent = fmtNow() + ' (retry in ' + remaining + 's)';
-        }
+function showRetry() {
+    var ts = DOM.timestamp();
+    if (ts) ts.textContent = fmtNow() + ' (retry in ' + Math.ceil((_backoffUntil - Date.now()) / 1000) + 's)';
+}
+
+function renderUnreachable() {
+    var container = DOM.container();
+    if (!container) return;
+    container.innerHTML = buildSkeletons();
+    var text = container.querySelector('.sv-loading__text');
+    if (text) text.textContent = 'Connection problem, retrying...';
+    if (_emptyStateEl) _emptyStateEl.style.display = 'none';
+}
+
+function fetchSessions(onDone) {
+    if (Date.now() < _backoffUntil) {
+        showRetry();
         if (typeof onDone === 'function') onDone('backoff', null);
         return;
     }
-    if (_inFlight) return;  // one request at a time
+    if (_inFlight) return;
     _inFlight    = true;
     _lastFetchAt = Date.now();
 
-    var _inFlightTimeout = setTimeout(function() { _inFlight = false; }, 40000);  // safety net: clear the in-flight flag if the request never completes
+    var _inFlightTimeout = setTimeout(function() { _inFlight = false; }, 40000);
 
     $.ajax({
         url:      '/plugins/streamviewer/include/streamviewer_api.php',
@@ -1144,6 +1146,11 @@ function fetchSessions(onDone) {
         success: function(data) {
             _backoffUntil = 0;
             _errorCount   = 0;
+            _failures     = 0;
+            _denied       = false;
+            if (!_initialized) {
+                try { sessionStorage.removeItem('sv_reloaded'); } catch(e) {}
+            }
             _lastFetchAt  = Date.now();
             _sessions    = Array.isArray(data.sessions) ? data.sessions : [];
             _serverStats = Array.isArray(data.servers)  ? data.servers  : [];
@@ -1187,12 +1194,20 @@ function fetchSessions(onDone) {
                 ? xhr.responseJSON.error : (status || 'Request failed');
 
             if (xhr.status === 403 && !_reloadScheduled) {
-                _reloadScheduled = true;
-                setTimeout(function() { location.reload(); }, 2000);
-                return;
+                if (!_denied) {
+                    _denied = true;
+                    setTimeout(function() { fetchSessions(onDone); }, 1000);
+                    return;
+                }
+                if (reloadOnce()) {
+                    _reloadScheduled = true;
+                    setTimeout(function() { location.reload(); }, 2000);
+                    return;
+                }
             }
 
             _errorCount = (_errorCount || 0) + 1;
+            _failures++;
 
             if (_errorCount >= 4) {
                 _errorCount   = 0;
@@ -1200,10 +1215,9 @@ function fetchSessions(onDone) {
             } else {
                 _backoffUntil = Date.now() + (_errorCount === 1 ? 15000 : 45000);
             }
-            if (_errorCount >= 3) {
-                updateErrorIndicator([{ status: 'error' }]);
-            }
-            updateTimestamp();
+            updateErrorIndicator([{ status: 'error' }]);
+            if (!_initialized || _failures >= 3) renderUnreachable();
+            showRetry();
             if (typeof onDone === 'function') onDone(msg, null);
         },
 
@@ -1333,9 +1347,7 @@ function resolveConfig() {
         summaryOpen:         raw.summaryOpen  === true,
         allowKill:           raw.allowKill    === true,
         showDocker:          raw.showDocker   !== false,
-        servers:             Array.isArray(raw.servers) ? raw.servers : [],
         noServersConfigured: raw.noServersConfigured === true,
-        isResponsive:        raw.isResponsive !== false,
         badgeTheme:          String(raw.badgeTheme || 'default'),
         largeView:           raw.largeView === true,
     };

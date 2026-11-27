@@ -4,7 +4,6 @@
    License: GPLv3
    ========================================================================= */
 
-/* colours and tokens (plex/jellyfin/emby brand colours, severity, layout) */
 :root {
   --sv-play:    #4caf50;
   --sv-stream:  #2196f3;
@@ -28,7 +27,6 @@
   --sv-c-bg-faint:      rgba(255,255,255,.025);
 }
 
-/* light themes (white, gray) */
 .sv-light {
   --sv-c-text:          rgba(0,0,0,.85);
   --sv-c-text-mid:      rgba(0,0,0,.65);
@@ -51,7 +49,6 @@
   flex-shrink: 0 !important;
 }
 
-/* widget shell */
 .sv-widget-wrap,
 #db-streamviewer,
 #db-streamviewer td {
@@ -59,12 +56,8 @@
   max-width: 100% !important;
   box-sizing: border-box !important;
 }
-/* a table cell is sized by its content and ignores overflow, max-width 0 is what keeps
-   the dashboard column from being widened, the cell still fills the column */
 #db-streamviewer > tr > td { max-width: 0 !important; }
 
-/* 7.2 header */
-/* containment, not overflow, is what stops a table cell from being widened by its content */
 .sv-header { display: flex; width: 100%; align-items: flex-start; overflow: hidden; box-sizing: border-box; max-width: 100%; container-type: inline-size; }
 .sv-header__left,
 .sv-header .tile-header-left  { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .2rem; overflow: hidden; }
@@ -73,18 +66,6 @@
 .sv-header__icon  { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
 .sv-header__title { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sv-header__controls { display: flex; align-items: center; gap: .1rem; flex-shrink: 0; }
-
-/* pre-7.2 header */
-.sv-legacy-header {
-  display: flex; justify-content: space-between; align-items: flex-start;
-  padding: .3rem 0; width: 100%; overflow: hidden; box-sizing: border-box;
-  container-type: inline-size;
-}
-.sv-legacy-header__left  { display: flex; flex-direction: column; gap: .25rem; flex: 1; min-width: 0; overflow: hidden; }
-.sv-legacy-header__top   { display: flex; align-items: center; gap: .4rem; min-width: 0; overflow: hidden; }
-.sv-legacy-icon  { font-size: 1.4em; color: var(--sv-plex); }
-.sv-legacy-title { font-size: 1.05em; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sv-legacy-controls { display: flex; align-items: center; gap: .1rem; flex-shrink: 0; }
 
 .sv-header-meta {
   display: flex; align-items: center; gap: .4rem;
@@ -131,7 +112,6 @@
   max-width: 100%;
   overflow: hidden;
   box-sizing: border-box;
-  /* query container so breakpoints follow the tile, not the viewport */
   container-type: inline-size;
 }
 .sv-body {
@@ -140,11 +120,9 @@
   width: 100%;
   overflow: hidden;
   box-sizing: border-box;
-  /* second container: sv-body exists in both the tile and legacy tbody paths */
   container-type: inline-size;
 }
 
-/* stream cards */
 .sv-streams {
   display: flex; flex-direction: column;
   gap: var(--sv-row-gap);
@@ -164,7 +142,6 @@
 .sv-last-activity {
   width: 100%; max-width: 100%; text-align: center;
   font-size: .9em; font-style: normal; color: var(--sv-c-text-faint); opacity: .7;
-  /* min-width auto would force the full title width and widen the tile */
   min-width: 0; box-sizing: border-box;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -339,7 +316,6 @@
 
 .sv-stream__progress-wrap {
   display: flex; align-items: center; gap: .35rem;
-  /* shrinks instead of being clipped; max-width keeps it from growing */
   flex: 0 1 264px; min-width: 60px; max-width: 264px;
 }
 .sv-stream__progress {
@@ -544,7 +520,6 @@
 .sv-dtag--hw     { background: rgba(82,181,74,.1); color: #52b54b; border-color: rgba(82,181,74,.25); }
 .sv-dtag--reason { background: rgba(244,125,66,.08); color: rgba(244,125,66,.8); border-color: rgba(244,125,66,.2); font-weight: 500; }
 
-/* terminate-session button */
 .sv-kill-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: auto !important; height: auto !important;
@@ -614,7 +589,6 @@
   text-decoration: none !important;
 }
 
-/* responsive */
 @media (max-width: 640px) {
   .sv-stream__device { max-width: 100px; }
   .sv-stream__progress-wrap { flex-basis: 216px; max-width: 216px; }
@@ -623,7 +597,6 @@
 }
 
 @media (max-width: 480px) {
-  .sv-header-meta { padding-left: .5rem; }
   .sv-stream__progress-wrap { flex-basis: 168px; max-width: 168px; }
   .sv-stream__device { max-width: 80px; }
   .sv-stream__ip { font-size: .8em; padding: .1em .2em; }
@@ -639,7 +612,6 @@
 }
 
 @media (max-width: 360px) {
-  .sv-header-meta { padding-left: .25rem; }
   .sv-stream__sub { flex-wrap: wrap; gap: .25rem; }
   .sv-stream__progress-wrap { flex-basis: 144px; max-width: 144px; }
   .sv-stream__device-wrap { display: none; }
@@ -655,8 +627,6 @@
   .sv-stream__time { font-size: .65em; }
 }
 
-/* same steps keyed on the tile width, thresholds rescaled from viewport to tile.
-   these come after the media queries so they win when both match. */
 @container (max-width: 520px) {
   .sv-stream__device { max-width: 100px; }
   .sv-stream__progress-wrap { flex-basis: 216px; max-width: 216px; }
@@ -665,7 +635,6 @@
 }
 
 @container (max-width: 400px) {
-  .sv-header-meta { padding-left: .5rem; }
   .sv-stream__progress-wrap { flex-basis: 168px; max-width: 168px; }
   .sv-stream__device { max-width: 80px; }
   .sv-stream__ip { font-size: .8em; padding: .1em .2em; }
@@ -681,7 +650,6 @@
 }
 
 @container (max-width: 320px) {
-  .sv-header-meta { padding-left: .25rem; }
   .sv-stream__sub { flex-wrap: wrap; gap: .25rem; }
   .sv-stream__progress-wrap { flex-basis: 144px; max-width: 144px; }
   .sv-stream__device-wrap { display: none; }
@@ -697,7 +665,6 @@
   .sv-stream__time { font-size: .65em; }
 }
 
-/* kill confirm modal */
 .sv-w-modal-host {
 
   position: static;

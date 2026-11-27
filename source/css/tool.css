@@ -4,7 +4,6 @@
    License: GPLv3
    ========================================================================= */
 
-/* tokens, kept separate from the widget so the tool has no load-order dependency */
 :root {
   --svt-bg:        #1a1a1a;
   --svt-surface:   #242424;
@@ -45,7 +44,6 @@
   }
 }
 
-/* tabs */
 .svt-tabs {
   display: flex;
   align-items: flex-end;
@@ -90,7 +88,6 @@
   border-radius: 0 0 8px 8px;
 }
 
-/* shown when stats recording is off */
 .svt-disabled {
   text-align: center;
   padding: 4rem 2rem;
@@ -103,7 +100,6 @@
 
 .svt-tab-panel { display: block; }
 
-/* page header */
 .svt-header {
   display: flex;
   align-items: flex-start;
@@ -193,7 +189,6 @@
   border-radius: 4px;
 }
 
-/* stat cards */
 .svt-cards {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -257,7 +252,6 @@
 .svt-section__header .svt-section__title { margin-bottom: 0; }
 .svt-filters { display: flex; gap: .4rem; }
 
-/* chart.js canvases */
 .svt-chart-wrap {
   position: relative;
   width: 100%;
@@ -511,7 +505,6 @@
 
 .svt-card__value--sm { font-size: 1.4rem; }
 
-/* per-user stats cards */
 .svt-user-card {
   background: var(--svt-surface);
   border: 0.5px solid var(--svt-border-strong);
@@ -594,7 +587,6 @@
   .svt-user-stats--dl { grid-template-columns: repeat(3, 1fr); }
 }
 
-/* history tab */
 .svt-hist-filters {
   display: flex;
   flex-wrap: wrap;
@@ -676,7 +668,6 @@
 .svt-ip-tag--local  { color: #4caf50; }
 .svt-ip-tag--remote { color: #c62828; }
 
-/* graphs tab */
 .svt-graph-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -957,7 +948,7 @@
 .sv-widget-wrap.sv-large-view .sv-tile-title {
   font-size: 14px;
   font-weight: 500;
-  color: var(--svt-text-primary, rgba(255,255,255,.92));
+  color: rgba(255,255,255,.92);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -988,7 +979,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--svt-text-secondary, rgba(255,255,255,.7));
+  color: rgba(255,255,255,.7);
   text-decoration: none;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
@@ -996,7 +987,7 @@
 .sv-widget-wrap.sv-large-view .tile-header-right-controls a:hover {
   background: rgba(255,255,255,.04);
   border-color: rgba(255,255,255,.18);
-  color: var(--svt-text-primary, rgba(255,255,255,.92));
+  color: rgba(255,255,255,.92);
 }
 
 .sv-widget-wrap.sv-large-view .sv-streams {
@@ -1012,7 +1003,7 @@
   align-items: center;
   justify-content: space-between;
   font-size: 11px;
-  color: var(--svt-text-secondary, rgba(255,255,255,.55));
+  color: rgba(255,255,255,.55);
 }
 
 .svt-light .sv-widget-wrap.sv-large-view {
@@ -1026,7 +1017,7 @@
 }
 
 .svt-light .sv-widget-wrap.sv-large-view .sv-tile-title {
-  color: var(--svt-text-primary, rgba(0,0,0,.85));
+  color: rgba(0,0,0,.85);
 }
 
 .svt-light .sv-widget-wrap.sv-large-view .tile-header-right-controls a {
@@ -1099,7 +1090,7 @@
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--svt-text-secondary, rgba(255,255,255,.75));
+  color: rgba(255,255,255,.75);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1117,7 +1108,7 @@
   gap: 12px;
   padding-top: 8px;
   font-size: 11px;
-  color: var(--svt-text-secondary, rgba(255,255,255,.55));
+  color: rgba(255,255,255,.55);
 }
 
 .sv-stream--large .sv-stream__sparkline-label {
@@ -1168,7 +1159,7 @@
 
 .sv-stream--large .sv-stream__bandwidth-now {
   font-weight: 500;
-  color: var(--svt-text-primary, rgba(255,255,255,.85));
+  color: rgba(255,255,255,.85);
   margin-left: auto;
 }
 
@@ -1215,8 +1206,13 @@
 #svtPanelLive .svt-header__sub.sv-refresh-indicator {
   display: inline-flex; align-items: center; gap: 6px;
   margin-left: 10px;
-  color: var(--svt-text-secondary, rgba(255,255,255,.55));
+  color: rgba(255,255,255,.55);
   font-size: 12px;
+}
+.svt-light #svtPanelLive .svt-header__sub.sv-refresh-indicator {
+  color: var(--svt-text-dim);
+  --sv-c-text: var(--svt-text);
+  --sv-c-text-muted: var(--svt-text-dim);
 }
 #svtPanelLive .svt-header__sub .sv-pulse {
   width: 8px; height: 8px; border-radius: 50%;
@@ -1257,7 +1253,7 @@
 
 .svll-stat__label {
   font-size: 11px;
-  color: var(--svt-text-secondary, rgba(255,255,255,.55));
+  color: rgba(255,255,255,.55);
   margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
@@ -1267,7 +1263,7 @@
 .svll-stat__value {
   font-size: 18px;
   font-weight: 600;
-  color: var(--svt-text-primary, rgba(255,255,255,.95));
+  color: rgba(255,255,255,.95);
   white-space: nowrap;
 }
 
@@ -1289,7 +1285,7 @@
 
 .svll-type__head {
   font-size: 11px;
-  color: var(--svt-text-secondary, rgba(255,255,255,.65));
+  color: rgba(255,255,255,.65);
   margin-bottom: 6px;
 }
 
@@ -1316,7 +1312,7 @@
 
 .svll-type__pct {
   font-size: 11px;
-  color: var(--svt-text-secondary, rgba(255,255,255,.55));
+  color: rgba(255,255,255,.55);
   margin-top: 4px;
 }
 

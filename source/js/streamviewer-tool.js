@@ -14,21 +14,19 @@ var _cfg        = window.svToolConfig || {};
 var _token      = _cfg.svToken || '';
 var _light      = _cfg.lightTheme || false;
 var _period     = '30d';
-var _histPage   = 1;
 var _chart      = null;
 var _loading    = false;
 
 var _activeServerTypes = (_cfg.activeServerTypes && _cfg.activeServerTypes.length)
     ? _cfg.activeServerTypes
     : ['plex', 'jellyfin', 'emby'];
-// is this server type configured, used to hide charts for types the user doesn't run
 function _hasServerType(t) {
     for (var i = 0; i < _activeServerTypes.length; i++) {
         if (_activeServerTypes[i] === t) return true;
     }
     return false;
 }
-var _hasDownloads = _hasServerType('jellyfin') || _hasServerType('emby');  // plex never logs downloads
+var _hasDownloads = _hasServerType('jellyfin') || _hasServerType('emby');
 
 var _chartColors = _light ? {
     tooltipBg:    '#ffffff',
@@ -97,6 +95,25 @@ function fetchJson(action, extra) {
     });
 }
 
+function failText(xhr) {
+    return (xhr && xhr.responseJSON && xhr.responseJSON.error) || 'Failed to load';
+}
+
+function showFailed(xhr, ids) {
+    var text = failText(xhr);
+    for (var i = 0; i < ids.length; i++) {
+        var el = document.getElementById(ids[i]);
+        if (!el) continue;
+        if (el.tagName === 'SPAN') {
+            el.textContent = text;
+        } else if (el.tagName === 'TBODY') {
+            el.innerHTML = '<tr><td colspan="' + el.parentNode.querySelectorAll('thead th').length + '" class="svt-table__empty">' + esc(text) + '</td></tr>';
+        } else {
+            el.innerHTML = '<div class="' + (el.classList.contains('svt-list') ? 'svt-list__empty' : 'svt-table__empty') + '">' + esc(text) + '</div>';
+        }
+    }
+}
+
 function loadStats() {
     return fetchJson('get_stats').then(function(data) {
         var el;
@@ -134,7 +151,7 @@ function loadStats() {
             var periodLabel = { '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days', '180d': 'Last 180 days', '365d': 'Last 365 days', 'all': 'All time' };
             sub.textContent = (periodLabel[_period] || 'Last 30 days');
         }
-    });
+    }).fail(function(xhr) { showFailed(xhr, ['svt-subtitle']); });
 }
 
 function setBar(fillEl, pctEl, value, total) {
@@ -250,7 +267,7 @@ function loadDailyChart() {
                 },
             },
         });
-    });
+    }).fail(function(xhr) { showFailed(xhr, ['svt-chart-period']); });
 }
 
 var AVATAR_COLORS = ['#e5a00d','#00a4dc','#52b54b','#e91e63','#9c27b0','#ff5722','#00bcd4','#8bc34a'];
@@ -291,7 +308,7 @@ function loadTopMedia() {
                   + '</div>';
         }
         el.innerHTML = html;
-    });
+    }).fail(function(xhr) { showFailed(xhr, ['svt-top-media']); });
 }
 
 function loadTopUsers() {
@@ -327,7 +344,7 @@ function loadTopUsers() {
                   + '</div>';
         }
         el.innerHTML = html;
-    });
+    }).fail(function(xhr) { showFailed(xhr, ['svt-top-users']); });
 }
 
 function mediaTypeIcon(type) {
@@ -386,7 +403,7 @@ function loadHistory() {
                   + '</tr>';
         }
         body.innerHTML = html;
-    });
+    }).fail(function(xhr) { showFailed(xhr, ['svt-history-body']); });
 }
 
 function serverBadge(type) {
@@ -410,7 +427,7 @@ function formatNumber(n) {
 }
 
 function formatDate(ts) {
-    if (!ts) return '\u2014';
+    if (!ts) return '-';
     var d = new Date(ts * 1000);
     var month = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     var h = d.getHours();
@@ -419,16 +436,17 @@ function formatDate(ts) {
          + ('0' + h).slice(-2) + ':' + m;
 }
 
-var _escDiv = null;
 function esc(s) {
     if (!s) return '';
-    if (!_escDiv) _escDiv = document.createElement('div');
-    _escDiv.textContent = s;
-    return _escDiv.innerHTML;
+    return String(s)
+        .replace(/&/g,  '&amp;')
+        .replace(/</g,  '&lt;')
+        .replace(/>/g,  '&gt;')
+        .replace(/"/g,  '&quot;')
+        .replace(/'/g,  '&#39;');
 }
 
 var _sizeSpan = null;
-// measure the selected option in a hidden span and size the select to fit it
 function autoSizeSelect(sel) {
     if (!sel) return;
     if (!_sizeSpan) {
@@ -484,7 +502,6 @@ var _usersLoaded = false;
 var _usersPeriod = '30d';
 var _histTabLoaded = false;
 var _histTabPage = 1;
-var _histTabPeriod = '30d';
 var _dlLoaded = false;
 var _dlPage = 1;
 var _graphsLoaded = false;
@@ -493,7 +510,6 @@ var _graphCharts = {};
 var _alertsLoaded = false;
 var _alertsPeriod = '30d';
 
-// lazy-loads each tab the first time it opens
 function switchTab(tabId) {
     if (_activeTab === tabId) return;
     var prevTab = _activeTab;
@@ -596,11 +612,11 @@ function loadLibraries() {
         for (var i = 0; i < servers.length; i++) {
             var s = servers[i];
             var dotColor = SERVER_DOT_COLORS[s.type] || '#999';
-            var isOnline = s.synced_at > 0;
+            var isOnline = s.online === true;
             var statusCls = isOnline ? 'svt-lib-server-hd__status--online' : 'svt-lib-server-hd__status--offline';
             var statusText = isOnline ? 'ONLINE' : 'OFFLINE';
             var offlineCls = isOnline ? '' : ' svt-lib-server--offline';
-            var syncAgo = isOnline ? timeAgo(s.synced_at) : 'Never';
+            var syncAgo = s.synced_at > 0 ? timeAgo(s.synced_at) : 'Never';
             var serverTint = 'rgba(0,164,220,.04)';
 
             var libOpen = _cfg.libSectionsOpen || false;
@@ -624,7 +640,8 @@ function loadLibraries() {
                     var icon    = LIB_TYPE_ICONS[lib.type]  || 'fa-folder';
                     var total   = lib.total_items || 0;
                     var watched = lib.watched || 0;
-                    var pct     = total > 0 ? Math.round((watched / total) * 100) : 0;
+                    var base    = lib.watched_total || 0;
+                    var pct     = base > 0 ? Math.min(100, Math.round((watched / base) * 100)) : 0;
                     var typeLabel = { movie: 'movies', show: 'shows', music: 'albums', photo: 'photos' }[lib.type] || 'items';
 
                     html += '<div class="svt-lib-card" style="' + (serverTint ? 'background:' + serverTint + ';' : '') + '">';
@@ -634,7 +651,7 @@ function loadLibraries() {
                     html += '<span class="svt-lib-card__name">' + esc(lib.name) + ' <span class="svt-lib-card__num">' + formatNumber(total) + ' ' + typeLabel + episodeSuffix + '</span></span>';
                     html += '</div>';
                     html += '<div class="svt-lib-card__bar"><div class="svt-lib-card__bar-fill" style="width:' + pct + '%;"></div></div>';
-                    html += '<div class="svt-lib-card__watched">' + pct + '% watched (' + formatNumber(watched) + ')</div>';
+                    html += '<div class="svt-lib-card__watched">' + (base > 0 ? pct + '% watched (' + formatNumber(watched) + ')' : formatNumber(watched) + ' played') + '</div>';
                     html += '</div>';
                 }
                 html += '</div>';
@@ -646,7 +663,7 @@ function loadLibraries() {
             html += '</div>';
         }
         container.innerHTML = html;
-    });
+    }).fail(function(xhr) { showFailed(xhr, ['svt-lib-servers-container']); });
 }
 
 function loadRecentlyAdded() {
@@ -683,7 +700,7 @@ function loadRecentlyAdded() {
             html += '</tr>';
         }
         body.innerHTML = html;
-    });
+    }).fail(function(xhr) { showFailed(xhr, ['svt-lib-recent-body']); });
 }
 
 function timeAgo(ts) {
@@ -709,7 +726,7 @@ function loadUserStats() {
         el = document.getElementById('svt-u-total');
         if (el) el.textContent = formatNumber(data.total_users || 0);
         el = document.getElementById('svt-u-most-active');
-        if (el) el.textContent = data.most_active || '\u2014';
+        if (el) el.textContent = data.most_active || '-';
         el = document.getElementById('svt-u-avg-plays');
         if (el) el.textContent = formatNumber(data.avg_plays || 0);
         el = document.getElementById('svt-u-avg-hours');
@@ -792,16 +809,14 @@ function loadUserStats() {
             html += '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val" style="color:#c0392b;">' + formatNumber(media.movie || 0) + '</div><div class="svt-user-stat__label">Movies</div></div>';
             html += '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val" style="color:#2980b9;">' + formatNumber(media.episode || 0) + '</div><div class="svt-user-stat__label">Episodes</div></div>';
             if (_hasDownloads) {
-                // a plex-only user gets a dash, plex never logs downloads
                 var plexOnly = serverParts.length === 1 && serverParts[0].trim() === 'plex';
                 html += plexOnly
-                    ? '<div class="svt-user-stat" style="' + tint + '" title="Plex does not log downloads"><div class="svt-user-stat__val" style="color:var(--svt-text-dim);">\u2014</div><div class="svt-user-stat__label">Downloads</div></div>'
+                    ? '<div class="svt-user-stat" style="' + tint + '" title="Plex does not log downloads"><div class="svt-user-stat__val" style="color:var(--svt-text-dim);">-</div><div class="svt-user-stat__label">Downloads</div></div>'
                     : '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val" style="color:#27ae60;">' + formatNumber(u.downloads || 0) + '</div><div class="svt-user-stat__label">Downloads</div></div>';
             }
-            html += '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val svt-user-stat__val--device">' + esc(u.last_device || '\u2014') + '</div><div class="svt-user-stat__label">Device</div></div>';
+            html += '<div class="svt-user-stat" style="' + tint + '"><div class="svt-user-stat__val svt-user-stat__val--device">' + esc(u.last_device || '-') + '</div><div class="svt-user-stat__label">Device</div></div>';
             html += '</div>';
 
-            // a download-only user has no plays, the bar would show 100% transcode out of nothing
             if (dp + ds + tc > 0) {
             html += '<div class="svt-user-pt">';
             html += '<span class="svt-user-pt__label">Play types:</span>';
@@ -817,7 +832,7 @@ function loadUserStats() {
             html += '</div>';
         }
         container.innerHTML = html;
-    });
+    }).fail(function(xhr) { showFailed(xhr, ['svt-users-container']); });
 }
 
 function histGetFilters() {
@@ -899,14 +914,13 @@ function loadDownloads() {
                       + '<td>' + esc(r.user) + '</td>'
                       + '<td title="' + esc(r.title) + '">' + esc(r.title || 'Unknown') + '</td>'
                       + '<td title="' + esc(r.server_name) + '">' + serverBadge(r.server_type) + '</td>'
-                      + '<td>' + esc(r.device || '—') + '</td>'
+                      + '<td>' + esc(r.device || '-') + '</td>'
                       + '</tr>';
             }
             body.innerHTML = html || '<tr><td colspan="5" class="svt-table__empty">No downloads in this period</td></tr>';
         }
         renderPagerFooter('svt-dl-footer', 'dlpage', data.page || 1, data.pages || 1, t.downloads || 0, data.per_page || 10);
 
-        // the user list is rebuilt from the full table, so a filtered reply never drops names
         if (userEl && data.user_names) {
             var names = data.user_names;
             var opts = '<option value="">All users</option>';
@@ -915,7 +929,7 @@ function loadDownloads() {
             }
             userEl.innerHTML = opts;
         }
-    });
+    }).fail(function(xhr) { showFailed(xhr, ['svt-dl-top-media', 'svt-dl-top-users', 'svt-dl-body']); });
 }
 
 function loadHistoryTab() {
@@ -998,6 +1012,9 @@ function loadHistoryTab() {
         body.innerHTML = html;
 
         renderHistFooter(data.page || 1, data.pages || 1, data.total || 0, data.per_page || 10);
+    }).fail(function(xhr) {
+        showFailed(xhr, ['svt-hist-body']);
+        renderHistFooter(0, 0, 0, 0);
     });
 }
 
@@ -1048,7 +1065,6 @@ function histExportCsv() {
         return fetchJson('get_history', extra + '&page=' + page).then(function(data) {
             var rows = data.rows || [];
             allRows = allRows.concat(rows);
-            // pull pages until done, capped at 10 so a huge history can't hang the export
             if (page < (data.pages || 1) && page < 10) {
                 page++;
                 return fetchPage();
@@ -1059,7 +1075,7 @@ function histExportCsv() {
     fetchPage().then(function() {
         if (!allRows.length) return;
 
-        var bom = '\uFEFF';  // BOM so excel opens the utf-8 csv with the right encoding
+        var bom = '\uFEFF';
         var csv = bom + 'Date,User,Title,Media Type,Server,Play Type,IP,Local/Remote,Duration\n';
         for (var i = 0; i < allRows.length; i++) {
             var r = allRows[i];
@@ -1084,7 +1100,6 @@ function histExportCsv() {
     });
 }
 
-// cheap string hash, used to pick a stable colour per user/title
 function hashStr(s) {
     var h = 0;
     for (var i = 0; i < (s || '').length; i++) {
@@ -1126,14 +1141,17 @@ function grBuildLegend(el, items) {
     el.innerHTML = html;
 }
 
-// builds the chart.js graphs for the graphs tab
 function loadGraphs() {
     var url = API + '?action=get_graph_data'
             + '&_svt=' + encodeURIComponent(_token)
             + '&period=' + encodeURIComponent(_graphsPeriod);
 
+    var sub = document.querySelector('#svtPanelGraphs .svt-header__sub');
+    if (sub && !sub.hasAttribute('data-text')) sub.setAttribute('data-text', sub.textContent);
+
     return $.ajax({ url: url, dataType: 'json', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
     .then(function(data) {
+        if (sub) sub.textContent = sub.getAttribute('data-text');
 
         var wt = data.watch_time_daily || [];
         var wtLabels = [], wtPlex = [], wtJf = [], wtEmby = [];
@@ -1447,6 +1465,8 @@ function loadGraphs() {
                               y: { ticks: { color: grTick(), font: { size: 13 } }, grid: { display: false } } } }
             });
         }
+    }).fail(function(xhr) {
+        if (sub) sub.textContent = failText(xhr);
     });
 }
 
@@ -1461,8 +1481,8 @@ function loadAlerts() {
         headers: { 'X-Requested-With': 'XMLHttpRequest' }
     }).done(function(d) {
         renderAlerts(d);
-    }).fail(function() {
-        if (contentEl) contentEl.innerHTML = '<div class="svt-table__empty">Failed to load alerts</div>';
+    }).fail(function(xhr) {
+        showFailed(xhr, ['svt-alerts-content']);
     });
 }
 
@@ -1623,11 +1643,10 @@ function startBackgroundRecording() {
     if (_bgRecordTimer) return;
     bgRecordPoll();
     _bgRecordTimer = setInterval(function() {
-        if (!document.hidden) bgRecordPoll();  // nothing to record for a tab nobody is looking at
+        if (!document.hidden) bgRecordPoll();
     }, _bgRecordIntervalMs);
 }
 
-// keep recording sessions while the stats page is open, even if the live tab isn't
 function bgRecordPoll() {
     $.ajax({
         url: API + '?action=get_sessions&_svt=' + encodeURIComponent(_token),
@@ -1656,7 +1675,6 @@ function init() {
     if (periodEl) {
         periodEl.addEventListener('change', function() {
             _period   = this.value;
-            _histPage = 1;
             loadAll();
         });
     }
@@ -1667,7 +1685,6 @@ function init() {
             e.preventDefault();
             var icon = refreshBtn.querySelector('.fa');
             if (icon) icon.className = 'fa fa-fw fa-hourglass-half control';
-            _histPage = 1;
             loadAll().always(function() {
                 if (icon) icon.className = 'fa fa-fw fa-refresh control';
             });

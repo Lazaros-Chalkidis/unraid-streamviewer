@@ -4,7 +4,6 @@
    License: GPLv3
    ========================================================================= */
 
-/* tokens */
 :root {
   --sv-c-text:          rgba(255,255,255,.87);
   --sv-c-text-mid:      rgba(255,255,255,.60);
@@ -51,7 +50,6 @@
   --sv-emby:           #52b54b;
 }
 
-/* light themes */
 .sv-light {
   --sv-c-text:          rgba(0,0,0,.85);
   --sv-c-text-mid:      rgba(0,0,0,.60);
@@ -173,7 +171,6 @@
   .sv-tab { padding: 7px 12px; font-size: 12px; }
 }
 
-/* collapsible sections */
 .sv-sec {
   border-bottom: 1px solid var(--sv-c-border);
 }
@@ -299,7 +296,6 @@
   }
 }
 
-/* on/off switches */
 .sv-toggle {
   position: relative;
   display: inline-flex;
@@ -386,7 +382,6 @@
 }
 .sv-light .sv-select option { background: #fff; color: rgba(0,0,0,.85); }
 
-/* scoped, emhttp styles input[type=text] with a bare underline and outranks a plain class */
 .streamviewer-settings .sv-input {
   appearance: none;
   -webkit-appearance: none;
@@ -432,7 +427,6 @@
   font-size: 11.5px !important;
 }
 
-/* footer (support link + version) */
 .sv-footer-row {
   text-align: center;
   padding: 8px 0 4px;
@@ -457,6 +451,7 @@
   transition: color .2s;
 }
 .sv-support-link:hover { color: #6bb3ff; }
+.sv-light .sv-support-link:hover { color: #1565c0; }
 .sv-support-links {
   display: inline-flex;
   align-items: center;
@@ -618,7 +613,6 @@
 }
 .sv-cancel-btn:hover { background: rgba(231,76,60,.18) !important; }
 
-/* per-server config cards */
 .sv-server-card {
   border: 1px solid var(--sv-c-border);
   border-radius: 6px;
@@ -1298,7 +1292,6 @@
   text-security: disc;
 }
 
-/* apply / reset / done bar */
 .sv-actions-bar {
   display: flex;
   gap: 6px;
@@ -1387,7 +1380,7 @@
   z-index: 9999;
 }
 .sv-warn-modal__box {
-  background: var(--svt-surface-elevated, #2a2a2a);
+  background: #2a2a2a;
   border: 1px solid rgba(229, 80, 80, .35);
   border-radius: 8px;
   width: min(440px, 92vw);

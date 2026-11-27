@@ -7,13 +7,11 @@
 (function () {
 'use strict';
 
-// only bootstrap once even if the script loads twice
 if (window.__svWidgetBootstrapped) return;
 window.__svWidgetBootstrapped = true;
 
 function boot() {
 
-    // wait for the shared core and unraid's $ to be ready
     if (!window.SVCore || typeof window.SVCore.create !== 'function' || typeof $ === 'undefined') {
         setTimeout(boot, 60);
         return;

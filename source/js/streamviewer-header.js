@@ -4,7 +4,6 @@
    License: GPLv3
    ========================================================================= */
 
-// navbar button click handler, opens the stats page
 function StreamViewerButton(){
     location.href = '/Tools/StreamViewerTool';
 }
@@ -13,13 +12,10 @@ function StreamViewerButton(){
     "use strict";
     var navItem = null;
     var badge = null;
-    var lastCount = 0;
 
     function setup(){
         navItem = document.querySelector('.nav-item.StreamViewerButton');
-        if(!navItem){ setTimeout(setup, 500); return; }  // nav item not in the dom yet, retry shortly
-
-        navItem.style.display = 'none';
+        if(!navItem){ setTimeout(setup, 500); return; }
 
         var link = navItem.querySelector('a');
         if(link){
@@ -42,7 +38,7 @@ function StreamViewerButton(){
                 svg.appendChild(p);
                 img.parentNode.replaceChild(svg, img);
 
-                var iconColor = getComputedStyle(link).color || '#ccc';  // tint the play glyph to match the navbar text colour
+                var iconColor = getComputedStyle(link).color || '#ccc';
                 svg.setAttribute('stroke', iconColor);
             }
 
@@ -62,7 +58,7 @@ function StreamViewerButton(){
 
         poll();
         setInterval(function(){
-            if (!document.hidden) poll();  // every open unraid tab runs this, no point polling the hidden ones
+            if (!document.hidden) poll();
         }, 10000);
         document.addEventListener('visibilitychange', function(){
             if (!document.hidden) poll();
@@ -76,15 +72,10 @@ function StreamViewerButton(){
         x.onload = function(){
             try {
                 var c = (JSON.parse(x.responseText).count) || 0;
-                lastCount = c;
-                if(c > 0){
-                    navItem.style.display = '';
-                    if(badge) badge.textContent = c;
-                } else {
-                    navItem.style.display = 'none';
-                }
+                navItem.classList.toggle('sv-on', c > 0);
+                if(c > 0 && badge) badge.textContent = c;
             } catch(e){
-                navItem.style.display = 'none';
+                navItem.classList.remove('sv-on');
             }
         };
         x.onerror = x.ontimeout = function(){};

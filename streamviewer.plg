@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "streamviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.10.27">
+ <!ENTITY version   "2026.11.27">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-streamviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "a0f01b0d4a03f627b12a4e02d63b8c55">
+ <!ENTITY md5       "a69e1d44a8d7bed1e29e49d84c52b756">
  <!ENTITY launch    "Settings/StreamViewerSettings">
 ]>
 
@@ -21,9 +21,73 @@
 A real-time media stream monitor and statistics tracker for Plex, Jellyfin and Emby. View active streams directly from the dashboard, and track detailed watch history through a dedicated statistics page.
 </DESCRIPTION>
 
-<CHANGES>
+<CHANGES><![CDATA[
 
 # Stream Viewer
+
+## v2026.11.27
+
+### Improvements
+- New setting "Viewer locations" under Settings, Statistics settings. Finding the country and city of remote viewers sends their public IP to ip-api.com without encryption, so this is now off until you turn it on. After the update the "Plays by country" and "Top locations" charts keep what they already have and get nothing new while the setting is off.
+- The settings page has a Guide link at the bottom, between Support and Credits. It opens the plugin's guide on GitHub.
+
+### Bug Fixes
+- Settings page: removing a server that was not the last in the list left the servers below it with the wrong token, and the last token was lost. Every server now keeps its own token.
+- Settings page: a server name containing an angle bracket, for example a heart typed with the less-than sign, made every server disappear, and the next Apply saved the empty list. Angle brackets are now left out of server names. The server URL, API key and database path are checked the same way.
+- When a server stopped answering, the plugin could replace its URL with an address it had not tested. For Jellyfin and Emby that could even be another container using the same port, and the server stayed broken after it came back. A new address is now saved only after the server has answered on it.
+- When several requests ran at the same moment, some of them were refused by mistake. A panel on the Tools page then stayed empty, and the Dashboard or the Live tab reloaded by itself. This no longer happens.
+- If requests kept being refused, the page reloaded every few seconds without end. It now repeats the request once, reloads at most one time, and then stops.
+- A damaged or empty statistics database file also stopped the live streams from showing. The live view now keeps working, and an empty file is set up as a new database.
+- When the array was stopped while a poll was running, the plugin could create its database folder in RAM under /mnt/user. It now writes only to a share or pool that is mounted.
+- With nothing playing, the plugin still touched the statistics database every minute, which kept its disk awake. An idle server no longer writes there.
+- The Settings and Tools pages used the dark look with the Azure theme and the light look with the Gray theme. Both now follow the Unraid theme.
+- Charts set to "All time" started in 1970, so the real data was squeezed into the right edge. They now start at the first recorded day.
+- Widget: when it could not load the streams it kept showing "Fetching streams..." or the old streams for about two minutes. It now says so right away and shows when it will try again.
+- Time spent on pause was counted as watch time. It no longer is.
+- One failed answer from a media server closed its running streams in the history, which could turn one play into two. A stream now stays open until the server answers again, for up to 10 minutes.
+- The "buffering" insight never appeared with the default "Merge paused sessions" setting. It now counts repeated short attempts on the same title.
+- "Peak concurrent" counted plays that started in the same hour. It now shows how many streams really ran at the same time.
+- Downloads: after a server was removed, downloads from the remaining servers were recorded a second time.
+- Downloads: all Emby users were counted as one user in the totals.
+- Libraries and Recently added: after a server was removed, the remaining servers showed each other's libraries for a few minutes, and entries of the removed server never went away.
+- Libraries: a server was always shown as ONLINE, even when it had stopped answering. The watched percentage of a series library compared episodes with the number of shows. It now compares episodes with episodes, and music libraries show a play count.
+- Stop stream: with two servers that had the same name, the command could go to the wrong one. Two servers can no longer share a name, the second one gets a number added.
+- Docker CPU and RAM: when Jellyfin and Emby used the same port inside their containers, the figures of one were shown under the other.
+- Updates left the old package file on the flash drive every time, and the settings file was rewritten on every boot. Both are fixed. The package also no longer changes the owner of system folders.
+- Settings page: a server URL or database path that was not valid was dropped without a word. Apply now says what is wrong and saves nothing until it is fixed. A URL typed without http:// is completed, and IPv6 addresses are accepted.
+- Settings page: a value that is not in a dropdown, for example a refresh interval kept from an older version, was replaced by the first option on the next Apply. It is now kept.
+- Settings page: switching tabs and pressing Apply no longer writes to the flash drive, and messages use the plugin's own dialog instead of the browser's.
+- Header button: it flashed with an empty icon on every page load and could show a stream count that was hours old. It now stays hidden until there are streams, and an old count is checked again.
+- Widget: a media server that could not be reached was only shown as "HTTP 0". The warning badge now names the server and the reason when you hover over it. A server that does not answer no longer slows down every refresh either, it is asked again after 30 seconds.
+- Widget: on a narrow tile, for example on a phone or a tablet, the stream count under the title was drawn over the tile icon. It now stays next to the icon, as on a wide screen.
+- Tools page: when a request failed, its panel stayed empty or on "Loading...". Every panel now says that it could not load, and gives the reason when there is one.
+- Viewer locations: an address that could not be located was sent to the lookup service again every minute. Each address is now looked up once, and addresses that have no location, such as Tailscale addresses, are no longer sent.
+- Without user shares the background recorder did nothing, so statistics were only recorded while a Stream Viewer page was open. It now also works when the database is on a pool or a disk.
+- Jellyfin and Emby: a stream that only changes the container (remux) was counted as Direct Play. It now counts as Direct Stream.
+- Plex and Emby: a transcode always showed "HW: SW", also when the server was transcoding with hardware. The label now shows the hardware the server reports, and says SW only for a software transcode.
+- Jellyfin: the "HW" label also appeared on streams that only convert the audio or change the container. It now shows only when the video is transcoded.
+- Jellyfin and Emby: the HDR, audio and subtitle labels showed the server's internal names, for example "DOVIWithHDR10", "DolbyAtmos" or "SUBRIP". They now read "Dolby Vision", "Dolby Atmos" and "SRT", like on Plex, and a stream with an unknown video range no longer gets an "Unknown" label.
+- Jellyfin: the container label of an MP4 file read "MOV,MP4,M4A,3GP,3G2,MJ2". It now reads "MP4".
+- Plex: DTS audio was labelled "DCA". It now reads "DTS".
+- Jellyfin and Emby: a stream in direct play showed "0 kbps". It was missing from the total bandwidth and counted as zero in the "Bandwidth usage" chart. It now shows the bitrate of the file. Plays recorded before this version keep the zero.
+- A media server that answered with unexpected data could stop the streams of all servers from showing, and nothing was recorded while it lasted. Such values are now left out, and if an answer cannot be read at all, only that server gets the warning badge while the others keep working.
+- Wipe statistics made the other open Stream Viewer pages show errors or reload. They now keep working.
+- Daily charts had one day too many, the first of them only half filled, and "All time" ended on tomorrow's date. A 7 day chart now shows 7 full days ending today.
+- Light themes: the time of the last refresh on the Active Stream/s tab was white on a white background. It is now dark like the rest of the text.
+- Light themes: the Support, Guide and Credits links at the bottom of the settings page turned paler under the pointer and were hard to read. They now turn darker.
+- Install and update: an old PID file left behind could make the installer stop a process that was not the plugin's. The installer now checks first.
+- Install: the message at the end named the settings page "Stream Viewer". It now uses the name the menu shows, "Stream Viewer Settings".
+- Requests with a list where a single value belongs wrote warnings to the PHP log, and on Apply they could change a few options. Such values are now ignored.
+
+### Security
+- A title or user name containing a double quote could run code in the browser when the Stream Viewer tool page was opened. Names coming from Plex, Jellyfin and Emby are now always shown as plain text. This also fixes tooltips that were cut at the first quote and the Downloads user filter, which found nothing for such names.
+- The Plex token was part of every poster address, so it was visible in the browser. It now stays on the server, the way the Jellyfin and Emby keys already did.
+- The poster loader accepted any address on a configured media server and returned whatever came back, using that server's key. A logged in user could read more than posters this way. It now loads poster images only.
+
+### Cleanup
+- Removed code that never ran and nine settings that were saved but never used. They disappear from the settings file the next time you press Apply.
+- Empty tiles show a plain hyphen, and the source files carry no comments apart from their header.
+- Build script: one plugin template instead of two, and the text of the changelog can no longer break the plugin file.
 
 ## v2026.10.27
 
@@ -321,11 +385,11 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 
 ### New Features
 - Technical Details: New collapsible row per stream showing video codec, audio codec + channels, audio spatial format (Dolby Atmos), container, subtitles, HW acceleration type, transcode reasons, and transcode buffer % (where available)
-- Transcode speed now visible in widget inside the TRANSCODE badge (Plex only — Jellyfin/Emby APIs don't provide this)
+- Transcode speed now visible in widget inside the TRANSCODE badge (Plex only, Jellyfin/Emby APIs don't provide this)
 - Show technical details toggle in Settings → Dashboard Widget → Display
 
 ### Cleanup
-- Removed all orphan Tool page code (JS, CSS) — feature was never implemented
+- Removed all orphan Tool page code (JS, CSS), the feature was never implemented
 - Renumbered JS sections (1–15) and CSS sections (1–14)
 
 ## Version 2026.03.17
@@ -344,7 +408,7 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 ### Security
 - TLS: Added configurable "Verify SSL certificates" toggle (Settings → Dashboard Widget → Connection)
 - TLS: Connections to plex.tv (OAuth, discovery) always verify SSL regardless of toggle
-- Thumb Proxy: Tightened URL validation — now matches host+port instead of prefix string
+- Thumb Proxy: Tightened URL validation, now matches host+port instead of prefix string
 - Thumb Proxy: Disabled redirect following to prevent open-redirect SSRF
 - Thumb Proxy: Added 5 MB response size cap
 
@@ -368,7 +432,7 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 - Kill Session: Stopping a stream on Plex now correctly disconnects the user in all cases
 - Kill Session: Stopped stream no longer reappears on the dashboard after being terminated
 - Kill Session: Added a short delay after stopping a stream before refreshing, so the server has time to fully close the session
-- Auto Refresh: The "Last Refresh" timer no longer freezes when the server is temporarily unreachable — it now shows how many seconds until the next retry
+- Auto Refresh: The "Last Refresh" timer no longer freezes when the server is temporarily unreachable, it now shows how many seconds until the next retry
 - Auto Refresh: Fixed rare issue where the widget could send two overlapping refresh requests at the same time
 - Auto Refresh: Widget now recovers automatically if the browser has slowed down background timers
 - Credits popup: OK button is now correctly centered
@@ -382,29 +446,41 @@ A real-time media stream monitor and statistics tracker for Plex, Jellyfin and E
 - Stream Details: User, device, IP address, playback progress, quality and codec info per stream
 - Transcode Monitoring: Visual indicators for Direct Play, Direct Stream, and Transcode sessions
 - Kill Session: Terminate active streams directly from the UI (configurable)
-- Plex OAuth: Secure Plex server setup via OAuth — no password ever stored
+- Plex OAuth: Secure Plex server setup via OAuth, no password ever stored
 - Auto-Rediscover: Automatically recovers Plex server URLs after IP changes
 - Server Filter: Filter streams by server type (Plex / Jellyfin / Emby)
 - Auto Refresh: Configurable polling interval for live updates
 - Mobile Responsive: Works on all screen sizes
 - Performance Friendly: Micro-cache, backoff on errors, lightweight polling
-</CHANGES>
+]]></CHANGES>
 
 <FILE Name="/boot/config/plugins/&name;/&name;-&version;.txz" Run="upgradepkg --install-new">
-  <URL>&pluginURL;</URL>
-  <MD5>&md5;</MD5>
+<URL>&pluginURL;</URL>
+<MD5>&md5;</MD5>
 </FILE>
 
-<!-- Back up existing user config before the FILE tag writes defaults -->
 <FILE Run="/bin/bash">
 <INLINE>
-if [[ -f /boot/config/plugins/&name;/&name;.cfg ]]; then cp /boot/config/plugins/&name;/&name;.cfg /boot/config/plugins/&name;/&name;.cfg.bak; fi
+[ -f /var/lib/pkgtools/packages/&name;-&version; ] || exit 0
+STAMP=$(date +%Y-%m-%d,%T)
+for pkg in /var/lib/pkgtools/packages/&name;-[0-9]*; do
+  if [ ! -f "$pkg" ] || [ "${pkg##*/}" = "&name;-&version;" ]; then continue; fi
+  mv "$pkg" "$pkg-upgraded-$STAMP" || continue
+  removepkg "${pkg##*/}-upgraded-$STAMP" | grep -v "Skipping\.\|Removing files:"
+done
+for txz in /boot/config/plugins/&name;/&name;-[0-9]*.txz; do
+  if [ ! -f "$txz" ] || [ "${txz##*/}" = "&name;-&version;.txz" ]; then continue; fi
+  if rm -f "$txz"; then echo "Removed old package ${txz##*/}"; else echo "Could not remove old package ${txz##*/}"; fi
+done
 </INLINE>
 </FILE>
 
-<!-- Write default config (post-install script restores backup if user had existing config) -->
-<FILE Name="/boot/config/plugins/&name;/&name;.cfg">
-  <INLINE>
+<FILE Run="/bin/bash">
+<INLINE>
+CFG=/boot/config/plugins/&name;/&name;.cfg
+if [ ! -f "$CFG" ]; then
+  mkdir -p /boot/config/plugins/&name;
+  cat > "$CFG.tmp" &lt;&lt; "CFGEOF"
 SERVER1_ENABLED="0"
 SERVER1_TYPE=""
 SERVER1_NAME=""
@@ -424,7 +500,6 @@ WIDGET_SHOW_PROGRESS="1"
 WIDGET_SHOW_QUALITY="1"
 WIDGET_SHOW_TRANSCODE="1"
 WIDGET_SHOW_DETAILS="1"
-WIDGET_DETAILS_OPEN="0"
 WIDGET_SHOW_DOCKER="1"
 TOOL_ALLOW_KILL="0"
 VERIFY_SSL="0"
@@ -433,69 +508,26 @@ STATS_DB_PATH="/mnt/user/appdata/Stream-Viewer"
 STATS_RETENTION_DAYS="90"
 STATS_MERGE_WINDOW_MIN="60"
 STATS_ANONYMIZE_IP="0"
+STATS_GEO_LOOKUP="0"
 LIB_SECTIONS_OPEN="0"
-  </INLINE>
+CFGEOF
+  mv "$CFG.tmp" "$CFG"
+fi
+</INLINE>
 </FILE>
 
 <FILE Run="/bin/bash">
 <INLINE>
-# Fix ownership and permissions
+chown root:root /usr /usr/local /usr/local/emhttp /usr/local/emhttp/plugins
 chown -R root:root /usr/local/emhttp/plugins/&name;
 find /usr/local/emhttp/plugins/&name; -type d -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name; -type f -exec chmod 644 {} \;
 find /usr/local/emhttp/plugins/&name; -name "*.sh"   -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name;/event -type f -exec chmod 755 {} \; 2>/dev/null
 
-# Init cache dir with restricted permissions
 mkdir -p /tmp/streamviewer_cache
 chmod 700 /tmp/streamviewer_cache
 
-# Restore user config if update overwrote it with defaults
-CFG=/boot/config/plugins/&name;/&name;.cfg
-BAK=/boot/config/plugins/&name;/&name;.cfg.bak
-if [[ -f "$BAK" ]]; then
-    cp "$BAK" "$CFG"
-    rm -f "$BAK"
-fi
-
-# Stop any running poll daemon (from previous version)
-if [[ -f /var/run/streamviewer_poll.pid ]]; then
-    kill $(cat /var/run/streamviewer_poll.pid) 2>/dev/null
-    rm -f /var/run/streamviewer_poll.pid
-    sleep 1
-fi
-
-# Remove old cron entry (from previous versions)
-if grep -q "streamviewer_cron" /var/spool/cron/crontabs/root 2>/dev/null; then
-    sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root
-fi
-
-# Daemon is started by event/started after array is fully mounted
-# But if array is already running (live update), start it now
-VARINI="/var/local/emhttp/var.ini"
-if grep -qs mdState.*STARTED "$VARINI" 2>/dev/null; then
-  if mountpoint -q /mnt/user 2>/dev/null; then
-    CFG=/boot/config/plugins/&name;/&name;.cfg
-    if grep -q STATS_ENABLED.*1 "$CFG" 2>/dev/null; then
-        # setsid, not nohup: nohup masks SIGHUP only, the daemon stays in the process group of whoever started it
-        setsid /usr/local/emhttp/plugins/&name;/include/streamviewer_poll.sh >/dev/null 2>/dev/null &lt;/dev/null &amp;
-    fi
-  fi
-fi
-
-echo ""
-echo "----------------------------------------------------"
-echo " &name; (&branch; build) installed successfully."
-echo " Version : &version;"
-echo " Settings: Settings > Stream Viewer"
-echo "----------------------------------------------------"
-echo ""
-</INLINE>
-</FILE>
-
-<FILE Run="/bin/bash" Method="remove">
-<INLINE>
-# Stop poll daemon, checking the pid really is ours before killing it
 PIDFILE=/var/run/streamviewer_poll.pid
 if [[ -f "$PIDFILE" ]]; then
     PID=$(cat "$PIDFILE" 2>/dev/null)
@@ -507,12 +539,44 @@ if [[ -f "$PIDFILE" ]]; then
     rm -f "$PIDFILE"
 fi
 
-# Remove old cron entry (from previous versions)
+if grep -q "streamviewer_cron" /var/spool/cron/crontabs/root 2>/dev/null; then
+    sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root
+fi
+sleep 1
+
+if grep -qs "mdState=\"STARTED\"" /var/local/emhttp/var.ini; then
+    if grep -qs "^STATS_ENABLED=\"1\"" /boot/config/plugins/&name;/&name;.cfg; then
+        setsid /usr/local/emhttp/plugins/&name;/include/streamviewer_poll.sh >/dev/null 2>/dev/null &lt;/dev/null &amp;
+    fi
+fi
+
+echo ""
+echo "----------------------------------------------------"
+echo " &name; (&branch; build) installed successfully."
+echo " Version : &version;"
+echo " Settings: Settings > Stream Viewer Settings"
+echo "----------------------------------------------------"
+echo ""
+</INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+PIDFILE=/var/run/streamviewer_poll.pid
+if [[ -f "$PIDFILE" ]]; then
+    PID=$(cat "$PIDFILE" 2>/dev/null)
+    if [[ "$PID" =~ ^[0-9]+$ ]]; then
+        if grep -qs streamviewer_poll "/proc/$PID/cmdline"; then
+            kill "$PID" 2>/dev/null
+        fi
+    fi
+    rm -f "$PIDFILE"
+fi
+
 if grep -q "streamviewer_cron" /var/spool/cron/crontabs/root 2>/dev/null; then
     sed -i "/streamviewer_cron/d" /var/spool/cron/crontabs/root
 fi
 
-# read the user choice before anything is deleted
 CFG=/boot/config/plugins/&name;/&name;.cfg
 ERASE="0"
 DBDIR=""
@@ -521,22 +585,22 @@ if [[ -f "$CFG" ]]; then
     DBDIR=$(grep -m1 "^STATS_DB_PATH=" "$CFG" | cut -d\" -f2)
 fi
 
-removepkg &name;-&version;
+for pkg in /var/lib/pkgtools/packages/&name;-[0-9]*; do
+  if [ -f "$pkg" ]; then removepkg "${pkg##*/}"; fi
+done
 rm -rf /usr/local/emhttp/plugins/&name;
 rm -rf /tmp/streamviewer_cache
 
-# the downloaded package is not user data, it goes either way
 rm -f /boot/config/plugins/&name;/&name;-*.txz /boot/config/plugins/&name;/&name;-*.txz.b64 /boot/config/plugins/&name;/&name;.cfg.bak
 
 if [[ "$ERASE" == "1" ]]; then
     if [[ -z "$DBDIR" ]]; then DBDIR="/mnt/user/appdata/Stream-Viewer"; fi
-    # DBDIR comes straight out of the cfg
     case "$DBDIR" in
         *..*) ;;
         /mnt/*)
             if [[ -d "$DBDIR" ]]; then
                 rm -f "$DBDIR/streamviewer.db" "$DBDIR/streamviewer.db-wal" "$DBDIR/streamviewer.db-shm"
-                rmdir "$DBDIR" 2>/dev/null  # stays if other apps keep data in there
+                rmdir "$DBDIR" 2>/dev/null
             fi
             ;;
     esac
